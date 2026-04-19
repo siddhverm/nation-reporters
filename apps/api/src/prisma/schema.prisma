@@ -1,0 +1,409 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ── Enums ─────────────────────────────────────────────────────
+
+enum Role {
+  REPORTER
+  CHIEF_EDITOR
+  SOCIAL_MANAGER
+  ADMIN
+  AI_BOT
+}
+
+enum ArticleStatus {
+  DRAFT
+  PENDING_REVIEW
+  AI_PROCESSING
+  NEEDS_EDIT
+  APPROVED
+  SCHEDULED
+  PUBLISHING
+  PUBLISHED
+  PUBLISH_FAILED
+  ARCHIVED
+}
+
+enum IngestionStatus {
+  RAW
+  PROCESSING
+  REWRITTEN
+  SKIPPED
+  BLOCKED
+  PUBLISHED
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  DOCUMENT
+}
+
+enum Platform {
+  WEB
+  MOBILE_PUSH
+  EMAIL_HOOK
+  TWITTER
+  FACEBOOK
+  INSTAGRAM
+  YOUTUBE
+  THREADS
+  LINKEDIN
+  WHATSAPP
+  TELEGRAM
+}
+
+enum JobStatus {
+  PENDING
+  QUEUED
+  RUNNING
+  SUCCESS
+  FAILED
+  RETRYING
+  DEAD_LETTERED
+}
+
+// ── Auth & Users ──────────────────────────────────────────────
+
+model User {
+  id           String   @id @default(uuid())
+  name         String
+  email        String   @unique
+  passwordHash String
+  role         Role     @default(REPORTER)
+  mfaSecret    String?
+  mfaEnabled   Boolean  @default(false)
+  isActive     Boolean  @default(true)
+  createdAt    DateTime @default(now())
+
+  articles      Article[]
+  auditLogs     AuditLog[]
+  notifications Notification[]
+
+  @@map("users")
+}
+
+// ── Feature Flags ─────────────────────────────────────────────
+
+model FeatureFlag {
+  id        String   @id @default(uuid())
+  key       String   @unique
+  enabled   Boolean  @default(false)
+  metadata  Json?
+  updatedAt DateTime @updatedAt
+
+  @@map("feature_flags")
+}
+
+// ── Taxonomy ──────────────────────────────────────────────────
+
+model Category {
+  id       String  @id @default(uuid())
+  name     String
+  slug     String  @unique
+  parentId String?
+
+  @@map("categories")
+}
+
+model Region {
+  id      String @id @default(uuid())
+  name    String
+  slug    String @unique
+  country String
+
+  @@map("regions")
+}
+
+model Tag {
+  id   String @id @default(uuid())
+  name String
+  slug String @unique
+
+  articles ArticleTag[]
+
+  @@map("tags")
+}
+
+// ── Articles ──────────────────────────────────────────────────
+
+model Article {
+  id                String        @id @default(uuid())
+  title             String
+  slug              String        @unique
+  body              Json
+  bodyShort         String?
+  bodyMedium        String?
+  excerpt           String?
+  status            ArticleStatus @default(DRAFT)
+  language          String        @default("en")
+  categoryId        String?
+  regionId          String?
+  authorId          String
+  editorId          String?
+  ingestedArticleId String?
+  riskScore         Float?
+  riskFlags         String[]
+  seoTitle          String?
+  seoDescription    String?
+  seoSlug           String?
+  hashtags          String[]
+  podcastScript     String?
+  scheduledAt       DateTime?
+  publishedAt       DateTime?
+  createdAt         DateTime      @default(now())
+  updatedAt         DateTime      @updatedAt
+
+  author         User             @relation(fields: [authorId], references: [id])
+  tags           ArticleTag[]
+  mediaAssets    MediaAsset[]
+  versions       ArticleVersion[]
+  publishJobs    PublishJob[]
+  socialCaptions SocialCaption[]
+  aiRewrite      AiRewrite?
+  riskAssessment RiskAssessment?
+  provenance     ContentProvenance?
+
+  @@map("articles")
+}
+
+model ArticleVersion {
+  id          String   @id @default(uuid())
+  articleId   String
+  title       String
+  body        Json
+  changedById String
+  changedAt   DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@map("article_versions")
+}
+
+model ArticleTag {
+  articleId String
+  tagId     String
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+  tag     Tag     @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@id([articleId, tagId])
+  @@map("article_tags")
+}
+
+model SocialCaption {
+  id        String   @id @default(uuid())
+  articleId String
+  platform  Platform
+  caption   String
+  hashtags  String[]
+  createdAt DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@map("social_captions")
+}
+
+// ── Media ─────────────────────────────────────────────────────
+
+model MediaAsset {
+  id           String    @id @default(uuid())
+  articleId    String?
+  type         MediaType
+  url          String
+  s3Key        String
+  mimeType     String
+  sizeBytes    Int
+  duration     Int?
+  width        Int?
+  height       Int?
+  thumbnailUrl String?
+  scanStatus   String    @default("pending")
+  createdAt    DateTime  @default(now())
+
+  article Article? @relation(fields: [articleId], references: [id], onDelete: SetNull)
+
+  @@map("media_assets")
+}
+
+// ── Ingestion ─────────────────────────────────────────────────
+
+model IngestedSource {
+  id             String    @id @default(uuid())
+  name           String
+  feedUrl        String    @unique
+  type           String
+  isActive       Boolean   @default(true)
+  isTrusted      Boolean   @default(false)
+  rightsMetadata Json?
+  lastFetchedAt  DateTime?
+
+  articles IngestedArticle[]
+
+  @@map("ingested_sources")
+}
+
+model IngestedArticle {
+  id              String          @id @default(uuid())
+  sourceId        String
+  sourceUrl       String          @unique
+  sourceTitle     String
+  body            String
+  publishedAt     DateTime?
+  fetchedAt       DateTime        @default(now())
+  contentHash     String          @unique
+  similarityScore Float?
+  status          IngestionStatus @default(RAW)
+  articleId       String?
+
+  source     IngestedSource     @relation(fields: [sourceId], references: [id])
+  aiRewrite  AiRewrite?
+  provenance ContentProvenance?
+
+  @@map("ingested_articles")
+}
+
+model ContentProvenance {
+  id                String   @id @default(uuid())
+  articleId         String?  @unique
+  ingestedArticleId String?  @unique
+  sourceUrl         String
+  sourceTitle       String
+  sourceName        String
+  fetchedAt         DateTime
+  rightsMetadata    Json?
+  attributionNote   String?
+  createdAt         DateTime @default(now())
+
+  article         Article?         @relation(fields: [articleId], references: [id], onDelete: SetNull)
+  ingestedArticle IngestedArticle? @relation(fields: [ingestedArticleId], references: [id], onDelete: SetNull)
+
+  @@map("content_provenance")
+}
+
+// ── AI ────────────────────────────────────────────────────────
+
+model AiRewrite {
+  id                  String   @id @default(uuid())
+  ingestedArticleId   String   @unique
+  originalTitle       String
+  rewrittenTitle      String
+  originalBody        String
+  rewrittenBodyShort  String
+  rewrittenBodyMedium String
+  rewrittenBodyLong   String
+  summary             String
+  podcastScript       String?
+  language            String
+  tags                String[]
+  category            String?
+  region              String?
+  seoTitle            String?
+  seoDescription      String?
+  hashtags            String[]
+  model               String
+  tokensUsed          Int
+  createdAt           DateTime @default(now())
+
+  ingestedArticle IngestedArticle @relation(fields: [ingestedArticleId], references: [id], onDelete: Cascade)
+  article         Article?        @relation(fields: [ingestedArticleId], references: [ingestedArticleId])
+
+  @@map("ai_rewrites")
+}
+
+model RiskAssessment {
+  id          String   @id @default(uuid())
+  articleId   String   @unique
+  score       Float
+  flags       String[]
+  reasoning   String?
+  confidence  Float
+  autoApprove Boolean  @default(false)
+  assessedAt  DateTime @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@map("risk_assessments")
+}
+
+model RiskRule {
+  id          String   @id @default(uuid())
+  name        String
+  category    String?
+  maxScore    Float    @default(0.4)
+  minConfidence Float  @default(0.7)
+  requireTrustedSource Boolean @default(false)
+  autoApprove Boolean  @default(false)
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@map("risk_rules")
+}
+
+// ── Publishing ────────────────────────────────────────────────
+
+model PublishJob {
+  id          String    @id @default(uuid())
+  articleId   String
+  platform    Platform
+  status      JobStatus @default(PENDING)
+  payload     Json?
+  response    Json?
+  errorMsg    String?
+  scheduledAt DateTime?
+  executedAt  DateTime?
+  retries     Int       @default(0)
+  createdAt   DateTime  @default(now())
+
+  article Article @relation(fields: [articleId], references: [id], onDelete: Cascade)
+
+  @@map("publish_jobs")
+}
+
+model SocialAccount {
+  id                   String   @id @default(uuid())
+  platform             Platform
+  name                 String
+  credentialsEncrypted String
+  isActive             Boolean  @default(true)
+  updatedAt            DateTime @updatedAt
+
+  @@map("social_accounts")
+}
+
+// ── Audit & Notifications ─────────────────────────────────────
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  userId     String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@map("audit_logs")
+}
+
+model Notification {
+  id        String   @id @default(uuid())
+  userId    String
+  type      String
+  message   String
+  isRead    Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("notifications")
+}

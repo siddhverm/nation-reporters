@@ -1,0 +1,140 @@
+import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { Platform, JobStatus } from '@prisma/client';
+import { PrismaService } from '../../prisma/prisma.service';
+import { SocialConnector, PublishPayload } from './connectors/base.connector';
+import { TwitterConnector } from './connectors/twitter/twitter.connector';
+import { TelegramConnector } from './connectors/telegram/telegram.connector';
+
+const MAX_RETRIES = 3;
+
+@Injectable()
+export class PublishingService {
+  private readonly logger = new Logger(PublishingService.name);
+  private readonly connectors = new Map<Platform, SocialConnector>();
+
+  constructor(
+    private readonly prisma: PrismaService,
+    twitter: TwitterConnector,
+    telegram: TelegramConnector,
+  ) {
+    this.connectors.set(Platform.TWITTER, twitter);
+    this.connectors.set(Platform.TELEGRAM, telegram);
+  }
+
+  async publishArticle(articleId: string, platforms: Platform[] = Object.values(Platform)) {
+    const article = await this.prisma.article.findUnique({
+      where: { id: articleId },
+      include: { socialCaptions: true, mediaAssets: { take: 1 } },
+    });
+    if (!article) throw new NotFoundException('Article not found');
+
+    const jobs = await Promise.all(
+      platforms.map((platform) =>
+        this.prisma.publishJob.create({
+          data: { articleId, platform, status: JobStatus.QUEUED },
+        }),
+      ),
+    );
+
+    for (const job of jobs) {
+      await this.executeJob(job.id, article);
+    }
+
+    await this.prisma.article.update({
+      where: { id: articleId },
+      data: { status: 'PUBLISHED', publishedAt: new Date() },
+    });
+
+    return jobs;
+  }
+
+  private async executeJob(jobId: string, article: any) {
+    const job = await this.prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } });
+    const connector = this.connectors.get(job.platform);
+
+    if (job.platform === Platform.WEB) {
+      // Web is handled by marking article published — nothing to do here
+      await this.prisma.publishJob.update({
+        where: { id: jobId },
+        data: { status: JobStatus.SUCCESS, executedAt: new Date() },
+      });
+      return;
+    }
+
+    if (!connector) {
+      await this.prisma.publishJob.update({
+        where: { id: jobId },
+        data: { status: JobStatus.DEAD_LETTERED, errorMsg: `No connector for ${job.platform}` },
+      });
+      return;
+    }
+
+    const caption = article.socialCaptions?.find((c: any) => c.platform === job.platform);
+    const payload: PublishPayload = {
+      articleId: article.id,
+      title: article.title,
+      excerpt: article.excerpt ?? article.title,
+      url: `https://nationreporters.com/article/${article.seoSlug ?? article.slug}`,
+      imageUrl: article.mediaAssets?.[0]?.url,
+      caption: caption?.caption,
+      hashtags: article.hashtags,
+      platform: job.platform,
+    };
+
+    await this.prisma.publishJob.update({ where: { id: jobId }, data: { status: JobStatus.RUNNING } });
+
+    try {
+      const result = await connector.publish(payload);
+
+      await this.prisma.publishJob.update({
+        where: { id: jobId },
+        data: {
+          status: result.success ? JobStatus.SUCCESS : JobStatus.FAILED,
+          response: result.response ?? {},
+          errorMsg: result.errorMsg,
+          executedAt: new Date(),
+        },
+      });
+    } catch (err) {
+      const retries = job.retries + 1;
+      await this.prisma.publishJob.update({
+        where: { id: jobId },
+        data: {
+          status: retries >= MAX_RETRIES ? JobStatus.DEAD_LETTERED : JobStatus.FAILED,
+          retries,
+          errorMsg: String(err),
+        },
+      });
+    }
+  }
+
+  getJobs(filters: { platform?: Platform; status?: JobStatus; page?: number; limit?: number }) {
+    const { platform, status, page = 1, limit = 20 } = filters;
+    return this.prisma.publishJob.findMany({
+      where: { ...(platform && { platform }), ...(status && { status }) },
+      skip: (page - 1) * limit,
+      take: limit,
+      orderBy: { createdAt: 'desc' },
+      include: { article: { select: { title: true, slug: true } } },
+    });
+  }
+
+  getDlq() {
+    return this.prisma.publishJob.findMany({
+      where: { status: JobStatus.DEAD_LETTERED },
+      orderBy: { createdAt: 'desc' },
+    });
+  }
+
+  async retryJob(jobId: string) {
+    const job = await this.prisma.publishJob.findUniqueOrThrow({
+      where: { id: jobId },
+      include: { article: { include: { socialCaptions: true, mediaAssets: { take: 1 } } } },
+    });
+    await this.prisma.publishJob.update({
+      where: { id: jobId },
+      data: { status: JobStatus.QUEUED, retries: 0 },
+    });
+    return this.executeJob(jobId, job.article);
+  }
+}
