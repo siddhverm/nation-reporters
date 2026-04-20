@@ -1,4 +1,5 @@
 import { Injectable, Logger, NotFoundException } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { Platform, JobStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SocialConnector, PublishPayload } from './connectors/base.connector';
@@ -18,8 +19,12 @@ export class PublishingService {
   private readonly logger = new Logger(PublishingService.name);
   private readonly connectors = new Map<Platform, SocialConnector>();
 
+  // Platforms that have credentials configured
+  private readonly enabledPlatforms: Set<Platform>;
+
   constructor(
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     twitter: TwitterConnector,
     telegram: TelegramConnector,
     facebook: MetaConnector,
@@ -37,9 +42,25 @@ export class PublishingService {
     this.connectors.set(Platform.LINKEDIN, linkedin);
     this.connectors.set(Platform.THREADS, threads);
     this.connectors.set(Platform.WHATSAPP, whatsapp);
+
+    // Only publish to platforms with credentials set
+    this.enabledPlatforms = new Set([Platform.WEB]);
+    if (config.get('TELEGRAM_BOT_TOKEN')) this.enabledPlatforms.add(Platform.TELEGRAM);
+    if (config.get('TWITTER_API_KEY')) this.enabledPlatforms.add(Platform.TWITTER);
+    if (config.get('FACEBOOK_PAGE_TOKEN')) {
+      this.enabledPlatforms.add(Platform.FACEBOOK);
+      this.enabledPlatforms.add(Platform.INSTAGRAM);
+    }
+    if (config.get('YOUTUBE_REFRESH_TOKEN')) this.enabledPlatforms.add(Platform.YOUTUBE);
+    if (config.get('LINKEDIN_ACCESS_TOKEN')) this.enabledPlatforms.add(Platform.LINKEDIN);
+    if (config.get('THREADS_ACCESS_TOKEN')) this.enabledPlatforms.add(Platform.THREADS);
+    if (config.get('WHATSAPP_API_TOKEN')) this.enabledPlatforms.add(Platform.WHATSAPP);
   }
 
-  async publishArticle(articleId: string, platforms: Platform[] = Object.values(Platform)) {
+  async publishArticle(articleId: string, platforms?: Platform[]) {
+    const activePlatforms = platforms
+      ? platforms.filter((p) => this.enabledPlatforms.has(p))
+      : [...this.enabledPlatforms];
     const article = await this.prisma.article.findUnique({
       where: { id: articleId },
       include: { socialCaptions: true, mediaAssets: { take: 1 } },
@@ -47,7 +68,7 @@ export class PublishingService {
     if (!article) throw new NotFoundException('Article not found');
 
     const jobs = await Promise.all(
-      platforms.map((platform) =>
+      activePlatforms.map((platform) =>
         this.prisma.publishJob.create({
           data: { articleId, platform, status: JobStatus.QUEUED },
         }),

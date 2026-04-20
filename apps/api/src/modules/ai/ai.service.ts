@@ -1,4 +1,4 @@
-import { Injectable, Logger } from '@nestjs/common';
+import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from './gemini.client';
 import { rewritePrompt } from './prompts/rewrite.prompt';
@@ -8,6 +8,7 @@ import { seoPrompt } from './prompts/seo.prompt';
 import { riskPrompt } from './prompts/risk.prompt';
 import { translatePrompt } from './prompts/translate.prompt';
 import { Platform } from '@prisma/client';
+import { PublishingService } from '../publishing/publishing.service';
 
 @Injectable()
 export class AiService {
@@ -16,6 +17,8 @@ export class AiService {
   constructor(
     private readonly gemini: GeminiClient,
     private readonly prisma: PrismaService,
+    @Inject(forwardRef(() => PublishingService))
+    private readonly publishing: PublishingService,
   ) {}
 
   async processIngestedArticle(ingestedArticleId: string, language = 'en') {
@@ -141,6 +144,13 @@ export class AiService {
         where: { id: ingestedArticleId },
         data: { status: 'REWRITTEN', articleId: article.id },
       });
+
+      // Auto-publish immediately if approved
+      if (autoApprove) {
+        this.publishing.publishArticle(article.id).catch((err) =>
+          this.logger.error(`Auto-publish failed for ${article.id}`, err),
+        );
+      }
 
       return article;
     } catch (err) {
