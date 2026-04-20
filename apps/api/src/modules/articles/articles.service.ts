@@ -17,7 +17,7 @@ export class ArticlesService {
       data: {
         title: dto.title,
         slug,
-        body: (dto.body as object) ?? {},
+        body: (dto.body as object | null) ?? {},
         excerpt: dto.excerpt,
         language: dto.language ?? 'en',
         categoryId: dto.categoryId,
@@ -31,7 +31,7 @@ export class ArticlesService {
     });
 
     await this.prisma.articleVersion.create({
-      data: { articleId: article.id, title: article.title, body: article.body, changedById: authorId },
+      data: { articleId: article.id, title: article.title, body: article.body as object, changedById: authorId },
     });
 
     return article;
@@ -75,7 +75,6 @@ export class ArticlesService {
         riskAssessment: true,
         socialCaptions: true,
         provenance: true,
-        aiRewrite: true,
       },
     });
     if (!article) throw new NotFoundException('Article not found');
@@ -93,7 +92,7 @@ export class ArticlesService {
       where: { id },
       data: {
         title: data.title ?? article.title,
-        body: (data.body as object) ?? article.body,
+        body: (data.body as object | null) ?? (article.body as object),
         excerpt: data.excerpt,
         categoryId: data.categoryId,
         regionId: data.regionId,
@@ -101,7 +100,7 @@ export class ArticlesService {
     });
 
     await this.prisma.articleVersion.create({
-      data: { articleId: id, title: updated.title, body: updated.body, changedById: userId },
+      data: { articleId: id, title: updated.title, body: updated.body as object, changedById: userId },
     });
 
     return updated;

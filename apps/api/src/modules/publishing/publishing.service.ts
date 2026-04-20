@@ -4,6 +4,12 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SocialConnector, PublishPayload } from './connectors/base.connector';
 import { TwitterConnector } from './connectors/twitter/twitter.connector';
 import { TelegramConnector } from './connectors/telegram/telegram.connector';
+import { MetaConnector } from './connectors/meta/meta.connector';
+import { InstagramConnector } from './connectors/meta/instagram.connector';
+import { YoutubeConnector } from './connectors/youtube/youtube.connector';
+import { LinkedinConnector } from './connectors/linkedin/linkedin.connector';
+import { ThreadsConnector } from './connectors/threads/threads.connector';
+import { WhatsappConnector } from './connectors/whatsapp/whatsapp.connector';
 
 const MAX_RETRIES = 3;
 
@@ -16,9 +22,21 @@ export class PublishingService {
     private readonly prisma: PrismaService,
     twitter: TwitterConnector,
     telegram: TelegramConnector,
+    facebook: MetaConnector,
+    instagram: InstagramConnector,
+    youtube: YoutubeConnector,
+    linkedin: LinkedinConnector,
+    threads: ThreadsConnector,
+    whatsapp: WhatsappConnector,
   ) {
     this.connectors.set(Platform.TWITTER, twitter);
     this.connectors.set(Platform.TELEGRAM, telegram);
+    this.connectors.set(Platform.FACEBOOK, facebook);
+    this.connectors.set(Platform.INSTAGRAM, instagram);
+    this.connectors.set(Platform.YOUTUBE, youtube);
+    this.connectors.set(Platform.LINKEDIN, linkedin);
+    this.connectors.set(Platform.THREADS, threads);
+    this.connectors.set(Platform.WHATSAPP, whatsapp);
   }
 
   async publishArticle(articleId: string, platforms: Platform[] = Object.values(Platform)) {
