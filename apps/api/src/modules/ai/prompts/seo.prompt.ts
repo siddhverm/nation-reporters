@@ -9,7 +9,7 @@ Respond with JSON:
 {
   "seoTitle": "SEO-optimized title under 60 chars",
   "seoDescription": "Meta description 120-155 chars, contains primary keyword",
-  "slug": "url-friendly-slug-lowercase-hyphens-no-stopwords",
+  "slug": "url-friendly-slug-in-ENGLISH-lowercase-hyphens-no-stopwords-max-60-chars",
   "hashtags": ["tag1", "tag2", "tag3", "tag4", "tag5"]
 }
 `.trim();

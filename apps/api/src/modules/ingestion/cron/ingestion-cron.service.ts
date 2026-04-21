@@ -64,6 +64,9 @@ export class IngestionCronService {
     const feed = await this.parser.parseURL(source.feedUrl);
     let ingested = 0;
 
+    // Detect language once per source (not per item)
+    const sourceLang = this.detectSourceLang(source.name);
+
     // Only process first 5 items per source to respect Gemini free tier limits
     const items = (feed.items ?? []).slice(0, 5);
 
@@ -97,7 +100,7 @@ export class IngestionCronService {
 
         // Try AI processing; if Gemini rate-limits, fall back to publishing raw
         try {
-          await this.ai.processIngestedArticle(ingestedArticle.id);
+          await this.ai.processIngestedArticle(ingestedArticle.id, sourceLang);
         } catch (aiErr) {
           const msg = (aiErr as Error).message ?? '';
           const is429 = msg.includes('429') || msg.includes('quota') || msg.includes('Too Many');

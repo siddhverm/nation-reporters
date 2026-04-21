@@ -1,4 +1,13 @@
+const LANG_NAMES: Record<string, string> = {
+  en: 'English', hi: 'Hindi', mr: 'Marathi', bn: 'Bengali',
+  ta: 'Tamil', te: 'Telugu', kn: 'Kannada', gu: 'Gujarati', pa: 'Punjabi',
+  ur: 'Urdu', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish',
+  pt: 'Portuguese', ru: 'Russian', zh: 'Chinese', ja: 'Japanese', ko: 'Korean',
+  id: 'Indonesian', ms: 'Malay', sw: 'Swahili',
+};
+
 export function rewritePrompt(title: string, body: string, targetLang: string) {
+  const langName = LANG_NAMES[targetLang] ?? 'English';
   return `
 You are a senior journalist at Nation Reporters (nationreporters.com), a digital news network.
 Your editorial voice is: factual, direct, authoritative, accessible to general audiences.
@@ -13,11 +22,12 @@ Produce a JSON response with these keys:
 - "short": complete article in ~150 words
 - "medium": complete article in ~400 words
 - "long": complete article in ~800 words
-- "summary": 2-sentence executive summary for editors
+- "summary": 2-sentence executive summary for editors (always in English)
 - "podcastScript": podcast script with intro, body, and outro (conversational tone)
 - "language": "${targetLang}"
 
-All content must be in ${targetLang === 'hi' ? 'Hindi' : 'English'}.
+All content (title, short, medium, long, podcastScript) must be written in ${langName}.
+The "summary" field must always be in English regardless of target language.
 Never fabricate quotes, statistics, or facts not in the source.
 `.trim();
 }
