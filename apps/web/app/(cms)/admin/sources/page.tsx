@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
-import { Rss, Plus, Play } from 'lucide-react';
+import { Rss, Plus, Play, RefreshCw, CheckCircle } from 'lucide-react';
 
 interface Source {
   id: string;
@@ -18,6 +18,8 @@ export default function SourcesAdminPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', feedUrl: '', type: 'rss', isTrusted: false });
   const [fetching, setFetching] = useState<string | null>(null);
+  const [fetchingAll, setFetchingAll] = useState(false);
+  const [fetchAllMsg, setFetchAllMsg] = useState('');
 
   const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
   function token() { return localStorage.getItem('accessToken') ?? ''; }
@@ -41,6 +43,21 @@ export default function SourcesAdminPage() {
     load();
   }
 
+  async function fetchAllSources() {
+    setFetchingAll(true);
+    setFetchAllMsg('');
+    try {
+      await fetch(`${base}/sources/fetch-all`, {
+        method: 'POST',
+        headers: { Authorization: `Bearer ${token()}` },
+      });
+      setFetchAllMsg('All sources fetched! New articles are being processed.');
+      setTimeout(() => setFetchAllMsg(''), 8000);
+      load();
+    } catch { setFetchAllMsg('Fetch failed — check server logs.'); }
+    setFetchingAll(false);
+  }
+
   async function fetchNow(id: string) {
     setFetching(id);
     await fetch(`${base}/sources/${id}/fetch-now`, {
@@ -62,10 +79,23 @@ export default function SourcesAdminPage() {
 
   return (
     <div className="max-w-5xl mx-auto p-6">
-      <div className="flex items-center justify-between mb-6">
+      <div className="flex items-center justify-between mb-4">
         <div className="flex items-center gap-3"><Rss className="h-6 w-6 text-brand" /><h1 className="text-2xl font-bold">Feed Sources</h1></div>
-        <button onClick={() => setShowForm(true)} className="flex items-center gap-2 bg-brand text-white px-4 py-2 rounded-lg text-sm"><Plus className="h-4 w-4" /> Add Source</button>
+        <div className="flex gap-2">
+          <button onClick={fetchAllSources} disabled={fetchingAll}
+            className="flex items-center gap-2 bg-green-600 text-white px-4 py-2 rounded-lg text-sm hover:bg-green-700 disabled:opacity-60">
+            {fetchingAll ? <RefreshCw className="h-4 w-4 animate-spin" /> : <RefreshCw className="h-4 w-4" />}
+            {fetchingAll ? 'Fetching All…' : 'Fetch All Sources Now'}
+          </button>
+          <button onClick={() => setShowForm(true)} className="flex items-center gap-2 bg-brand text-white px-4 py-2 rounded-lg text-sm"><Plus className="h-4 w-4" /> Add Source</button>
+        </div>
       </div>
+
+      {fetchAllMsg && (
+        <div className="flex items-center gap-2 bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-3 mb-4 text-sm">
+          <CheckCircle className="h-4 w-4 shrink-0" /> {fetchAllMsg}
+        </div>
+      )}
 
       {showForm && (
         <form onSubmit={create} className="border rounded-xl p-4 mb-6 bg-gray-50 space-y-3">

@@ -19,4 +19,5 @@ export class SourcesController {
   @Patch(':id') update(@Param('id') id: string, @Body() dto: any) { return this.svc.update(id, dto); }
   @Delete(':id') delete(@Param('id') id: string) { return this.svc.delete(id); }
   @Post(':id/fetch-now') fetchNow(@Param('id') id: string) { return this.svc.fetchNow(id); }
+  @Post('fetch-all') fetchAll() { return this.svc.fetchAll(); }
 }

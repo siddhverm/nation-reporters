@@ -34,4 +34,8 @@ export class SourcesService {
     if (!source) throw new NotFoundException('Source not found');
     return this.cron.fetchSource(source);
   }
+
+  async fetchAll() {
+    return this.cron.runScheduledIngestion();
+  }
 }
