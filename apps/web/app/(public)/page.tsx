@@ -92,33 +92,14 @@ export default function HomePage() {
     });
   }, []);
 
-  // Build per-category buckets
+  // Build per-category buckets — only show articles that actually belong to each category
   const catIdToSlug = new Map(categories.map((c) => [c.id, c.slug]));
 
-  // Primary bucket: articles whose categoryId maps to that slug
-  const primary = new Map<string, Article[]>(SECTIONS.map((s) => [s, []]));
-  for (const a of articles) {
-    const slug = catIdToSlug.get(a.categoryId ?? '');
-    if (slug && primary.has(slug)) primary.get(slug)!.push(a);
-  }
-
-  // Global pool for fill: all articles ordered by date
-  const globalPool = [...articles];
-
-  // Fill each section up to MIN_SECTION, pulling from global pool (no dupes within section)
   const sections = new Map<string, Article[]>();
   for (const slug of SECTIONS) {
-    const own = primary.get(slug) ?? [];
-    const ownIds = new Set(own.map((a) => a.id));
-    const needed = Math.max(0, MIN_SECTION - own.length);
-    const filler = needed > 0
-      ? globalPool.filter((a) => !ownIds.has(a.id)).slice(0, needed)
-      : [];
-    sections.set(slug, [...own, ...filler]);
+    sections.set(slug, articles.filter((a) => catIdToSlug.get(a.categoryId ?? '') === slug));
   }
 
-  const indiaId = categories.find((c) => c.slug === 'india')?.id;
-  const worldId = categories.find((c) => c.slug === 'world')?.id;
   const breaking = articles.slice(0, 8);
 
   return (
@@ -244,29 +225,17 @@ export default function HomePage() {
           </section>
         )}
 
-        {/* Per-category sections — each showing up to 20 articles */}
+        {/* Per-category sections */}
         {!loading && SECTIONS.map((slug) => {
           const meta = CAT_META[slug];
           const list = sections.get(slug) ?? [];
           if (list.length === 0) return null;
 
           const [hero, ...rest] = list;
-
-          // For sub-topics (not india/world): split into India col + World col from own+filler
-          const isGeo = slug === 'india' || slug === 'world';
-          const indiaItems = !isGeo ? list.filter((a) => a.categoryId === indiaId).slice(0, 10) : [];
-          const worldItems = !isGeo ? list.filter((a) => a.categoryId === worldId).slice(0, 10) : [];
-          const otherItems = !isGeo
-            ? list.filter((a) => a.categoryId !== indiaId && a.categoryId !== worldId).slice(0, 10)
-            : [];
-
-          // If we have dedicated category articles, show them; otherwise show all list items
-          const hasSplit = (indiaItems.length + worldItems.length) >= 3;
-          const gridItems = isGeo ? rest.slice(0, 19) : (hasSplit ? otherItems : rest.slice(0, 19));
+          const hasGrid = rest.length > 0;
 
           return (
             <section key={slug} className="mb-10">
-              {/* Section header */}
               <div className={`flex items-center justify-between border-b-2 ${meta.border} pb-2 mb-4`}>
                 <div className="flex items-center gap-2">
                   <span className={`${meta.color} text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded`}>
@@ -276,61 +245,51 @@ export default function HomePage() {
                 </div>
                 <Link href={`/category/${slug}`}
                   className="text-xs text-brand font-semibold flex items-center gap-1 hover:text-brand-dark">
-                  More {meta.label} <ChevronRight className="h-3.5 w-3.5" />
+                  More <ChevronRight className="h-3.5 w-3.5" />
                 </Link>
               </div>
 
-              {/* Hero + grid layout */}
-              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
-                {/* Section hero */}
+              {hasGrid ? (
+                <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                  <Link href={`/article/${hero.slug}`}
+                    className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
+                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getBodyImageUrl(hero.body))}
+                      alt={hero.title} fill className="object-cover" unoptimized />
+                    <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                    <div className="absolute inset-x-0 bottom-0 p-4">
+                      <span className={`inline-block ${meta.color} text-white text-[10px] font-black uppercase px-2 py-0.5 rounded mb-1`}>Top</span>
+                      <h3 className="text-white font-serif font-bold text-sm leading-snug group-hover:text-signal transition-colors line-clamp-3">
+                        {hero.title}
+                      </h3>
+                      {hero.publishedAt && (
+                        <p className="text-blue-300/70 text-[10px] mt-1 flex items-center gap-1">
+                          <Clock className="h-2.5 w-2.5" />{timeAgo(hero.publishedAt)}
+                        </p>
+                      )}
+                    </div>
+                  </Link>
+                  <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                    {rest.slice(0, 18).map((a) => <ArticleCard key={a.id} a={a} />)}
+                  </div>
+                </div>
+              ) : (
+                /* Single article — compact card */
                 <Link href={`/article/${hero.slug}`}
-                  className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
-                  <Image src={getArticleImage(hero.slug, undefined, 'hero', getBodyImageUrl(hero.body))}
-                    alt={hero.title} fill className="object-cover" unoptimized />
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
-                  <div className="absolute inset-x-0 bottom-0 p-4">
-                    <span className={`inline-block ${meta.color} text-white text-[10px] font-black uppercase px-2 py-0.5 rounded mb-1`}>Top</span>
-                    <h3 className="text-white font-serif font-bold text-sm leading-snug group-hover:text-signal transition-colors line-clamp-3">
-                      {hero.title}
-                    </h3>
+                  className="group flex gap-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-4">
+                  <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
+                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getBodyImageUrl(hero.body))}
+                      alt={hero.title} fill className="object-cover" unoptimized />
+                  </div>
+                  <div className="flex-1 min-w-0">
+                    <h3 className="font-bold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{hero.title}</h3>
+                    {hero.excerpt && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{hero.excerpt}</p>}
                     {hero.publishedAt && (
-                      <p className="text-blue-300/70 text-[10px] mt-1 flex items-center gap-1">
-                        <Clock className="h-2.5 w-2.5" />{timeAgo(hero.publishedAt)}
+                      <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
+                        <Clock className="h-3 w-3" />{timeAgo(hero.publishedAt)}
                       </p>
                     )}
                   </div>
                 </Link>
-
-                {/* Main grid — up to 19 articles in 3-column right side */}
-                <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                  {gridItems.map((a) => <ArticleCard key={a.id} a={a} />)}
-                </div>
-              </div>
-
-              {/* India + World sub-split for topic sections */}
-              {!isGeo && hasSplit && (
-                <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
-                  {indiaItems.length > 0 && (
-                    <div>
-                      <p className="text-xs font-black text-orange-600 uppercase tracking-widest mb-2 border-b border-orange-100 pb-1 flex items-center gap-1">
-                        🇮🇳 India {meta.label}
-                      </p>
-                      <div className="grid grid-cols-1 gap-2">
-                        {indiaItems.map((a) => <ArticleCard key={a.id} a={a} />)}
-                      </div>
-                    </div>
-                  )}
-                  {worldItems.length > 0 && (
-                    <div>
-                      <p className="text-xs font-black text-blue-600 uppercase tracking-widest mb-2 border-b border-blue-100 pb-1 flex items-center gap-1">
-                        🌍 World {meta.label}
-                      </p>
-                      <div className="grid grid-cols-1 gap-2">
-                        {worldItems.map((a) => <ArticleCard key={a.id} a={a} />)}
-                      </div>
-                    </div>
-                  )}
-                </div>
               )}
             </section>
           );
