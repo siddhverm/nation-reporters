@@ -17,8 +17,9 @@ export default function NewArticlePage() {
     setSaving(true);
     setError('');
     try {
+      const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
       const token = localStorage.getItem('accessToken');
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/articles`, {
+      const res = await fetch(`${base}/articles`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token}` },
         body: JSON.stringify({ title, excerpt, body }),
@@ -27,7 +28,7 @@ export default function NewArticlePage() {
       const article = await res.json() as { id: string };
 
       if (submit) {
-        await fetch(`${process.env.NEXT_PUBLIC_API_URL}/articles/${article.id}/submit`, {
+        await fetch(`${base}/articles/${article.id}/submit`, {
           method: 'POST',
           headers: { Authorization: `Bearer ${token}` },
         });

@@ -13,17 +13,19 @@ export default function FeatureFlagsPage() {
   const [flags, setFlags] = useState<Flag[]>([]);
   const [loading, setLoading] = useState(true);
 
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
   function token() { return localStorage.getItem('accessToken') ?? ''; }
 
   function load() {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/feature-flags`, { headers: { Authorization: `Bearer ${token()}` } })
-      .then((r) => r.json()).then((d: Flag[]) => { setFlags(d); setLoading(false); });
+    fetch(`${base}/feature-flags`, { headers: { Authorization: `Bearer ${token()}` } })
+      .then((r) => r.json()).then((d: Flag[]) => { setFlags(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
   }
 
   useEffect(load, []);
 
   async function toggle(key: string, enabled: boolean) {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/feature-flags/${key}`, {
+    await fetch(`${base}/feature-flags/${key}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
       body: JSON.stringify({ enabled: !enabled }),

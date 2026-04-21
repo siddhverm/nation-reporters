@@ -1,6 +1,7 @@
 import { Module } from '@nestjs/common';
 import { PublishingService } from './publishing.service';
 import { PublishingController } from './publishing.controller';
+import { SocialDigestService } from './social-digest.service';
 import { TwitterConnector } from './connectors/twitter/twitter.connector';
 import { TelegramConnector } from './connectors/telegram/telegram.connector';
 import { MetaConnector } from './connectors/meta/meta.connector';
@@ -15,6 +16,7 @@ import { PrismaService } from '../../prisma/prisma.service';
   controllers: [PublishingController],
   providers: [
     PublishingService,
+    SocialDigestService,
     TwitterConnector,
     TelegramConnector,
     MetaConnector,

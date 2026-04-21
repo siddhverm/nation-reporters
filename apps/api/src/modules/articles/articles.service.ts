@@ -41,42 +41,49 @@ export class ArticlesService {
     status?: ArticleStatus;
     categoryId?: string;
     authorId?: string;
+    language?: string;
     page?: number;
     limit?: number;
   }) {
-    const { status, categoryId, authorId, page = 1, limit = 20 } = filters;
+    const p     = Math.max(1, parseInt(String(filters.page  ?? 1),  10) || 1);
+    const take  = Math.min(100, parseInt(String(filters.limit ?? 20), 10) || 20);
+    const { status, categoryId, authorId, language } = filters;
     const where = {
-      ...(status && { status }),
+      ...(status     && { status }),
       ...(categoryId && { categoryId }),
-      ...(authorId && { authorId }),
+      ...(authorId   && { authorId }),
+      ...(language   && { language }),
     };
 
     const [data, total] = await Promise.all([
       this.prisma.article.findMany({
         where,
-        skip: (page - 1) * limit,
-        take: limit,
+        skip: (p - 1) * take,
+        take,
         orderBy: { createdAt: 'desc' },
         include: { tags: { include: { tag: true } }, riskAssessment: true },
       }),
       this.prisma.article.count({ where }),
     ]);
+    const page = p; const limit = take;
 
     return { data, total, page, limit };
   }
 
-  async findOne(id: string) {
-    const article = await this.prisma.article.findUnique({
-      where: { id },
-      include: {
-        tags: { include: { tag: true } },
-        mediaAssets: true,
-        versions: { orderBy: { changedAt: 'desc' }, take: 10 },
-        riskAssessment: true,
-        socialCaptions: true,
-        provenance: true,
-      },
-    });
+  async findOne(idOrSlug: string) {
+    const include = {
+      tags: { include: { tag: true } },
+      mediaAssets: true,
+      versions: { orderBy: { changedAt: 'desc' } as const, take: 10 },
+      riskAssessment: true,
+      socialCaptions: true,
+      provenance: true,
+    };
+    // Try UUID first, fall back to slug lookup
+    const isUuid = /^[0-9a-f-]{36}$/.test(idOrSlug);
+    const article = isUuid
+      ? await this.prisma.article.findUnique({ where: { id: idOrSlug }, include })
+      : await this.prisma.article.findUnique({ where: { slug: idOrSlug }, include });
     if (!article) throw new NotFoundException('Article not found');
     return article;
   }

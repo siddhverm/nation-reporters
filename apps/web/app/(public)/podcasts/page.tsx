@@ -17,7 +17,7 @@ interface Article {
 async function getPodcasts(): Promise<Article[]> {
   try {
     const res = await fetch(
-      `${process.env.NEXT_PUBLIC_API_URL}/articles?status=PUBLISHED&limit=20`,
+      `${process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1'}/articles?status=PUBLISHED&limit=20`,
       { next: { revalidate: 300 } },
     );
     const data = await res.json() as { data: Article[] };

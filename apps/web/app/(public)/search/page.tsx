@@ -21,7 +21,8 @@ export default function SearchPage() {
     if (!query.trim()) { setHits([]); return; }
     setLoading(true);
     try {
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/search?q=${encodeURIComponent(query)}`);
+      const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
+      const res = await fetch(`${base}/search?q=${encodeURIComponent(query)}`);
       const data = await res.json() as { hits: Hit[] };
       setHits(data.hits ?? []);
     } finally {

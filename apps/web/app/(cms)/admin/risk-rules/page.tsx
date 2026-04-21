@@ -19,18 +19,20 @@ export default function RiskRulesPage() {
   const [showForm, setShowForm] = useState(false);
   const [form, setForm] = useState({ name: '', category: '', maxScore: 0.4, minConfidence: 0.7, requireTrustedSource: false, autoApprove: false });
 
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
   function token() { return localStorage.getItem('accessToken') ?? ''; }
 
   function load() {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/risk-rules`, { headers: { Authorization: `Bearer ${token()}` } })
-      .then((r) => r.json()).then((d: Rule[]) => { setRules(d); setLoading(false); });
+    fetch(`${base}/risk-rules`, { headers: { Authorization: `Bearer ${token()}` } })
+      .then((r) => r.json()).then((d: Rule[]) => { setRules(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
   }
 
   useEffect(load, []);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/risk-rules`, {
+    await fetch(`${base}/risk-rules`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
       body: JSON.stringify(form),
@@ -40,7 +42,7 @@ export default function RiskRulesPage() {
   }
 
   async function toggle(id: string, isActive: boolean) {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/risk-rules/${id}`, {
+    await fetch(`${base}/risk-rules/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
       body: JSON.stringify({ isActive: !isActive }),

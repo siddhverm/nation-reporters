@@ -19,18 +19,20 @@ export default function SourcesAdminPage() {
   const [form, setForm] = useState({ name: '', feedUrl: '', type: 'rss', isTrusted: false });
   const [fetching, setFetching] = useState<string | null>(null);
 
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
   function token() { return localStorage.getItem('accessToken') ?? ''; }
 
   function load() {
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/sources`, { headers: { Authorization: `Bearer ${token()}` } })
-      .then((r) => r.json()).then((d: Source[]) => { setSources(d); setLoading(false); });
+    fetch(`${base}/sources`, { headers: { Authorization: `Bearer ${token()}` } })
+      .then((r) => r.json()).then((d: Source[]) => { setSources(Array.isArray(d) ? d : []); setLoading(false); })
+      .catch(() => setLoading(false));
   }
 
   useEffect(load, []);
 
   async function create(e: React.FormEvent) {
     e.preventDefault();
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sources`, {
+    await fetch(`${base}/sources`, {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
       body: JSON.stringify(form),
@@ -41,16 +43,16 @@ export default function SourcesAdminPage() {
 
   async function fetchNow(id: string) {
     setFetching(id);
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sources/${id}/fetch-now`, {
+    await fetch(`${base}/sources/${id}/fetch-now`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${token()}` },
-    });
+    }).catch(() => null);
     setFetching(null);
     load();
   }
 
   async function toggle(id: string, isActive: boolean) {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/sources/${id}`, {
+    await fetch(`${base}/sources/${id}`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${token()}` },
       body: JSON.stringify({ isActive: !isActive }),

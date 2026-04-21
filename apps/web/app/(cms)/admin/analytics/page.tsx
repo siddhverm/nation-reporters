@@ -15,12 +15,14 @@ export default function AnalyticsAdminPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const token = localStorage.getItem('accessToken');
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}/analytics/overview`, {
+    fetch(`${base}/analytics/overview`, {
       headers: { Authorization: `Bearer ${token}` },
     })
       .then((r) => r.json())
-      .then((d: Overview) => { setData(d); setLoading(false); });
+      .then((d: Overview) => { setData(d); setLoading(false); })
+      .catch(() => setLoading(false));
   }, []);
 
   if (loading) return <div className="p-8 text-center text-gray-400">Loading...</div>;

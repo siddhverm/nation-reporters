@@ -147,6 +147,33 @@ export class PublishingService {
     }
   }
 
+  async publishToSocialOnly(articleId: string) {
+    const socialPlatforms: Platform[] = [
+      Platform.TWITTER, Platform.FACEBOOK, Platform.INSTAGRAM,
+      Platform.TELEGRAM, Platform.LINKEDIN, Platform.THREADS, Platform.WHATSAPP,
+    ];
+    const activePlatforms = socialPlatforms.filter((p) => this.enabledPlatforms.has(p));
+    if (activePlatforms.length === 0) return;
+
+    const article = await this.prisma.article.findUnique({
+      where: { id: articleId },
+      include: { socialCaptions: true, mediaAssets: { take: 1 } },
+    });
+    if (!article) return;
+
+    const jobs = await Promise.all(
+      activePlatforms.map((platform) =>
+        this.prisma.publishJob.create({
+          data: { articleId, platform, status: JobStatus.QUEUED },
+        }),
+      ),
+    );
+
+    for (const job of jobs) {
+      await this.executeJob(job.id, article);
+    }
+  }
+
   getJobs(filters: { platform?: Platform; status?: JobStatus; page?: number; limit?: number }) {
     const { platform, status, page = 1, limit = 20 } = filters;
     return this.prisma.publishJob.findMany({

@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useState } from 'react';
 import Link from 'next/link';
-import { Clock } from 'lucide-react';
+import Image from 'next/image';
+import { Clock, ChevronRight, Flame, Globe } from 'lucide-react';
+import { getArticleImage, getBodyImageUrl } from '@/lib/news-image';
 
 interface Article {
   id: string;
@@ -10,115 +12,184 @@ interface Article {
   excerpt: string | null;
   publishedAt: string | null;
   categoryId: string | null;
+  body?: Record<string, unknown>;
 }
 
-const CATEGORIES = [
-  { name: 'India', slug: 'india' },
-  { name: 'World', slug: 'world' },
-  { name: 'Politics', slug: 'politics' },
-  { name: 'Business', slug: 'business' },
-  { name: 'Sports', slug: 'sports' },
-  { name: 'Entertainment', slug: 'entertainment' },
-  { name: 'Technology', slug: 'tech' },
-];
+interface Category { id: string; name: string; slug: string; }
+
+function timeAgo(d: string) {
+  const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
+  if (m < 2) return 'Just now';
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  return new Date(d).toLocaleDateString('en-IN', { day: 'numeric', month: 'short' });
+}
+
+const CAT_META: Record<string, { label: string; color: string; border: string }> = {
+  india:         { label: 'India',         color: 'bg-orange-600', border: 'border-orange-500' },
+  world:         { label: 'World',         color: 'bg-blue-600',   border: 'border-blue-500' },
+  politics:      { label: 'Politics',      color: 'bg-purple-600', border: 'border-purple-500' },
+  business:      { label: 'Business',      color: 'bg-green-600',  border: 'border-green-500' },
+  sports:        { label: 'Sports',        color: 'bg-yellow-500', border: 'border-yellow-400' },
+  entertainment: { label: 'Entertainment', color: 'bg-pink-600',   border: 'border-pink-500' },
+  tech:          { label: 'Technology',    color: 'bg-cyan-600',   border: 'border-cyan-500' },
+};
+const SECTIONS = ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'];
+const MIN_SECTION = 20; // target articles per section
+
+function ArticleCard({ a }: { a: Article }) {
+  return (
+    <Link href={`/article/${a.slug}`}
+      className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
+      <div className="h-14 w-14 rounded-lg overflow-hidden shrink-0 relative">
+        <Image src={getArticleImage(a.slug, undefined, 'thumb', getBodyImageUrl(a.body))}
+          alt={a.title} fill className="object-cover" unoptimized />
+      </div>
+      <div className="flex-1 min-w-0">
+        <h3 className="font-semibold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
+        {a.publishedAt && (
+          <p className="text-[10px] text-gray-400 mt-0.5 flex items-center gap-1">
+            <Clock className="h-2.5 w-2.5" />{timeAgo(a.publishedAt)}
+          </p>
+        )}
+      </div>
+    </Link>
+  );
+}
 
 export default function HomePage() {
   const [articles, setArticles] = useState<Article[]>([]);
+  const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
-    fetch(`${base}/articles?status=PUBLISHED&limit=20`)
-      .then((r) => r.json())
-      .then((res: { data?: Article[] }) => {
-        setArticles(res.data ?? []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+    const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
+
+    Promise.all([
+      fetch(`${base}/articles?status=PUBLISHED&limit=200&language=${lang}`)
+        .then((r) => r.json())
+        .then((d) => d.data ?? d ?? [])
+        .catch(async () => {
+          const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200`);
+          const d = await r.json();
+          return d.data ?? d ?? [];
+        }),
+      fetch(`${base}/categories`).then((r) => r.json()).catch(() => []),
+    ]).then(([arts, cats]) => {
+      setArticles(Array.isArray(arts) ? arts : []);
+      setCategories(Array.isArray(cats) ? cats : []);
+      setLoading(false);
+    });
   }, []);
 
-  const [breaking, ...rest] = articles;
+  // Build per-category buckets
+  const catIdToSlug = new Map(categories.map((c) => [c.id, c.slug]));
+
+  // Primary bucket: articles whose categoryId maps to that slug
+  const primary = new Map<string, Article[]>(SECTIONS.map((s) => [s, []]));
+  for (const a of articles) {
+    const slug = catIdToSlug.get(a.categoryId ?? '');
+    if (slug && primary.has(slug)) primary.get(slug)!.push(a);
+  }
+
+  // Global pool for fill: all articles ordered by date
+  const globalPool = [...articles];
+
+  // Fill each section up to MIN_SECTION, pulling from global pool (no dupes within section)
+  const sections = new Map<string, Article[]>();
+  for (const slug of SECTIONS) {
+    const own = primary.get(slug) ?? [];
+    const ownIds = new Set(own.map((a) => a.id));
+    const needed = Math.max(0, MIN_SECTION - own.length);
+    const filler = needed > 0
+      ? globalPool.filter((a) => !ownIds.has(a.id)).slice(0, needed)
+      : [];
+    sections.set(slug, [...own, ...filler]);
+  }
+
+  const indiaId = categories.find((c) => c.slug === 'india')?.id;
+  const worldId = categories.find((c) => c.slug === 'world')?.id;
+  const breaking = articles.slice(0, 8);
 
   return (
-    <main className="max-w-7xl mx-auto px-4 py-4">
-
-      {/* Top nav bar */}
-      <nav className="flex gap-4 overflow-x-auto pb-3 mb-4 border-b text-sm font-medium">
-        <Link href="/" className="text-brand whitespace-nowrap">Home</Link>
-        {CATEGORIES.map((c) => (
-          <Link key={c.slug} href={`/category/${c.slug}`} className="text-gray-600 hover:text-brand whitespace-nowrap transition-colors">
-            {c.name}
-          </Link>
-        ))}
-        <Link href="/podcasts" className="text-gray-600 hover:text-brand whitespace-nowrap transition-colors">Podcasts</Link>
-        <Link href="/live" className="text-gray-600 hover:text-brand whitespace-nowrap transition-colors">Live TV</Link>
-      </nav>
-
-      {/* Breaking news ticker */}
-      <div className="bg-brand text-white px-4 py-2 rounded-lg mb-5 flex items-center gap-3 overflow-hidden">
-        <span className="font-bold text-xs uppercase tracking-widest shrink-0 bg-white text-brand px-2 py-0.5 rounded">
-          Breaking
-        </span>
-        <span className="text-sm truncate">
-          {loading ? 'Loading latest news...' : (breaking?.title ?? 'Stay tuned for the latest breaking news from India and the world')}
-        </span>
-      </div>
-
-      {loading ? (
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-10">
-          {[...Array(6)].map((_, i) => (
-            <div key={i} className="animate-pulse bg-gray-100 rounded-xl h-48" />
-          ))}
-        </div>
-      ) : articles.length === 0 ? (
-        <div className="text-center py-20 text-gray-400">
-          <p className="text-lg">No articles yet.</p>
-          <p className="text-sm mt-2">The AI pipeline will populate this automatically once deployed.</p>
-        </div>
-      ) : (
-        <>
-          {/* Hero section */}
-          <div className="grid grid-cols-1 lg:grid-cols-3 gap-5 mb-8">
-            {/* Main hero */}
-            {breaking && (
-              <div className="lg:col-span-2">
-                <Link href={`/article/${breaking.slug}`} className="group block bg-gradient-to-br from-gray-900 to-gray-700 rounded-2xl overflow-hidden h-72 relative">
-                  <div className="absolute inset-0 bg-gradient-to-t from-black/80 via-black/20 to-transparent" />
-                  <div className="absolute bottom-0 left-0 right-0 p-6">
-                    <span className="text-xs font-bold uppercase tracking-wider text-brand-light bg-brand px-2 py-0.5 rounded mb-2 inline-block">
-                      Top Story
-                    </span>
-                    <h1 className="text-xl font-bold text-white group-hover:text-yellow-300 transition-colors leading-tight font-serif">
-                      {breaking.title}
-                    </h1>
-                    {breaking.excerpt && (
-                      <p className="text-gray-300 mt-1 text-sm line-clamp-2">{breaking.excerpt}</p>
-                    )}
-                    {breaking.publishedAt && (
-                      <p className="text-gray-400 text-xs mt-2 flex items-center gap-1">
-                        <Clock className="h-3 w-3" />
-                        {new Date(breaking.publishedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
-                      </p>
-                    )}
-                  </div>
-                </Link>
+    <div className="bg-gray-50 min-h-screen">
+      {/* Breaking ticker */}
+      {!loading && breaking.length > 0 && (
+        <div className="bg-navy text-white py-2 px-4 overflow-hidden">
+          <div className="max-w-7xl mx-auto flex items-center gap-3">
+            <span className="bg-signal text-white text-[10px] font-black uppercase px-2 py-0.5 rounded shrink-0 flex items-center gap-1">
+              <Flame className="h-3 w-3" /> Breaking
+            </span>
+            <div className="overflow-hidden flex-1">
+              <div className="flex gap-8 animate-[ticker_30s_linear_infinite] whitespace-nowrap">
+                {[...breaking, ...breaking].map((a, i) => (
+                  <Link key={`${a.id}-${i}`} href={`/article/${a.slug}`}
+                    className="text-sm text-blue-100 hover:text-white transition-colors shrink-0">
+                    {a.title}
+                  </Link>
+                ))}
               </div>
-            )}
+            </div>
+          </div>
+        </div>
+      )}
 
-            {/* Side stories */}
-            <div className="space-y-3">
-              {rest.slice(0, 4).map((a) => (
-                <Link key={a.id} href={`/article/${a.slug}`} className="group flex gap-3 border-b pb-3 last:border-0">
-                  <div className="h-16 w-16 rounded-lg bg-gray-200 shrink-0 flex items-center justify-center text-gray-400 text-xs font-bold">
-                    NR
+      <div className="max-w-7xl mx-auto px-4 py-6">
+
+        {/* Category pills */}
+        <div className="flex gap-2 flex-wrap mb-6">
+          {SECTIONS.map((s) => (
+            <Link key={s} href={`/category/${s}`}
+              className={`${CAT_META[s].color} text-white text-xs font-bold px-3 py-1.5 rounded-full hover:opacity-90 transition-opacity`}>
+              {CAT_META[s].label}
+            </Link>
+          ))}
+          <Link href="/archive" className="bg-gray-600 text-white text-xs font-bold px-3 py-1.5 rounded-full hover:opacity-90 transition-opacity">
+            Archive
+          </Link>
+        </div>
+
+        {/* Main hero */}
+        {loading ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+            <div className="animate-pulse bg-gray-200 rounded-xl h-80 lg:col-span-2" />
+            <div className="space-y-3">{[0,1,2].map((i) => <div key={i} className="animate-pulse bg-gray-200 rounded-xl h-24" />)}</div>
+          </div>
+        ) : articles.length > 0 ? (
+          <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
+            <Link href={`/article/${articles[0].slug}`}
+              className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
+              <Image src={getArticleImage(articles[0].slug, undefined, 'hero', getBodyImageUrl(articles[0].body))}
+                alt={articles[0].title} fill className="object-cover" unoptimized priority />
+              <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
+              <div className="absolute inset-x-0 bottom-0 p-6">
+                <span className="bg-signal text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded mb-2 inline-block">Top Story</span>
+                <h2 className="text-white font-serif font-bold text-2xl leading-snug group-hover:text-signal transition-colors line-clamp-3">
+                  {articles[0].title}
+                </h2>
+                {articles[0].excerpt && <p className="text-blue-200 text-sm mt-1 line-clamp-2">{articles[0].excerpt}</p>}
+                {articles[0].publishedAt && (
+                  <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">
+                    <Clock className="h-3 w-3" />{timeAgo(articles[0].publishedAt)}
+                  </p>
+                )}
+              </div>
+            </Link>
+            <div className="flex flex-col gap-3">
+              {articles.slice(1, 4).map((a) => (
+                <Link key={a.id} href={`/article/${a.slug}`}
+                  className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
+                  <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
+                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getBodyImageUrl(a.body))}
+                      alt={a.title} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="text-sm font-semibold text-gray-800 group-hover:text-brand transition-colors line-clamp-2 leading-snug">
-                      {a.title}
-                    </h3>
+                    <h3 className="font-semibold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-3">{a.title}</h3>
                     {a.publishedAt && (
-                      <p className="text-xs text-gray-400 mt-0.5">
-                        {new Date(a.publishedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short' })}
+                      <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
+                        <Clock className="h-3 w-3" />{timeAgo(a.publishedAt)}
                       </p>
                     )}
                   </div>
@@ -126,36 +197,137 @@ export default function HomePage() {
               ))}
             </div>
           </div>
+        ) : (
+          <div className="text-center py-16 text-gray-400 mb-8">
+            <Globe className="h-12 w-12 mx-auto mb-3 opacity-20" />
+            <p className="font-semibold">News pipeline initialising…</p>
+            <p className="text-sm mt-1">RSS feeds update 3× daily. Check back soon.</p>
+          </div>
+        )}
 
-          {/* Latest News grid */}
-          <div className="mb-8">
-            <h2 className="text-lg font-bold text-gray-900 mb-4 flex items-center gap-2">
-              <span className="w-1 h-5 bg-brand rounded inline-block" />
-              Latest News
-            </h2>
-            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-              {rest.slice(4).map((a) => (
-                <Link key={a.id} href={`/article/${a.slug}`} className="group block border rounded-xl overflow-hidden hover:shadow-md transition-shadow">
-                  <div className="h-36 bg-gradient-to-br from-gray-200 to-gray-300 flex items-center justify-center">
-                    <span className="text-gray-400 font-bold text-sm">NR</span>
+        {/* Latest news grid */}
+        {!loading && articles.length > 4 && (
+          <section className="mb-10">
+            <div className="flex items-center justify-between mb-3">
+              <h2 className="text-base font-black text-navy uppercase tracking-widest border-l-4 border-brand pl-3">Latest News</h2>
+              <Link href="/archive" className="text-xs text-brand font-semibold flex items-center gap-1 hover:text-brand-dark">
+                View all <ChevronRight className="h-3.5 w-3.5" />
+              </Link>
+            </div>
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
+              {articles.slice(4, 24).map((a) => (
+                <Link key={a.id} href={`/article/${a.slug}`}
+                  className="group bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-md transition-all overflow-hidden">
+                  <div className="relative h-36 overflow-hidden">
+                    <Image src={getArticleImage(a.slug, undefined, 'card', getBodyImageUrl(a.body))}
+                      alt={a.title} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
                   </div>
                   <div className="p-3">
-                    <h3 className="text-sm font-semibold text-gray-800 group-hover:text-brand transition-colors line-clamp-3 leading-snug">
-                      {a.title}
-                    </h3>
-                    {a.excerpt && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                    <h3 className="font-bold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
                     {a.publishedAt && (
-                      <p className="text-xs text-gray-400 mt-2">
-                        {new Date(a.publishedAt).toLocaleString('en-IN', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' })}
+                      <p className="text-[10px] text-gray-400 mt-1.5 flex items-center gap-1">
+                        <Clock className="h-2.5 w-2.5" />{timeAgo(a.publishedAt)}
                       </p>
                     )}
                   </div>
                 </Link>
               ))}
             </div>
-          </div>
-        </>
-      )}
-    </main>
+          </section>
+        )}
+
+        {/* Per-category sections — each showing up to 20 articles */}
+        {!loading && SECTIONS.map((slug) => {
+          const meta = CAT_META[slug];
+          const list = sections.get(slug) ?? [];
+          if (list.length === 0) return null;
+
+          const [hero, ...rest] = list;
+
+          // For sub-topics (not india/world): split into India col + World col from own+filler
+          const isGeo = slug === 'india' || slug === 'world';
+          const indiaItems = !isGeo ? list.filter((a) => a.categoryId === indiaId).slice(0, 10) : [];
+          const worldItems = !isGeo ? list.filter((a) => a.categoryId === worldId).slice(0, 10) : [];
+          const otherItems = !isGeo
+            ? list.filter((a) => a.categoryId !== indiaId && a.categoryId !== worldId).slice(0, 10)
+            : [];
+
+          // If we have dedicated category articles, show them; otherwise show all list items
+          const hasSplit = (indiaItems.length + worldItems.length) >= 3;
+          const gridItems = isGeo ? rest.slice(0, 19) : (hasSplit ? otherItems : rest.slice(0, 19));
+
+          return (
+            <section key={slug} className="mb-10">
+              {/* Section header */}
+              <div className={`flex items-center justify-between border-b-2 ${meta.border} pb-2 mb-4`}>
+                <div className="flex items-center gap-2">
+                  <span className={`${meta.color} text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded`}>
+                    {meta.label}
+                  </span>
+                  <h2 className="text-base font-black text-navy uppercase tracking-widest">{meta.label} News</h2>
+                </div>
+                <Link href={`/category/${slug}`}
+                  className="text-xs text-brand font-semibold flex items-center gap-1 hover:text-brand-dark">
+                  More {meta.label} <ChevronRight className="h-3.5 w-3.5" />
+                </Link>
+              </div>
+
+              {/* Hero + grid layout */}
+              <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
+                {/* Section hero */}
+                <Link href={`/article/${hero.slug}`}
+                  className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
+                  <Image src={getArticleImage(hero.slug, undefined, 'hero', getBodyImageUrl(hero.body))}
+                    alt={hero.title} fill className="object-cover" unoptimized />
+                  <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
+                  <div className="absolute inset-x-0 bottom-0 p-4">
+                    <span className={`inline-block ${meta.color} text-white text-[10px] font-black uppercase px-2 py-0.5 rounded mb-1`}>Top</span>
+                    <h3 className="text-white font-serif font-bold text-sm leading-snug group-hover:text-signal transition-colors line-clamp-3">
+                      {hero.title}
+                    </h3>
+                    {hero.publishedAt && (
+                      <p className="text-blue-300/70 text-[10px] mt-1 flex items-center gap-1">
+                        <Clock className="h-2.5 w-2.5" />{timeAgo(hero.publishedAt)}
+                      </p>
+                    )}
+                  </div>
+                </Link>
+
+                {/* Main grid — up to 19 articles in 3-column right side */}
+                <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
+                  {gridItems.map((a) => <ArticleCard key={a.id} a={a} />)}
+                </div>
+              </div>
+
+              {/* India + World sub-split for topic sections */}
+              {!isGeo && hasSplit && (
+                <div className="mt-4 grid grid-cols-1 lg:grid-cols-2 gap-6">
+                  {indiaItems.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-orange-600 uppercase tracking-widest mb-2 border-b border-orange-100 pb-1 flex items-center gap-1">
+                        🇮🇳 India {meta.label}
+                      </p>
+                      <div className="grid grid-cols-1 gap-2">
+                        {indiaItems.map((a) => <ArticleCard key={a.id} a={a} />)}
+                      </div>
+                    </div>
+                  )}
+                  {worldItems.length > 0 && (
+                    <div>
+                      <p className="text-xs font-black text-blue-600 uppercase tracking-widest mb-2 border-b border-blue-100 pb-1 flex items-center gap-1">
+                        🌍 World {meta.label}
+                      </p>
+                      <div className="grid grid-cols-1 gap-2">
+                        {worldItems.map((a) => <ArticleCard key={a.id} a={a} />)}
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
+            </section>
+          );
+        })}
+      </div>
+    </div>
   );
 }

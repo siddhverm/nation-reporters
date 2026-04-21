@@ -77,7 +77,7 @@ export class AuthService {
     return { enabled: true };
   }
 
-  private issueTokens(user: { id: string; email: string; role: string }) {
+  private issueTokens(user: { id: string; name?: string; email: string; role: string }) {
     const payload = { sub: user.id, email: user.email, role: user.role };
     return {
       accessToken: this.jwt.sign(payload, { expiresIn: '15m' }),
@@ -85,6 +85,7 @@ export class AuthService {
         secret: this.config.get<string>('JWT_REFRESH_SECRET'),
         expiresIn: '7d',
       }),
+      user: { id: user.id, name: user.name ?? user.email, email: user.email, role: user.role },
     };
   }
 }

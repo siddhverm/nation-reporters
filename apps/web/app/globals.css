@@ -1,8 +1,42 @@
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;900&family=Merriweather:ital,wght@0,400;0,700;1,400&display=swap');
+
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
 
 :root {
-  --brand-primary: #c0392b;   /* news red */
-  --brand-secondary: #2c3e50; /* dark navy */
+  --brand:  #D41F26;   /* logo red border */
+  --navy:   #1A3769;   /* logo text/globe navy */
+  --signal: #F4A420;   /* logo orange WiFi arcs */
+}
+
+/* Marquee ticker */
+@keyframes ticker {
+  0%   { transform: translateX(100%); }
+  100% { transform: translateX(-100%); }
+}
+.ticker-track {
+  display: inline-block;
+  white-space: nowrap;
+  animation: ticker 30s linear infinite;
+}
+
+/* Card hover lift */
+.news-card {
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+.news-card:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.10);
+}
+
+/* Section title accent underline */
+.section-title::after {
+  content: '';
+  display: block;
+  width: 2rem;
+  height: 3px;
+  background: var(--brand);
+  margin-top: 4px;
+  border-radius: 2px;
 }

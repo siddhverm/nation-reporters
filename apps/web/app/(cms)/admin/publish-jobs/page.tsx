@@ -27,19 +27,21 @@ export default function PublishJobsAdminPage() {
   const [loading, setLoading] = useState(true);
   const [tab, setTab] = useState<'all' | 'dlq'>('all');
 
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
   function token() { return localStorage.getItem('accessToken') ?? ''; }
 
   function load() {
     setLoading(true);
     const endpoint = tab === 'dlq' ? '/publish-jobs/dlq' : '/publish-jobs';
-    fetch(`${process.env.NEXT_PUBLIC_API_URL}${endpoint}`, { headers: { Authorization: `Bearer ${token()}` } })
-      .then((r) => r.json()).then((d: Job[]) => { setJobs(d); setLoading(false); });
+    fetch(`${base}${endpoint}`, { headers: { Authorization: `Bearer ${token()}` } })
+      .then((r) => r.json()).then((d) => { setJobs(Array.isArray(d) ? d : (d.data ?? [])); setLoading(false); })
+      .catch(() => setLoading(false));
   }
 
   useEffect(load, [tab]);
 
   async function retry(id: string) {
-    await fetch(`${process.env.NEXT_PUBLIC_API_URL}/publish-jobs/${id}/retry`, {
+    await fetch(`${base}/publish-jobs/${id}/retry`, {
       method: 'POST', headers: { Authorization: `Bearer ${token()}` },
     });
     load();
