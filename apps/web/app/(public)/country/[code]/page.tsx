@@ -28,15 +28,22 @@ export default function CountryPage() {
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
-    const langParam = country?.lang && country.lang !== 'en' ? `&language=${country.lang}` : '';
-    fetch(`${base}/articles?status=PUBLISHED&limit=30${langParam}`)
-      .then((r) => r.json())
-      .then((res: { data?: Article[] }) => {
-        const arr = res.data ?? [];
-        setArticles(arr.length > 0 ? arr : []);
-        setLoading(false);
-      })
-      .catch(() => setLoading(false));
+
+    const load = async () => {
+      try {
+        if (country?.lang && country.lang !== 'en') {
+          const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30&language=${country.lang}`);
+          const d = await r.json() as { data?: Article[] };
+          if ((d.data ?? []).length > 0) { setArticles(d.data!); setLoading(false); return; }
+        }
+        // Fallback: latest published articles
+        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
+        const d = await r.json() as { data?: Article[] };
+        setArticles(d.data ?? []);
+      } catch { /* empty */ }
+      setLoading(false);
+    };
+    load();
   }, [code, country?.lang]);
 
   const [hero, ...rest] = articles;

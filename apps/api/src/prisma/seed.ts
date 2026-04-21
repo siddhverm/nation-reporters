@@ -340,6 +340,54 @@ async function main() {
     { name: 'Al Jazeera English', feedUrl: 'https://www.aljazeera.com/xml/rss/all.xml', isTrusted: true },
   ];
 
+  // Sports-specific feeds
+  const sportsSources = [
+    { name: 'ESPN Cricket', feedUrl: 'https://www.espncricinfo.com/rss/content/story/feeds/0.xml', isTrusted: true },
+    { name: 'BBC Sport Cricket', feedUrl: 'https://feeds.bbci.co.uk/sport/cricket/rss.xml', isTrusted: true },
+    { name: 'BBC Sport Football', feedUrl: 'https://feeds.bbci.co.uk/sport/football/rss.xml', isTrusted: true },
+    { name: 'Sky Sports Football', feedUrl: 'https://www.skysports.com/rss/12040', isTrusted: true },
+    { name: 'Goal.com Football', feedUrl: 'https://www.goal.com/feeds/en/news', isTrusted: true },
+    { name: 'ESPN Sports Top', feedUrl: 'https://www.espn.com/espn/rss/news', isTrusted: true },
+    { name: 'BBC Sport Rugby', feedUrl: 'https://feeds.bbci.co.uk/sport/rugby-union/rss.xml', isTrusted: true },
+    { name: 'BBC Sport Tennis', feedUrl: 'https://feeds.bbci.co.uk/sport/tennis/rss.xml', isTrusted: true },
+    { name: 'NDTV Sports Latest', feedUrl: 'https://feeds.feedburner.com/NdtvSports-latest', isTrusted: true },
+    { name: 'The Hindu Sport', feedUrl: 'https://www.thehindu.com/sport/feeder/default.rss', isTrusted: true },
+    { name: 'Sportstar Cricket', feedUrl: 'https://sportstar.thehindu.com/cricket/feeder/default.rss', isTrusted: true },
+    { name: 'Indian Express Sports', feedUrl: 'https://indianexpress.com/section/sports/feed/', isTrusted: true },
+  ];
+
+  // War / Conflict / World affairs feeds
+  const worldConflictSources = [
+    { name: 'Reuters World News', feedUrl: 'https://feeds.reuters.com/reuters/worldNews', isTrusted: true },
+    { name: 'BBC World News Global', feedUrl: 'https://feeds.bbci.co.uk/news/world/rss.xml', isTrusted: true },
+    { name: 'Guardian World', feedUrl: 'https://www.theguardian.com/world/rss', isTrusted: true },
+    { name: 'AP World News', feedUrl: 'https://rsshub.app/apnews/topics/apf-intlnews', isTrusted: true },
+    { name: 'France 24 World', feedUrl: 'https://www.france24.com/en/rss', isTrusted: true },
+    { name: 'DW World', feedUrl: 'https://rss.dw.com/rdf/rss-en-world', isTrusted: true },
+    { name: 'Middle East Eye', feedUrl: 'https://www.middleeasteye.net/rss', isTrusted: false },
+    { name: 'The Wire World', feedUrl: 'https://thewire.in/category/world/feed', isTrusted: true },
+  ];
+
+  // Business / Finance feeds
+  const businessFeeds = [
+    { name: 'Reuters Business', feedUrl: 'https://feeds.reuters.com/reuters/businessNews', isTrusted: true },
+    { name: 'Bloomberg Markets', feedUrl: 'https://feeds.bloomberg.com/markets/news.rss', isTrusted: true },
+    { name: 'Moneycontrol', feedUrl: 'https://www.moneycontrol.com/rss/latestnews.xml', isTrusted: true },
+    { name: 'Economic Times', feedUrl: 'https://economictimes.indiatimes.com/rssfeedstopstories.cms', isTrusted: true },
+    { name: 'Business Standard', feedUrl: 'https://www.business-standard.com/rss/latest.rss', isTrusted: true },
+    { name: 'Livemint', feedUrl: 'https://www.livemint.com/rss/news', isTrusted: true },
+    { name: 'Financial Express', feedUrl: 'https://www.financialexpress.com/feed/', isTrusted: true },
+  ];
+
+  // Tech feeds
+  const techFeeds = [
+    { name: 'TechCrunch', feedUrl: 'https://techcrunch.com/feed/', isTrusted: true },
+    { name: 'The Verge', feedUrl: 'https://www.theverge.com/rss/index.xml', isTrusted: true },
+    { name: 'Ars Technica', feedUrl: 'https://feeds.arstechnica.com/arstechnica/index', isTrusted: true },
+    { name: 'Wired', feedUrl: 'https://www.wired.com/feed/rss', isTrusted: true },
+    { name: 'Gadgets 360', feedUrl: 'https://feeds.feedburner.com/gadgets360-latest', isTrusted: true },
+  ];
+
   const allSources = [
     ...englishSources, ...hindiSources,
     ...marathiSources, ...bengaliSources, ...tamilSources,
@@ -352,6 +400,10 @@ async function main() {
     ...seAsiaSources, ...africaSources,
     ...pakistanSources, ...bangladeshSources,
     ...internationalSources,
+    ...sportsSources,
+    ...worldConflictSources,
+    ...businessFeeds,
+    ...techFeeds,
   ];
 
   for (const src of allSources) {

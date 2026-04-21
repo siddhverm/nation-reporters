@@ -67,15 +67,23 @@ export default function HomePage() {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
 
+    const fetchArticles = async (): Promise<Article[]> => {
+      try {
+        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200&language=${lang}`);
+        const d = await r.json();
+        const list: Article[] = Array.isArray(d) ? d : (d.data ?? []);
+        if (list.length > 0) return list;
+      } catch { /* fall through */ }
+      // Fallback when no articles in selected language
+      try {
+        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200`);
+        const d = await r.json();
+        return Array.isArray(d) ? d : (d.data ?? []);
+      } catch { return []; }
+    };
+
     Promise.all([
-      fetch(`${base}/articles?status=PUBLISHED&limit=200&language=${lang}`)
-        .then((r) => r.json())
-        .then((d) => d.data ?? d ?? [])
-        .catch(async () => {
-          const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200`);
-          const d = await r.json();
-          return d.data ?? d ?? [];
-        }),
+      fetchArticles(),
       fetch(`${base}/categories`).then((r) => r.json()).catch(() => []),
     ]).then(([arts, cats]) => {
       setArticles(Array.isArray(arts) ? arts : []);
