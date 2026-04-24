@@ -49,8 +49,8 @@ export default function CountryPage() {
     const load = async (preferredLang: string) => {
       setLoading(true);
       const resolvedLang = typeof window !== 'undefined'
-        ? (preferredLang || localStorage.getItem('nr-lang') ?? country?.lang ?? 'en')
-        : (preferredLang || country?.lang ?? 'en');
+        ? ((preferredLang || localStorage.getItem('nr-lang')) ?? country?.lang ?? 'en')
+        : ((preferredLang || country?.lang) ?? 'en');
       setLocalLanguage(resolvedLang);
 
       try {
