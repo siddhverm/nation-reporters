@@ -1,5 +1,5 @@
 'use client';
-import { useState, useRef } from 'react';
+import { Suspense, useState, useRef } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
@@ -45,7 +45,7 @@ const ROLES = [
   },
 ];
 
-export default function LoginPage() {
+function LoginPageContent() {
   const router       = useRouter();
   const params       = useSearchParams();
   const redirect     = params.get('redirect') ?? '/reporter';
@@ -202,5 +202,13 @@ export default function LoginPage() {
         </div>
       </div>
     </div>
+  );
+}
+
+export default function LoginPage() {
+  return (
+    <Suspense fallback={<div className="min-h-screen bg-gray-50" />}>
+      <LoginPageContent />
+    </Suspense>
   );
 }
