@@ -58,14 +58,21 @@ export class PublishingService {
   }
 
   async publishArticle(articleId: string, platforms?: Platform[]) {
-    const activePlatforms = platforms
-      ? platforms.filter((p) => this.enabledPlatforms.has(p))
-      : [...this.enabledPlatforms];
     const article = await this.prisma.article.findUnique({
       where: { id: articleId },
-      include: { socialCaptions: true, mediaAssets: { take: 1 } },
+      include: { socialCaptions: true, mediaAssets: { take: 5 } },
     });
     if (!article) throw new NotFoundException('Article not found');
+    const videoAsset = article.mediaAssets.find((m) => m.type === 'VIDEO');
+    const imageAsset = article.mediaAssets.find((m) => m.type === 'IMAGE');
+
+    let activePlatforms = platforms
+      ? platforms.filter((p) => this.enabledPlatforms.has(p))
+      : [...this.enabledPlatforms];
+    // Avoid guaranteed failures: YouTube requires a video URL
+    if (!videoAsset) {
+      activePlatforms = activePlatforms.filter((p) => p !== Platform.YOUTUBE);
+    }
 
     const jobs = await Promise.all(
       activePlatforms.map((platform) =>
@@ -90,6 +97,8 @@ export class PublishingService {
   private async executeJob(jobId: string, article: any) {
     const job = await this.prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } });
     const connector = this.connectors.get(job.platform);
+    const videoAsset = article.mediaAssets?.find((m: any) => m.type === 'VIDEO');
+    const imageAsset = article.mediaAssets?.find((m: any) => m.type === 'IMAGE');
 
     if (job.platform === Platform.WEB) {
       // Web is handled by marking article published — nothing to do here
@@ -114,7 +123,8 @@ export class PublishingService {
       title: article.title,
       excerpt: article.excerpt ?? article.title,
       url: `https://nationreporters.com/article/${article.seoSlug ?? article.slug}`,
-      imageUrl: article.mediaAssets?.[0]?.url,
+      imageUrl: imageAsset?.url,
+      videoUrl: videoAsset?.url,
       caption: caption?.caption,
       hashtags: article.hashtags,
       platform: job.platform,
@@ -157,7 +167,7 @@ export class PublishingService {
 
     const article = await this.prisma.article.findUnique({
       where: { id: articleId },
-      include: { socialCaptions: true, mediaAssets: { take: 1 } },
+      include: { socialCaptions: true, mediaAssets: { take: 5 } },
     });
     if (!article) return;
 

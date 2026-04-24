@@ -239,6 +239,7 @@ model IngestedSource {
   name           String
   feedUrl        String    @unique
   type           String
+  language       String    @default("en")
   isActive       Boolean   @default(true)
   isTrusted      Boolean   @default(false)
   rightsMetadata Json?
@@ -404,4 +405,18 @@ model Notification {
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("notifications")
+}
+
+model WebPushSubscription {
+  id        String   @id @default(uuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  language  String?
+  userAgent String?
+  isActive  Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@map("web_push_subscriptions")
 }

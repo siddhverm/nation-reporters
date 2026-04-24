@@ -18,6 +18,7 @@ const NAV = [
   { label: 'Feature Flags', href: '/admin/feature-flags', icon: Flag,        roles: ['ADMIN'] },
   { label: 'Publish Jobs',  href: '/admin/publish-jobs',  icon: Radio,       roles: ['ADMIN'] },
   { label: 'Analytics',     href: '/admin/analytics',     icon: BarChart2,   roles: ['ADMIN'] },
+  { label: 'Content Health',href: '/admin/content-health',icon: BarChart2,   roles: ['ADMIN'] },
   { label: 'Settings',      href: '/admin/settings',      icon: Settings,    roles: ['ADMIN'] },
 ];
 

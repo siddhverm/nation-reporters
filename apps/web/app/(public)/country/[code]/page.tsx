@@ -5,11 +5,14 @@ import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight, Globe } from 'lucide-react';
 import { COUNTRY_BY_SLUG, REGION_LABELS, COUNTRIES } from '@/lib/countries';
-import { getArticleImage } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 
 interface Article {
   id: string; title: string; slug: string;
   excerpt: string | null; publishedAt: string | null;
+  language?: string;
+  body?: Record<string, unknown>;
+  mediaAssets?: { type?: string; url?: string | null }[];
 }
 
 function timeAgo(d: string) {
@@ -23,30 +26,84 @@ function timeAgo(d: string) {
 export default function CountryPage() {
   const { code } = useParams<{ code: string }>();
   const country = COUNTRY_BY_SLUG.get(code);
-  const [articles, setArticles] = useState<Article[]>([]);
+  const [localArticles, setLocalArticles] = useState<Article[]>([]);
+  const [globalArticles, setGlobalArticles] = useState<Article[]>([]);
+  const [localLanguage, setLocalLanguage] = useState('en');
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
 
-    const load = async () => {
+    const mergeUnique = (items: Article[]) => {
+      const seen = new Set<string>();
+      return items.filter((item) => {
+        const key = item.id || item.slug;
+        if (seen.has(key)) return false;
+        seen.add(key);
+        return true;
+      });
+    };
+
+    const controller = new AbortController();
+
+    const load = async (preferredLang: string) => {
+      setLoading(true);
+      const resolvedLang = typeof window !== 'undefined'
+        ? (preferredLang || localStorage.getItem('nr-lang') ?? country?.lang ?? 'en')
+        : (preferredLang || country?.lang ?? 'en');
+      setLocalLanguage(resolvedLang);
+
       try {
-        if (country?.lang && country.lang !== 'en') {
-          const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30&language=${country.lang}`);
-          const d = await r.json() as { data?: Article[] };
-          if ((d.data ?? []).length > 0) { setArticles(d.data!); setLoading(false); return; }
+        const countryFeedRes = await fetch(
+          `${base}/articles/country-feed?localLang=${encodeURIComponent(resolvedLang)}&globalLang=en&localLimit=20&globalLimit=20`,
+          { signal: controller.signal },
+        );
+        const countryFeed = await countryFeedRes.json() as { local?: Article[]; global?: Article[] };
+        const dedupedLocal = mergeUnique(countryFeed.local ?? []);
+        const dedupedGlobal = mergeUnique(countryFeed.global ?? []);
+
+        if (dedupedLocal.length > 0 || dedupedGlobal.length > 0) {
+          setLocalArticles(dedupedLocal);
+          setGlobalArticles(dedupedGlobal);
+          setLoading(false);
+          return;
         }
+
         // Fallback: latest published articles
-        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
+        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30`, { signal: controller.signal });
         const d = await r.json() as { data?: Article[] };
-        setArticles(d.data ?? []);
+        const fallbackRaw = d.data ?? [];
+        const fallback = resolvedLang === 'en'
+          ? fallbackRaw
+          : fallbackRaw.filter((a) => (a.language ?? 'en').toLowerCase() === resolvedLang.toLowerCase());
+        setLocalArticles(fallback);
+        setGlobalArticles([]);
       } catch { /* empty */ }
       setLoading(false);
     };
-    load();
+    const selected = typeof window !== 'undefined'
+      ? (localStorage.getItem('nr-lang') ?? country?.lang ?? 'en')
+      : (country?.lang ?? 'en');
+    void load(selected);
+
+    const onLangChange = (e: Event) => {
+      const customEvent = e as CustomEvent<{ lang?: string }>;
+      void load(customEvent.detail?.lang ?? 'en');
+    };
+    if (typeof window !== 'undefined') {
+      window.addEventListener('nr-lang-change', onLangChange);
+    }
+    return () => {
+      controller.abort();
+      if (typeof window !== 'undefined') {
+        window.removeEventListener('nr-lang-change', onLangChange);
+      }
+    };
   }, [code, country?.lang]);
 
-  const [hero, ...rest] = articles;
+  const localFeed = localArticles;
+  const globalFeed = globalArticles;
+  const [hero, ...rest] = localFeed.length > 0 ? localFeed : globalFeed;
   const sameRegion = COUNTRIES.filter((c) => c.region === country?.region && c.slug !== code).slice(0, 8);
 
   return (
@@ -66,7 +123,7 @@ export default function CountryPage() {
             <div>
               <h1 className="text-2xl font-black">{country?.name ?? code}</h1>
               <p className="text-blue-300 text-sm">
-                {country ? `${REGION_LABELS[country.region]} · ${country.langName}` : 'World News'}
+                {country ? `${REGION_LABELS[country.region]} · Local: ${localLanguage.toUpperCase()} + Global: EN` : 'World News'}
               </p>
             </div>
           </div>
@@ -81,7 +138,7 @@ export default function CountryPage() {
           </div>
         )}
 
-        {!loading && articles.length === 0 && (
+        {!loading && localFeed.length === 0 && globalFeed.length === 0 && (
           <div className="text-center py-20 text-gray-400">
             <Globe className="h-14 w-14 mx-auto mb-4 opacity-20" />
             <p className="text-lg font-semibold">No articles for {country?.name ?? code} yet.</p>
@@ -89,18 +146,21 @@ export default function CountryPage() {
           </div>
         )}
 
-        {!loading && articles.length > 0 && (
+        {!loading && (localFeed.length > 0 || globalFeed.length > 0) && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
             <div className="lg:col-span-2 space-y-5">
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
-                  <Image src={getArticleImage(hero.slug, code, 'hero')} alt={hero.title}
+                  <Image src={getArticleImage(hero.slug, code, 'hero', getPreferredArticleImage(hero))} alt={hero.title}
                     fill className="object-cover" unoptimized />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
                     <span className="inline-block bg-brand text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded mb-2">
                       {country?.flag} {country?.name}
+                    </span>
+                    <span className="inline-block bg-white/20 text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded mb-2 ml-2">
+                      {(hero.language ?? 'en').toUpperCase()}
                     </span>
                     <h2 className="text-white font-serif font-bold text-xl leading-snug group-hover:text-signal line-clamp-3">
                       {hero.title}
@@ -119,10 +179,13 @@ export default function CountryPage() {
                   <Link key={a.id} href={`/article/${a.slug}`}
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                      <Image src={getArticleImage(a.slug, code, 'thumb')} alt={a.title} fill className="object-cover" unoptimized />
+                      <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={a.title} fill className="object-cover" unoptimized />
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
+                      <p className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">
+                        {(a.language ?? 'en')}
+                      </p>
                       {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
                       {a.publishedAt && (
                         <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
@@ -133,6 +196,50 @@ export default function CountryPage() {
                   </Link>
                 ))}
               </div>
+
+              {localFeed.length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-sm font-black text-navy uppercase tracking-widest border-b-2 border-brand pb-2 mb-3">
+                    Local Language News ({localLanguage.toUpperCase()})
+                  </h3>
+                  <div className="space-y-3">
+                    {localFeed.slice(0, 12).map((a) => (
+                      <Link key={`local-${a.id}`} href={`/article/${a.slug}`}
+                        className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
+                        <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
+                          <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={a.title} fill className="object-cover" unoptimized />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
+                          {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
+
+              {globalFeed.length > 0 && (
+                <div className="mt-6">
+                  <h3 className="text-sm font-black text-navy uppercase tracking-widest border-b-2 border-blue-500 pb-2 mb-3">
+                    Global News (EN)
+                  </h3>
+                  <div className="space-y-3">
+                    {globalFeed.slice(0, 12).map((a) => (
+                      <Link key={`global-${a.id}`} href={`/article/${a.slug}`}
+                        className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-blue-300 hover:shadow-sm transition-all">
+                        <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
+                          <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={a.title} fill className="object-cover" unoptimized />
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 leading-snug line-clamp-2">{a.title}</h3>
+                          {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                        </div>
+                      </Link>
+                    ))}
+                  </div>
+                </div>
+              )}
             </div>
 
             {/* Sidebar: same region countries */}

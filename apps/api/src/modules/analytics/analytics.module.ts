@@ -35,6 +35,96 @@ class AnalyticsController {
     });
     return { articleId: id, publishJobs: jobs };
   }
+
+  @Get('content-health')
+  async contentHealth() {
+    const monitoredCategories = ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'];
+    const monitoredLanguages = ['en', 'hi', 'mr', 'bn', 'ta', 'te', 'gu', 'kn', 'pa', 'ur', 'ar', 'fr', 'de', 'es', 'pt', 'ru', 'zh', 'ja', 'ko'];
+    const minRequired = Number(process.env.INGESTION_MIN_SECTION_INVENTORY ?? 20);
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const categories = await this.prisma.category.findMany({
+      where: { slug: { in: monitoredCategories } },
+      select: { id: true, slug: true, name: true },
+      orderBy: { slug: 'asc' },
+    });
+    const categoryById = new Map(categories.map((c) => [c.id, c]));
+
+    const [counts24h, countsTotal, ingestionMeta] = await Promise.all([
+      this.prisma.article.groupBy({
+        by: ['categoryId', 'language'],
+        where: {
+          status: 'PUBLISHED',
+          categoryId: { in: categories.map((c) => c.id) },
+          language: { in: monitoredLanguages },
+          publishedAt: { gte: since },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.article.groupBy({
+        by: ['categoryId', 'language'],
+        where: {
+          status: 'PUBLISHED',
+          categoryId: { in: categories.map((c) => c.id) },
+          language: { in: monitoredLanguages },
+        },
+        _count: { _all: true },
+      }),
+      this.prisma.ingestedSource.aggregate({
+        _max: { lastFetchedAt: true },
+        _count: { _all: true },
+      }),
+    ]);
+
+    const map24h = new Map<string, number>();
+    const mapTotal = new Map<string, number>();
+    for (const row of counts24h) {
+      if (!row.categoryId) continue;
+      map24h.set(`${row.categoryId}|${(row.language ?? 'en').toLowerCase()}`, row._count._all);
+    }
+    for (const row of countsTotal) {
+      if (!row.categoryId) continue;
+      mapTotal.set(`${row.categoryId}|${(row.language ?? 'en').toLowerCase()}`, row._count._all);
+    }
+
+    const rows: Array<{
+      categorySlug: string;
+      categoryName: string;
+      language: string;
+      count24h: number;
+      countTotal: number;
+      belowMin: boolean;
+    }> = [];
+
+    for (const category of categories) {
+      for (const language of monitoredLanguages) {
+        const key = `${category.id}|${language}`;
+        const count24h = map24h.get(key) ?? 0;
+        const countTotal = mapTotal.get(key) ?? 0;
+        rows.push({
+          categorySlug: category.slug,
+          categoryName: category.name,
+          language,
+          count24h,
+          countTotal,
+          belowMin: count24h < minRequired,
+        });
+      }
+    }
+
+    const lowInventory = rows.filter((r) => r.belowMin);
+
+    return {
+      generatedAt: new Date().toISOString(),
+      minRequired,
+      lastIngestionAt: ingestionMeta._max.lastFetchedAt,
+      activeSourceCount: ingestionMeta._count._all,
+      categories: categories.map((c) => ({ slug: c.slug, name: c.name })),
+      languages: monitoredLanguages,
+      rows,
+      lowInventory,
+    };
+  }
 }
 
 @Module({ controllers: [AnalyticsController], providers: [PrismaService] })

@@ -25,6 +25,14 @@ export const envSchema = z.object({
 
   FEATURE_AUTO_APPROVE: z.coerce.boolean().default(false),
   FEATURE_TTS: z.coerce.boolean().default(false),
+  INGESTION_MAX_PER_CATEGORY: z.coerce.number().int().positive().default(20),
+  INGESTION_MAX_FEED_ITEMS_SCAN: z.coerce.number().int().positive().default(100),
+  COUNTRY_FEED_CACHE_TTL_MS: z.coerce.number().int().positive().default(120000),
+  INGESTION_EXPECTED_INTERVAL_HOURS: z.coerce.number().positive().default(10),
+  VIDEO_GENERATION_ENABLED: z.coerce.boolean().default(false),
+  VIDEO_WORKER_BATCH_SIZE: z.coerce.number().int().positive().default(5),
+  VIDEO_RENDER_SECONDS: z.coerce.number().int().positive().default(45),
+  VIDEO_FFMPEG_PATH: z.string().default('ffmpeg'),
 });
 
 export type Env = z.infer<typeof envSchema>;

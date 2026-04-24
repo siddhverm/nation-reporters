@@ -22,12 +22,11 @@ Produce a JSON response with these keys:
 - "short": complete article in ~150 words
 - "medium": complete article in ~400 words
 - "long": complete article in ~800 words
-- "summary": 2-sentence executive summary for editors (always in English)
+ - "summary": 2-sentence executive summary for editors
 - "podcastScript": podcast script with intro, body, and outro (conversational tone)
 - "language": "${targetLang}"
 
-All content (title, short, medium, long, podcastScript) must be written in ${langName}.
-The "summary" field must always be in English regardless of target language.
+All content (title, short, medium, long, summary, podcastScript) must be written in ${langName}.
 Never fabricate quotes, statistics, or facts not in the source.
 `.trim();
 }

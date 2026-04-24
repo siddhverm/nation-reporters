@@ -4,7 +4,7 @@ import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
-import { getArticleImage, getBodyImageUrl, getBodyImageCredit } from '@/lib/news-image';
+import { getArticleImage, getBodyImageCredit, getPreferredArticleImage } from '@/lib/news-image';
 
 interface Article {
   id: string;
@@ -19,6 +19,60 @@ interface Article {
   hashtags: string[];
   categoryId: string | null;
   provenance?: { sourceName: string; sourceUrl: string; attributionNote?: string } | null;
+  mediaAssets?: { id: string; type: string; url: string }[];
+}
+
+const FALLBACK_ARTICLES: Record<string, { title: string; excerpt: string; paragraphs: string[] }> = {
+  'home-fallback-1': {
+    title: 'India and World updates will appear here as feeds sync',
+    excerpt: 'Local preview mode is active while upstream API is unavailable.',
+    paragraphs: [
+      'This is a preview article shown because live API data is currently unavailable from your local environment.',
+      'Once connectivity to the upstream API is restored, this page will automatically show the full published story content.',
+    ],
+  },
+  'home-fallback-2': {
+    title: 'Politics desk: policy and election stories in one stream',
+    excerpt: 'Category cards stay populated to support UI review and testing.',
+    paragraphs: [
+      'This fallback article confirms your category and article routes are working correctly.',
+      'Your real politics stories will appear here when API responses are healthy.',
+    ],
+  },
+  'home-fallback-3': {
+    title: 'Business pulse: markets, currency and startups',
+    excerpt: 'Fallback content is automatically replaced when live API responds.',
+    paragraphs: [
+      'This is sample business copy used for preview continuity.',
+      'No permanent data is stored from fallback mode.',
+    ],
+  },
+  'home-fallback-4': {
+    title: 'Technology watch: AI, cybersecurity and digital policy',
+    excerpt: 'Multilingual sections remain visible during connectivity issues.',
+    paragraphs: [
+      'Your page shell and rendering flow are healthy.',
+      'Upstream news data connectivity still needs to be restored for live content.',
+    ],
+  },
+};
+
+function buildGenericFallback(slug: string) {
+  const clean = slug
+    .replace(/-fallback-\d+$/i, '')
+    .replace(/-/g, ' ')
+    .trim();
+  const title = clean.length > 0
+    ? clean.replace(/\b\w/g, (c) => c.toUpperCase())
+    : 'Preview Article';
+  return {
+    title: `${title} Update`,
+    excerpt: 'This is preview content shown while live article API is unavailable.',
+    paragraphs: [
+      'You are seeing this preview article because upstream article fetch is currently unavailable from local environment.',
+      'Navigation and page rendering are working correctly; live article content will appear automatically once API connectivity is restored.',
+    ],
+  };
 }
 
 function extractParagraphs(body: Article['body']): string[] {
@@ -40,7 +94,37 @@ export default function ArticlePage() {
     fetch(`${base}/articles/${slug}`)
       .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
       .then((data: Article) => { setArticle(data); setLoading(false); })
-      .catch(() => { setError(true); setLoading(false); });
+      .catch(() => {
+        const fallback = FALLBACK_ARTICLES[slug]
+          ?? (slug.includes('fallback') ? buildGenericFallback(slug) : undefined);
+        if (!fallback) {
+          setError(true);
+          setLoading(false);
+          return;
+        }
+        setArticle({
+          id: `fallback-${slug}`,
+          title: fallback.title,
+          slug,
+          body: {
+            type: 'doc',
+            content: fallback.paragraphs.map((text) => ({
+              type: 'paragraph',
+              content: [{ type: 'text', text }],
+            })),
+          },
+          excerpt: fallback.excerpt,
+          seoTitle: fallback.title,
+          seoDescription: fallback.excerpt,
+          publishedAt: new Date().toISOString(),
+          language: 'en',
+          hashtags: ['preview', 'fallback'],
+          categoryId: null,
+          provenance: null,
+          mediaAssets: [],
+        });
+        setLoading(false);
+      });
   }, [slug]);
 
   if (loading) return (
@@ -61,8 +145,9 @@ export default function ArticlePage() {
 
   const paragraphs = extractParagraphs(article.body);
   const shareUrl   = typeof window !== 'undefined' ? window.location.href : '';
-  const rssImageUrl = getBodyImageUrl(article.body);
+  const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);
+  const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
 
   return (
     <div className="bg-gray-50 min-h-screen">
@@ -89,7 +174,7 @@ export default function ArticlePage() {
           {/* Hero image */}
           <div className="relative overflow-hidden">
             <div className="h-64 md:h-80 relative">
-              <Image src={getArticleImage(article.slug, undefined, 'hero', rssImageUrl)} alt={article.title}
+              <Image src={getArticleImage(article.slug, undefined, 'hero', sourceImageUrl)} alt={article.title}
                 fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
               <div className="absolute bottom-3 left-4">
@@ -144,6 +229,13 @@ export default function ArticlePage() {
 
             {/* Article body */}
             <div className="prose prose-base max-w-none text-gray-800 leading-relaxed space-y-4">
+              {videoAsset && (
+                <div className="not-prose mb-4">
+                  <div className="aspect-video bg-black rounded-lg overflow-hidden">
+                    <video controls preload="metadata" className="w-full h-full object-cover" src={videoAsset.url} />
+                  </div>
+                </div>
+              )}
               {paragraphs.length > 0
                 ? paragraphs.map((p, i) => <p key={i}>{p}</p>)
                 : <p className="text-gray-500 italic">Article content is being processed…</p>}
@@ -164,9 +256,23 @@ export default function ArticlePage() {
                 <span className="font-semibold text-gray-700">Source:</span>{' '}
                 <a href={article.provenance.sourceUrl} target="_blank" rel="noopener noreferrer"
                   className="text-brand hover:underline">{article.provenance.sourceName}</a>
-                {article.provenance.attributionNote && ` — ${article.provenance.attributionNote}`}
+                {article.provenance.attributionNote
+                  ? ` — ${article.provenance.attributionNote}`
+                  : ' — Summary adapted by Nation Reporters. Original rights remain with the source publisher.'}
               </div>
             )}
+
+            <div className="mt-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-900 border border-blue-200">
+              Image notice: {sourceImageUrl
+                ? 'Article image is sourced from the original news feed/source when available and displayed with attribution.'
+                : 'Representative image is used when source image is unavailable.'}
+            </div>
+
+            <div className="mt-3 p-3 bg-amber-50 rounded-lg text-xs text-amber-900 border border-amber-200">
+              Legal notice: This article may include AI-assisted summarization/translation from third-party reports.
+              Nation Reporters does not claim ownership of third-party source reporting, logos, or images.
+              For copyright/takedown requests, contact legal@nationreporters.com.
+            </div>
           </div>
         </article>
 

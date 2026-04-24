@@ -6,9 +6,10 @@ import { DedupService } from './dedup/dedup.service';
 import { ProvenanceService } from './provenance/provenance.service';
 import { PrismaService } from '../../prisma/prisma.service';
 import { AiModule } from '../ai/ai.module';
+import { PublishingModule } from '../publishing/publishing.module';
 
 @Module({
-  imports: [AiModule],
+  imports: [AiModule, PublishingModule],
   controllers: [SourcesController],
   providers: [SourcesService, IngestionCronService, DedupService, ProvenanceService, PrismaService],
   exports: [SourcesService, IngestionCronService],

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
+import { ConfigService } from '@nestjs/config';
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const Parser = require('rss-parser');
 import * as crypto from 'crypto';
@@ -8,6 +9,17 @@ import { DedupService } from '../dedup/dedup.service';
 import { ProvenanceService } from '../provenance/provenance.service';
 import { AiService } from '../../ai/ai.service';
 import { ArticleStatus } from '@prisma/client';
+import { PublishingService } from '../../publishing/publishing.service';
+
+type CategorySlug =
+  | 'india'
+  | 'world'
+  | 'politics'
+  | 'business'
+  | 'sports'
+  | 'entertainment'
+  | 'tech';
+type RemainingQuota = Record<CategorySlug, number>;
 
 @Injectable()
 export class IngestionCronService {
@@ -22,25 +34,85 @@ export class IngestionCronService {
       ],
     },
   });
+  private readonly maxPerCategory: number;
+  private readonly maxFeedItemsScan: number;
+  private readonly minSectionInventory: number;
 
   constructor(
+    private readonly config: ConfigService,
     private readonly prisma: PrismaService,
     private readonly dedup: DedupService,
     private readonly provenance: ProvenanceService,
     private readonly ai: AiService,
-  ) {}
+    private readonly publishing: PublishingService,
+  ) {
+    this.maxPerCategory = Number(this.config.get('INGESTION_MAX_PER_CATEGORY') ?? 20);
+    this.maxFeedItemsScan = Number(this.config.get('INGESTION_MAX_FEED_ITEMS_SCAN') ?? 100);
+    this.minSectionInventory = Number(this.config.get('INGESTION_MIN_SECTION_INVENTORY') ?? 20);
+  }
 
   // 08:00, 14:00, 20:00 IST (UTC+5:30 = 02:30, 08:30, 14:30 UTC)
   @Cron('30 2,8,14 * * *')
   async runScheduledIngestion() {
     this.logger.log('Scheduled ingestion started');
     const sources = await this.prisma.ingestedSource.findMany({ where: { isActive: true } });
+    const remainingByCategory: RemainingQuota = {
+      india: this.maxPerCategory,
+      world: this.maxPerCategory,
+      politics: this.maxPerCategory,
+      business: this.maxPerCategory,
+      sports: this.maxPerCategory,
+      entertainment: this.maxPerCategory,
+      tech: this.maxPerCategory,
+    };
 
     for (const source of sources) {
+      if (Object.values(remainingByCategory).every((remaining) => remaining <= 0)) {
+        this.logger.log('Scheduled ingestion quota reached for all sections');
+        break;
+      }
       try {
-        await this.fetchSource(source);
+        await this.fetchSource(source, { remainingByCategory });
       } catch (err) {
         this.logger.error(`Failed to fetch source ${source.name}`, err);
+      }
+    }
+    await this.logSectionInventoryWarnings();
+  }
+
+  private async logSectionInventoryWarnings() {
+    const categories = await this.prisma.category.findMany({
+      where: { slug: { in: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'] } },
+      select: { id: true, slug: true },
+    });
+    const categorySlugById = new Map(categories.map((c) => [c.id, c.slug]));
+    const monitoredLangs = ['en', 'hi', 'mr', 'bn', 'ta', 'te', 'gu', 'kn', 'pa', 'ur', 'ar', 'fr', 'de', 'es', 'pt', 'ru', 'zh', 'ja', 'ko'];
+    const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
+
+    const grouped = await this.prisma.article.groupBy({
+      by: ['categoryId', 'language'],
+      where: {
+        status: ArticleStatus.PUBLISHED,
+        categoryId: { in: categories.map((c) => c.id) },
+        language: { in: monitoredLangs },
+        publishedAt: { gte: since },
+      },
+      _count: { _all: true },
+    });
+    const countMap = new Map<string, number>();
+    for (const row of grouped) {
+      if (!row.categoryId) continue;
+      countMap.set(`${row.categoryId}|${row.language.toLowerCase()}`, row._count._all);
+    }
+
+    for (const category of categories) {
+      for (const lang of monitoredLangs) {
+        const count = countMap.get(`${category.id}|${lang}`) ?? 0;
+        if (count < this.minSectionInventory) {
+          this.logger.warn(
+            `inventory-low category=${category.slug} language=${lang} count_24h=${count} min_required=${this.minSectionInventory}`,
+          );
+        }
       }
     }
   }
@@ -60,20 +132,40 @@ export class IngestionCronService {
     return m?.[1] ?? null;
   }
 
-  async fetchSource(source: { id: string; feedUrl: string; name: string }) {
-    const feed = await this.parser.parseURL(source.feedUrl);
+  private extractVideo(item: any): string | null {
+    const mediaUrl = item['media:content']?.$.url ?? item.enclosure?.url;
+    const mediaType = item['media:content']?.$.type ?? item.enclosure?.type ?? '';
+    if (mediaUrl && String(mediaType).startsWith('video')) return mediaUrl;
+    if (item.link && /youtube\.com|youtu\.be|vimeo\.com/i.test(item.link)) return item.link;
+    return null;
+  }
+
+  async fetchSource(
+    source: { id: string; feedUrl: string; name: string; language?: string },
+    options?: { remainingByCategory?: RemainingQuota },
+  ) {
+    const feed = await this.parseFeedWithRetry(source.feedUrl, source.name);
     let ingested = 0;
 
-    // Detect language once per source (not per item)
-    const sourceLang = this.detectSourceLang(source.name);
+    // Prefer explicit non-English source language; otherwise infer from source name.
+    // This avoids accidental default "en" for multilingual feeds.
+    const inferredLang = this.detectSourceLang(source.name);
+    const sourceLang = source.language && source.language !== 'en'
+      ? source.language
+      : inferredLang;
 
-    // Only process first 5 items per source to respect Gemini free tier limits
-    const items = (feed.items ?? []).slice(0, 5);
+    // Scan latest items and publish quota-eligible stories across sections
+    const items = (feed.items ?? []).slice(0, this.maxFeedItemsScan);
 
     for (const item of items) {
+      const categorySlug = this.detectCategorySlug(item.title ?? '');
+      if (!categorySlug) continue;
+      if (options?.remainingByCategory && options.remainingByCategory[categorySlug] <= 0) continue;
+
       const body = item.content ?? item.contentSnippet ?? item.summary ?? item.title ?? '';
       const hash = crypto.createHash('sha256').update(item.link ?? item.title ?? '').digest('hex');
       const imageUrl = this.extractImage(item);
+      const sourceVideoUrl = this.extractVideo(item);
 
       const isDuplicate = await this.dedup.isDuplicate(hash, body);
       if (isDuplicate) continue;
@@ -100,13 +192,27 @@ export class IngestionCronService {
 
         // Try AI processing; if Gemini rate-limits, fall back to publishing raw
         try {
-          await this.ai.processIngestedArticle(ingestedArticle.id, sourceLang);
+          const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
+            language: sourceLang,
+            imageUrl: imageUrl ?? undefined,
+            sourceVideoUrl: sourceVideoUrl ?? undefined,
+            forceAutoPublish: true,
+            allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
+          });
+          if (!article) continue;
+
+          if (options?.remainingByCategory) {
+            options.remainingByCategory[categorySlug]--;
+          }
         } catch (aiErr) {
           const msg = (aiErr as Error).message ?? '';
           const is429 = msg.includes('429') || msg.includes('quota') || msg.includes('Too Many');
           if (is429) {
             this.logger.warn(`Gemini quota — publishing raw article: ${item.title?.slice(0, 60)}`);
-            await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
+            const published = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
+            if (published && options?.remainingByCategory) {
+              options.remainingByCategory[categorySlug]--;
+            }
           } else {
             throw aiErr;
           }
@@ -128,14 +234,24 @@ export class IngestionCronService {
     return { ingested };
   }
 
+  private async parseFeedWithRetry(feedUrl: string, sourceName: string) {
+    try {
+      return await this.parser.parseURL(feedUrl);
+    } catch (firstErr) {
+      this.logger.warn(`Feed parse failed, retrying once for ${sourceName}: ${(firstErr as Error).message}`);
+      await new Promise((resolve) => setTimeout(resolve, 800));
+      return this.parser.parseURL(feedUrl);
+    }
+  }
+
   // Publish raw RSS content directly when AI is unavailable
   private async publishRaw(
     ingestedArticle: { id: string; sourceTitle: string; body: string; publishedAt: Date | null },
-    source: { name: string },
+    source: { name: string; language?: string },
     imageUrl?: string,
-  ) {
+  ): Promise<boolean> {
     const adminUser = await this.prisma.user.findFirst({ where: { role: 'ADMIN' } });
-    if (!adminUser) return;
+    if (!adminUser) return false;
 
     const base = ingestedArticle.sourceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
     const existing = await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } });
@@ -143,12 +259,12 @@ export class IngestionCronService {
 
     const excerpt = ingestedArticle.body.slice(0, 200).replace(/<[^>]+>/g, '');
 
-    // Detect language from source name
-    const lang = this.detectSourceLang(source.name);
+    const lang = source.language ?? this.detectSourceLang(source.name);
     // Map source name to category
     const category = await this.detectCategory(ingestedArticle.sourceTitle);
+    if (!category) return false;
 
-    await this.prisma.article.create({
+    const article = await this.prisma.article.create({
       data: {
         title: ingestedArticle.sourceTitle,
         slug,
@@ -168,10 +284,29 @@ export class IngestionCronService {
       },
     });
 
+    if (imageUrl) {
+      await this.prisma.mediaAsset.create({
+        data: {
+          articleId: article.id,
+          type: 'IMAGE',
+          url: imageUrl,
+          s3Key: `external/${article.id}/source-image`,
+          mimeType: 'image/jpeg',
+          sizeBytes: 0,
+          scanStatus: 'external',
+        },
+      });
+    }
+
+    await this.publishing.publishToSocialOnly(article.id).catch((err) => {
+      this.logger.warn(`Social publish failed for raw fallback ${article.id}: ${(err as Error).message}`);
+    });
+
     await this.prisma.ingestedArticle.update({
       where: { id: ingestedArticle.id },
       data: { status: 'PUBLISHED' },
     });
+    return true;
   }
 
   private detectSourceLang(sourceName: string): string {
@@ -194,18 +329,20 @@ export class IngestionCronService {
     return 'en';
   }
 
-  private async detectCategory(title: string): Promise<{ id: string } | null> {
+  private detectCategorySlug(title: string): CategorySlug | null {
     const t = title.toLowerCase();
-    const slug =
-      t.match(/sport|cricket|football|ipl|tennis|olympics/) ? 'sports' :
-      t.match(/tech|ai|digital|startup|cyber|software|app/) ? 'tech' :
-      t.match(/business|economy|market|stock|sensex|gdp|rupee|trade/) ? 'business' :
-      t.match(/politics|election|parliament|minister|cm |pm |governor|bjp|congress/) ? 'politics' :
-      t.match(/film|cinema|bollywood|celebrity|entertainment|award/) ? 'entertainment' :
-      t.match(/health|covid|hospital|doctor|medicine|disease/) ? 'health' :
-      t.match(/world|us |usa|uk |china|europe|russia|pakistan|international/) ? 'world' :
-      'india';
+    if (t.match(/sport|cricket|football|ipl|tennis|olympics/)) return 'sports';
+    if (t.match(/tech|ai|digital|startup|cyber|software|app/)) return 'tech';
+    if (t.match(/business|economy|market|stock|sensex|gdp|rupee|trade/)) return 'business';
+    if (t.match(/politics|election|parliament|minister|cm |pm |governor|bjp|congress/)) return 'politics';
+    if (t.match(/film|cinema|bollywood|celebrity|entertainment|award/)) return 'entertainment';
+    if (t.match(/world|us |usa|uk |china|europe|russia|pakistan|international/)) return 'world';
+    return 'india';
+  }
 
+  private async detectCategory(title: string): Promise<{ id: string } | null> {
+    const slug = this.detectCategorySlug(title);
+    if (!slug) return null;
     return this.prisma.category.findFirst({ where: { slug }, select: { id: true } });
   }
 }

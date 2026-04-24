@@ -32,6 +32,12 @@ export default function SettingsPage() {
   const [saving, setSaving] = useState(false);
   const [saved, setSaved] = useState(false);
   const [flags, setFlags] = useState<{ key: string; enabled: boolean }[]>([]);
+  const [currentPassword, setCurrentPassword] = useState('');
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
+  const [passwordSuccess, setPasswordSuccess] = useState('');
+  const [passwordError, setPasswordError] = useState('');
 
   useEffect(() => {
     if (!token) return;
@@ -57,6 +63,55 @@ export default function SettingsPage() {
       body: JSON.stringify({ enabled: !enabled }),
     });
     setFlags((prev) => prev.map((f) => f.key === key ? { ...f, enabled: !enabled } : f));
+  }
+
+  async function changePassword() {
+    if (!token) return;
+
+    setPasswordSuccess('');
+    setPasswordError('');
+
+    if (newPassword.length < 8) {
+      setPasswordError('New password must be at least 8 characters.');
+      return;
+    }
+    if (newPassword !== confirmPassword) {
+      setPasswordError('New password and confirm password do not match.');
+      return;
+    }
+
+    setChangingPassword(true);
+    try {
+      const res = await fetch(`${base}/auth/change-password`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          currentPassword,
+          newPassword,
+        }),
+      });
+
+      if (!res.ok) {
+        const err = await res.json().catch(() => ({}));
+        const message = Array.isArray(err?.message)
+          ? err.message[0]
+          : (typeof err?.message === 'string' ? err.message : 'Unable to change password');
+        throw new Error(message);
+      }
+
+      setCurrentPassword('');
+      setNewPassword('');
+      setConfirmPassword('');
+      setPasswordSuccess('Password changed successfully.');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Unable to change password';
+      setPasswordError(message);
+    } finally {
+      setChangingPassword(false);
+    }
   }
 
   const sections = [
@@ -160,6 +215,72 @@ export default function SettingsPage() {
             </div>
           </div>
         )}
+
+        <div className="bg-white rounded-2xl border border-gray-100 shadow-sm p-6">
+          <div className="flex items-center gap-2 mb-5">
+            <Shield className="h-5 w-5 text-brand" />
+            <h2 className="font-bold text-gray-900">Change Password</h2>
+          </div>
+          <p className="text-sm text-gray-500 mb-4">
+            Update the password for your current login email ID.
+          </p>
+
+          {passwordSuccess ? (
+            <div className="bg-green-50 border border-green-200 text-green-700 rounded-lg px-4 py-2.5 mb-4 text-sm">
+              {passwordSuccess}
+            </div>
+          ) : null}
+          {passwordError ? (
+            <div className="bg-red-50 border border-red-200 text-red-700 rounded-lg px-4 py-2.5 mb-4 text-sm">
+              {passwordError}
+            </div>
+          ) : null}
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Current Password</label>
+              <input
+                type="password"
+                value={currentPassword}
+                onChange={(e) => setCurrentPassword(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                autoComplete="current-password"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">New Password</label>
+              <input
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                autoComplete="new-password"
+              />
+            </div>
+            <div>
+              <label className="block text-sm font-semibold text-gray-700 mb-1.5">Confirm New Password</label>
+              <input
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="w-full border border-gray-200 rounded-lg px-3 py-2.5 text-sm focus:outline-none focus:border-brand focus:ring-1 focus:ring-brand"
+                autoComplete="new-password"
+              />
+            </div>
+          </div>
+
+          <div className="mt-4">
+            <button
+              type="button"
+              onClick={changePassword}
+              disabled={changingPassword || !currentPassword || !newPassword || !confirmPassword}
+              className="flex items-center gap-2 bg-gray-900 text-white px-4 py-2.5 rounded-lg font-semibold hover:bg-black transition-colors disabled:opacity-60"
+            >
+              {changingPassword ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Shield className="h-4 w-4" />}
+              {changingPassword ? 'Updating…' : 'Update Password'}
+            </button>
+          </div>
+        </div>
 
         <div className="flex gap-3">
           <button type="submit" disabled={saving}

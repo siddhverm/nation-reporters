@@ -21,6 +21,7 @@ import { AuditModule } from './modules/audit/audit.module';
 import { RiskRulesModule } from './modules/risk-rules/risk-rules.module';
 import { FeatureFlagsModule } from './modules/feature-flags/feature-flags.module';
 import { HealthModule } from './modules/health/health.module';
+import { VideoModule } from './modules/video/video.module';
 
 @Module({
   imports: [
@@ -44,6 +45,7 @@ import { HealthModule } from './modules/health/health.module';
     RiskRulesModule,
     FeatureFlagsModule,
     HealthModule,
+    VideoModule,
   ],
   providers: [PrismaService],
   exports: [PrismaService],

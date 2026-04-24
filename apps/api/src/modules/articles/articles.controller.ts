@@ -24,10 +24,29 @@ export class ArticlesController {
     @Query('categoryId') categoryId?: string,
     @Query('authorId') authorId?: string,
     @Query('language') language?: string,
+    @Query('hasVideo') hasVideo?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
   ) {
-    return this.svc.findAll({ status, categoryId, authorId, language, page, limit });
+    return this.svc.findAll({
+      status,
+      categoryId,
+      authorId,
+      language,
+      hasVideo: hasVideo === 'true',
+      page,
+      limit,
+    });
+  }
+
+  @Get('country-feed')
+  countryFeed(
+    @Query('localLang') localLang = 'en',
+    @Query('globalLang') globalLang = 'en',
+    @Query('localLimit') localLimit?: number,
+    @Query('globalLimit') globalLimit?: number,
+  ) {
+    return this.svc.findCountryFeed({ localLang, globalLang, localLimit, globalLimit });
   }
 
   @Get(':id')

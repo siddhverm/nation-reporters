@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, ChevronRight, Flame, Globe } from 'lucide-react';
-import { getArticleImage, getBodyImageUrl } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 
 interface Article {
   id: string;
@@ -12,10 +12,16 @@ interface Article {
   excerpt: string | null;
   publishedAt: string | null;
   categoryId: string | null;
+  language?: string;
   body?: Record<string, unknown>;
+  mediaAssets?: { type?: string; url?: string | null }[];
 }
 
 interface Category { id: string; name: string; slug: string; }
+
+function withFallbackArticles(list: Article[], min = 12): Article[] {
+  return list.slice(0, min);
+}
 
 function timeAgo(d: string) {
   const m = Math.floor((Date.now() - new Date(d).getTime()) / 60000);
@@ -36,14 +42,25 @@ const CAT_META: Record<string, { label: string; color: string; border: string }>
   tech:          { label: 'Technology',    color: 'bg-cyan-600',   border: 'border-cyan-500' },
 };
 const SECTIONS = ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'];
-const MIN_SECTION = 20; // target articles per section
+const MIN_SECTION = 20;
+
+function fillSectionFromLivePool(primary: Article[], all: Article[], min = MIN_SECTION): Article[] {
+  if (primary.length >= min) return primary.slice(0, min);
+  const seen = new Set(primary.map((a) => a.id));
+  const extras = all.filter((a) => !seen.has(a.id));
+  return [...primary, ...extras].slice(0, min);
+}
+
+function fillSectionWithFallback(_slug: string, list: Article[], min = MIN_SECTION): Article[] {
+  return list.slice(0, min);
+}
 
 function ArticleCard({ a }: { a: Article }) {
   return (
     <Link href={`/article/${a.slug}`}
       className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
       <div className="h-14 w-14 rounded-lg overflow-hidden shrink-0 relative">
-        <Image src={getArticleImage(a.slug, undefined, 'thumb', getBodyImageUrl(a.body))}
+        <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
           alt={a.title} fill className="object-cover" unoptimized />
       </div>
       <div className="flex-1 min-w-0">
@@ -62,32 +79,76 @@ export default function HomePage() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [categories, setCategories] = useState<Category[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataNotice, setDataNotice] = useState<string | null>(null);
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
+    const cacheKey = `nr-home-cache-${lang}`;
 
     const fetchArticles = async (): Promise<Article[]> => {
       try {
         const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200&language=${lang}`);
+        if (!r.ok) throw new Error(`Primary fetch failed: ${r.status}`);
         const d = await r.json();
-        const list: Article[] = Array.isArray(d) ? d : (d.data ?? []);
-        if (list.length > 0) return list;
+        const raw: Article[] = Array.isArray(d) ? d : (d.data ?? []);
+        const list = lang === 'en'
+          ? raw
+          : raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
+        if (list.length >= 20) {
+          setDataNotice(null);
+          return withFallbackArticles(list);
+        }
       } catch { /* fall through */ }
-      // Fallback when no articles in selected language
+
+      // Fallback: use latest pool; prefer selected language, then top up with English.
       try {
         const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200`);
+        if (!r.ok) throw new Error(`Fallback fetch failed: ${r.status}`);
         const d = await r.json();
-        return Array.isArray(d) ? d : (d.data ?? []);
-      } catch { return []; }
+        const raw: Article[] = Array.isArray(d) ? d : (d.data ?? []);
+        const preferred = lang === 'en'
+          ? raw
+          : raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
+        if (preferred.length >= 20 || lang === 'en') {
+          setDataNotice(null);
+          return withFallbackArticles(preferred);
+        }
+        const seen = new Set(preferred.map((a) => a.id));
+        const english = raw.filter((a) => (a.language ?? 'en').toLowerCase() === 'en' && !seen.has(a.id));
+        const mixed = [...preferred, ...english];
+        if (mixed.length > 0) {
+          setDataNotice(`Limited ${lang.toUpperCase()} inventory; topping up with English.`);
+          return withFallbackArticles(mixed);
+        }
+      } catch { /* continue to cache */ }
+
+      // Outage fallback: serve last successful real payload from local cache.
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached) as Article[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setDataNotice('Live feed temporarily unavailable; showing last successful update.');
+              return withFallbackArticles(parsed);
+            }
+          } catch { /* ignore cache parse errors */ }
+        }
+      }
+      return [];
     };
 
     Promise.all([
       fetchArticles(),
       fetch(`${base}/categories`).then((r) => r.json()).catch(() => []),
     ]).then(([arts, cats]) => {
-      setArticles(Array.isArray(arts) ? arts : []);
+      const list = Array.isArray(arts) ? arts : [];
+      setArticles(list);
       setCategories(Array.isArray(cats) ? cats : []);
+      if (typeof window !== 'undefined' && list.length > 0) {
+        localStorage.setItem(cacheKey, JSON.stringify(list.slice(0, 120)));
+      }
       setLoading(false);
     });
   }, []);
@@ -97,7 +158,9 @@ export default function HomePage() {
 
   const sections = new Map<string, Article[]>();
   for (const slug of SECTIONS) {
-    sections.set(slug, articles.filter((a) => catIdToSlug.get(a.categoryId ?? '') === slug));
+    const mapped = articles.filter((a) => catIdToSlug.get(a.categoryId ?? '') === slug);
+    const liveFilled = fillSectionFromLivePool(mapped, articles, MIN_SECTION);
+    sections.set(slug, fillSectionWithFallback(slug, liveFilled, MIN_SECTION));
   }
 
   const breaking = articles.slice(0, 8);
@@ -126,6 +189,11 @@ export default function HomePage() {
       )}
 
       <div className="max-w-7xl mx-auto px-4 py-6">
+        {dataNotice && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {dataNotice}
+          </div>
+        )}
 
         {/* Category pills */}
         <div className="flex gap-2 flex-wrap mb-6">
@@ -150,7 +218,7 @@ export default function HomePage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
             <Link href={`/article/${articles[0].slug}`}
               className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
-              <Image src={getArticleImage(articles[0].slug, undefined, 'hero', getBodyImageUrl(articles[0].body))}
+              <Image src={getArticleImage(articles[0].slug, undefined, 'hero', getPreferredArticleImage(articles[0]))}
                 alt={articles[0].title} fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
@@ -171,7 +239,7 @@ export default function HomePage() {
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
                   <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
-                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getBodyImageUrl(a.body))}
+                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
                       alt={a.title} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -208,7 +276,7 @@ export default function HomePage() {
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-md transition-all overflow-hidden">
                   <div className="relative h-36 overflow-hidden">
-                    <Image src={getArticleImage(a.slug, undefined, 'card', getBodyImageUrl(a.body))}
+                    <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a))}
                       alt={a.title} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
                   </div>
                   <div className="p-3">
@@ -253,7 +321,7 @@ export default function HomePage() {
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
                   <Link href={`/article/${hero.slug}`}
                     className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
-                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getBodyImageUrl(hero.body))}
+                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero))}
                       alt={hero.title} fill className="object-cover" unoptimized />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 p-4">
@@ -269,7 +337,7 @@ export default function HomePage() {
                     </div>
                   </Link>
                   <div className="lg:col-span-3 grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-2">
-                    {rest.slice(0, 18).map((a) => <ArticleCard key={a.id} a={a} />)}
+                    {rest.slice(0, 19).map((a) => <ArticleCard key={a.id} a={a} />)}
                   </div>
                 </div>
               ) : (
@@ -277,7 +345,7 @@ export default function HomePage() {
                 <Link href={`/article/${hero.slug}`}
                   className="group flex gap-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-4">
                   <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getBodyImageUrl(hero.body))}
+                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero))}
                       alt={hero.title} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">

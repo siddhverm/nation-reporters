@@ -10,6 +10,14 @@ import { translatePrompt } from './prompts/translate.prompt';
 import { Platform } from '@prisma/client';
 import { PublishingService } from '../publishing/publishing.service';
 
+type ProcessIngestedOptions = {
+  language?: string;
+  imageUrl?: string;
+  sourceVideoUrl?: string;
+  forceAutoPublish?: boolean;
+  allowedCategories?: string[];
+};
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
@@ -21,7 +29,8 @@ export class AiService {
     private readonly publishing: PublishingService,
   ) {}
 
-  async processIngestedArticle(ingestedArticleId: string, language = 'en') {
+  async processIngestedArticle(ingestedArticleId: string, options: ProcessIngestedOptions = {}) {
+    const language = options.language ?? 'en';
     const ingested = await this.prisma.ingestedArticle.findUniqueOrThrow({
       where: { id: ingestedArticleId },
     });
@@ -47,11 +56,11 @@ export class AiService {
       // 3. SEO
       const { data: seo } = await this.gemini.generateJson<{
         seoTitle: string; seoDescription: string; slug: string; hashtags: string[];
-      }>(seoPrompt(rewrite.title, rewrite.long));
+      }>(seoPrompt(rewrite.title, rewrite.long, language));
 
       // 4. Captions
       const { data: captions } = await this.gemini.generateJson<Record<string, string>>(
-        captionsPrompt(rewrite.title, rewrite.summary),
+        captionsPrompt(rewrite.title, rewrite.summary, language),
       );
 
       // 5. Risk
@@ -83,16 +92,27 @@ export class AiService {
       });
 
       // Determine auto-approve from risk rules
-      const autoApprove = await this.checkAutoApprove(
+      const policyAutoApprove = await this.checkAutoApprove(
         risk.score, risk.confidence, tags.category,
       );
+      const autoApprove = options.forceAutoPublish ? true : policyAutoApprove;
+
+      if (
+        options.allowedCategories?.length &&
+        !options.allowedCategories.includes((tags.category ?? '').toLowerCase())
+      ) {
+        await this.prisma.ingestedArticle.update({
+          where: { id: ingestedArticleId },
+          data: { status: 'SKIPPED' },
+        });
+        return null;
+      }
 
       // Create article from AI rewrite
       const article = await this.prisma.article.create({
         data: {
           title: rewrite.title,
           slug: `${seo.slug}-${Date.now()}`,
-          body: { type: 'doc', content: [{ type: 'paragraph', content: [{ type: 'text', text: rewrite.long }] }] },
           bodyShort: rewrite.short,
           bodyMedium: rewrite.medium,
           language,
@@ -106,8 +126,47 @@ export class AiService {
           status: autoApprove ? 'APPROVED' : 'PENDING_REVIEW',
           riskScore: risk.score,
           riskFlags: risk.flags,
+          body: {
+            type: 'doc',
+            content: [{ type: 'paragraph', content: [{ type: 'text', text: rewrite.long }] }],
+            aiVideo: {
+              title: rewrite.title,
+              narration: rewrite.podcastScript,
+              summary: rewrite.summary,
+              language,
+              status: options.sourceVideoUrl ? 'ready_with_source_video' : 'ready_for_tts_video_generation',
+            },
+          },
         },
       });
+
+      if (options.imageUrl) {
+        await this.prisma.mediaAsset.create({
+          data: {
+            articleId: article.id,
+            type: 'IMAGE',
+            url: options.imageUrl,
+            s3Key: `external/${article.id}/source-image`,
+            mimeType: 'image/jpeg',
+            sizeBytes: 0,
+            scanStatus: 'external',
+          },
+        });
+      }
+
+      if (options.sourceVideoUrl) {
+        await this.prisma.mediaAsset.create({
+          data: {
+            articleId: article.id,
+            type: 'VIDEO',
+            url: options.sourceVideoUrl,
+            s3Key: `external/${article.id}/source-video`,
+            mimeType: 'video/mp4',
+            sizeBytes: 0,
+            scanStatus: 'external',
+          },
+        });
+      }
 
       // Save risk assessment
       await this.prisma.riskAssessment.create({

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight } from 'lucide-react';
-import { getArticleImage } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 
 interface Article {
   id: string;
@@ -13,12 +13,19 @@ interface Article {
   excerpt: string | null;
   publishedAt: string | null;
   categoryId: string | null;
+  language?: string;
+  body?: Record<string, unknown>;
+  mediaAssets?: { type?: string; url?: string | null }[];
 }
 
 interface Category {
   id: string;
   name: string;
   slug: string;
+}
+
+function ensureCategoryVolume(_slug: string, list: Article[], min = 20): Article[] {
+  return list.slice(0, min);
 }
 
 const SLUG_LABELS: Record<string, string> = {
@@ -45,38 +52,98 @@ export default function CategoryPage() {
   const { slug } = useParams<{ slug: string }>();
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
+  const [dataNotice, setDataNotice] = useState<string | null>(null);
   const label = SLUG_LABELS[slug] ?? slug.charAt(0).toUpperCase() + slug.slice(1);
   const accent = SLUG_COLORS[slug] ?? 'bg-brand';
 
   useEffect(() => {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
+    const cacheKey = `nr-category-cache-${slug}-${lang}`;
     const isIndia = slug === 'india';
+    const fillFromLatestLive = async (baseList: Article[], min = 20, targetLang?: string) => {
+      if (baseList.length >= min) return baseList.slice(0, min);
+      try {
+        const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=120`);
+        if (!latest.ok) return baseList;
+        const latestData: { data?: Article[] } = await latest.json();
+        const latestList = (latestData.data ?? []).filter((a) => {
+          if (!targetLang || targetLang === 'en') return true;
+          return (a.language ?? 'en').toLowerCase() === targetLang.toLowerCase();
+        });
+        const seen = new Set(baseList.map((a) => a.id));
+        const extras = latestList.filter((a) => !seen.has(a.id));
+        return [...baseList, ...extras].slice(0, min);
+      } catch {
+        return baseList;
+      }
+    };
+    const loadLatestFallback = async () => {
+      try {
+        const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
+        if (!latest.ok) throw new Error(`Latest fetch failed: ${latest.status}`);
+        const latestData: { data?: Article[] } = await latest.json();
+        const latestList = latestData.data ?? [];
+        const liveFilled = await fillFromLatestLive(latestList, 20, lang);
+        if (liveFilled.length > 0 && typeof window !== 'undefined') {
+          localStorage.setItem(cacheKey, JSON.stringify(liveFilled.slice(0, 120)));
+        }
+        setArticles(ensureCategoryVolume(slug, liveFilled));
+      } catch {
+        if (typeof window !== 'undefined') {
+          const cached = localStorage.getItem(cacheKey);
+          if (cached) {
+            try {
+              const parsed = JSON.parse(cached) as Article[];
+              if (Array.isArray(parsed) && parsed.length > 0) {
+                setDataNotice('Live feed temporarily unavailable; showing last successful update.');
+                setArticles(parsed.slice(0, 20));
+              } else {
+                setArticles([]);
+              }
+            } catch {
+              setArticles([]);
+            }
+          } else {
+            setArticles([]);
+          }
+        } else {
+          setArticles([]);
+        }
+      } finally {
+        setLoading(false);
+      }
+    };
 
     // India section always shows all domestic news in any language (no lang filter)
-    // Other categories respect language preference but fallback to English
+    // Other categories strictly follow selected language
     fetch(`${base}/categories`)
-      .then((r) => r.json())
+      .then(async (r) => {
+        if (!r.ok) throw new Error(`Categories fetch failed: ${r.status}`);
+        return r.json();
+      })
       .then(async (cats: Category[]) => {
+        if (!Array.isArray(cats) || cats.length === 0) {
+          await loadLatestFallback();
+          return;
+        }
         const cat = cats.find((c) => c.slug === slug || c.name.toLowerCase() === slug.toLowerCase());
         const worldCat = cats.find((c) => c.slug === 'world');
 
         const buildUrl = (withLang: boolean) => {
-          let url = `${base}/articles?status=PUBLISHED&limit=50`;
+          let url = `${base}/articles?status=PUBLISHED&limit=120`;
           if (!isIndia && cat) url += `&categoryId=${cat.id}`;
           if (withLang && !isIndia && lang !== 'en') url += `&language=${lang}`;
           return url;
         };
 
         const res = await fetch(buildUrl(true));
+        if (!res.ok) throw new Error(`Category articles fetch failed: ${res.status}`);
         const data: { data?: Article[] } = await res.json();
         let articles = data.data ?? [];
 
-        // Fallback to English if no articles in selected language
-        if (articles.length === 0 && lang !== 'en' && !isIndia) {
-          const fb = await fetch(buildUrl(false));
-          const fbData: { data?: Article[] } = await fb.json();
-          articles = fbData.data ?? [];
+        if (lang !== 'en') {
+          articles = articles.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
         }
 
         // India section: exclude World-categorised articles
@@ -84,10 +151,39 @@ export default function CategoryPage() {
           articles = articles.filter((a) => a.categoryId !== worldCat.id);
         }
 
-        setArticles(articles);
+        // If language/category is sparse, fill from latest live pool first
+        articles = await fillFromLatestLive(articles, 20, lang);
+
+        // Final fallback for empty sections: show latest published mixed feed
+        if (articles.length === 0) {
+          const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
+          const latestData: { data?: Article[] } = await latest.json();
+          const latestList = latestData.data ?? [];
+          const preferred = lang === 'en'
+            ? latestList
+            : latestList.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
+          if (preferred.length >= 20 || lang === 'en') {
+            articles = preferred;
+          } else {
+            const seen = new Set(preferred.map((a) => a.id));
+            const english = latestList.filter((a) => (a.language ?? 'en').toLowerCase() === 'en' && !seen.has(a.id));
+            articles = [...preferred, ...english];
+            if (articles.length > 0) {
+              setDataNotice(`Limited ${lang.toUpperCase()} inventory; topping up with English.`);
+            }
+          }
+        }
+
+        if (articles.length > 0) {
+          setDataNotice((prev) => prev ?? null);
+          if (typeof window !== 'undefined') {
+            localStorage.setItem(cacheKey, JSON.stringify(articles.slice(0, 120)));
+          }
+        }
+        setArticles(ensureCategoryVolume(slug, articles));
         setLoading(false);
       })
-      .catch(() => setLoading(false));
+      .catch(() => { void loadLatestFallback(); });
   }, [slug]);
 
   const [hero, ...rest] = articles;
@@ -110,6 +206,11 @@ export default function CategoryPage() {
       </div>
 
       <div className="max-w-7xl mx-auto px-4 py-6">
+        {dataNotice && (
+          <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-3 py-2 text-xs text-amber-900">
+            {dataNotice}
+          </div>
+        )}
         {loading && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
             <div className="lg:col-span-2 animate-pulse bg-gray-200 rounded-xl h-72" />
@@ -132,7 +233,7 @@ export default function CategoryPage() {
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
-                  <Image src={getArticleImage(hero.slug, slug, 'hero')} alt={hero.title}
+                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero))} alt={hero.title}
                     fill className="object-cover" unoptimized />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
@@ -157,7 +258,7 @@ export default function CategoryPage() {
                   <Link key={a.id} href={`/article/${a.slug}`}
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all news-card">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                      <Image src={getArticleImage(a.slug, slug, 'thumb')} alt={a.title}
+                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={a.title}
                         fill className="object-cover" unoptimized />
                     </div>
                     <div className="flex-1 min-w-0">

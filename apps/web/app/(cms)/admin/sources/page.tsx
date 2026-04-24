@@ -7,16 +7,45 @@ interface Source {
   name: string;
   feedUrl: string;
   type: string;
+  language: string;
   isActive: boolean;
   isTrusted: boolean;
   lastFetchedAt: string | null;
 }
 
+const LANGUAGE_OPTIONS = [
+  { code: 'en', label: 'English' },
+  { code: 'hi', label: 'Hindi' },
+  { code: 'mr', label: 'Marathi' },
+  { code: 'bn', label: 'Bengali' },
+  { code: 'ta', label: 'Tamil' },
+  { code: 'te', label: 'Telugu' },
+  { code: 'kn', label: 'Kannada' },
+  { code: 'gu', label: 'Gujarati' },
+  { code: 'pa', label: 'Punjabi' },
+  { code: 'ur', label: 'Urdu' },
+  { code: 'ar', label: 'Arabic' },
+  { code: 'fr', label: 'French' },
+  { code: 'de', label: 'German' },
+  { code: 'es', label: 'Spanish' },
+  { code: 'pt', label: 'Portuguese' },
+  { code: 'ru', label: 'Russian' },
+  { code: 'zh', label: 'Chinese' },
+  { code: 'ja', label: 'Japanese' },
+  { code: 'ko', label: 'Korean' },
+];
+
 export default function SourcesAdminPage() {
   const [sources, setSources] = useState<Source[]>([]);
   const [loading, setLoading] = useState(true);
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ name: '', feedUrl: '', type: 'rss', isTrusted: false });
+  const [form, setForm] = useState({
+    name: '',
+    feedUrl: '',
+    type: 'rss',
+    language: 'en',
+    isTrusted: false,
+  });
   const [fetching, setFetching] = useState<string | null>(null);
   const [fetchingAll, setFetchingAll] = useState(false);
   const [fetchAllMsg, setFetchAllMsg] = useState('');
@@ -105,6 +134,11 @@ export default function SourcesAdminPage() {
             <select value={form.type} onChange={(e) => setForm({ ...form, type: e.target.value })} className="border rounded-lg px-3 py-2 text-sm">
               <option value="rss">RSS</option><option value="atom">Atom</option><option value="json_api">JSON API</option>
             </select>
+            <select value={form.language} onChange={(e) => setForm({ ...form, language: e.target.value })} className="border rounded-lg px-3 py-2 text-sm">
+              {LANGUAGE_OPTIONS.map((lang) => (
+                <option key={lang.code} value={lang.code}>{lang.label}</option>
+              ))}
+            </select>
             <label className="flex items-center gap-2 text-sm">
               <input type="checkbox" checked={form.isTrusted} onChange={(e) => setForm({ ...form, isTrusted: e.target.checked })} />
               Trusted source (eligible for auto-approve)
@@ -124,6 +158,9 @@ export default function SourcesAdminPage() {
               <div className="flex-1 min-w-0">
                 <div className="flex items-center gap-2">
                   <span className="font-semibold text-gray-900">{s.name}</span>
+                  <span className="text-xs bg-slate-50 text-slate-700 px-2 py-0.5 rounded">
+                    {(LANGUAGE_OPTIONS.find((l) => l.code === s.language)?.label ?? s.language).toUpperCase()}
+                  </span>
                   {s.isTrusted && <span className="text-xs bg-green-50 text-green-700 px-2 py-0.5 rounded">Trusted</span>}
                   <span className={`text-xs px-2 py-0.5 rounded ${s.isActive ? 'bg-blue-50 text-blue-700' : 'bg-gray-100 text-gray-500'}`}>{s.isActive ? 'Active' : 'Inactive'}</span>
                 </div>

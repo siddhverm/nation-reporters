@@ -11,6 +11,18 @@ export function getArticleImage(
   return `https://picsum.photos/seed/${encodeURIComponent(slug)}/${dims}`;
 }
 
+type ImageLikeArticle = {
+  body?: unknown;
+  mediaAssets?: Array<{ type?: string; url?: string | null }>;
+};
+
+export function getPreferredArticleImage(article: ImageLikeArticle | null | undefined): string | null {
+  if (!article) return null;
+  const mediaImage = article.mediaAssets?.find((m) => m.type === 'IMAGE' && typeof m.url === 'string' && m.url.length > 0)?.url ?? null;
+  if (mediaImage) return mediaImage;
+  return getBodyImageUrl(article.body);
+}
+
 export function getCategoryImage(categorySlug: string): string {
   return `https://picsum.photos/seed/cat-${categorySlug}/1200/400`;
 }

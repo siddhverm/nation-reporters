@@ -14,6 +14,7 @@ const NAV_LINKS = [
   { label: 'Sports',        href: '/category/sports' },
   { label: 'Entertainment', href: '/category/entertainment' },
   { label: 'Technology',    href: '/category/tech' },
+  { label: 'Videos',        href: '/videos' },
   { label: 'Podcasts',      href: '/podcasts' },
   { label: 'Live TV',       href: '/live' },
 ];
@@ -56,9 +57,9 @@ function detectLanguage(): string {
 }
 
 function todayLabel() {
-  return new Date().toLocaleDateString('en-IN', {
+  return new Intl.DateTimeFormat('en-GB', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
-  });
+  }).format(new Date());
 }
 
 export function Navbar() {
@@ -68,6 +69,7 @@ export function Navbar() {
   const [lang, setLang]                 = useState('en');
   const [country, setCountry]           = useState<Country | null>(null);
   const [showLangPrompt, setShowLangPrompt] = useState(false);
+  const [todayText, setTodayText]           = useState('');
   const [q, setQ]                       = useState('');
   const router                          = useRouter();
   const langRef                         = useRef<HTMLDivElement>(null);
@@ -84,6 +86,7 @@ export function Navbar() {
     const countryCode = saved ?? detectCountryFromBrowser();
     const found = COUNTRIES.find((c) => c.code === countryCode);
     if (found) setCountry(found);
+    setTodayText(todayLabel());
   }, []);
 
   // Close dropdowns on outside click
@@ -150,7 +153,7 @@ export function Navbar() {
         {/* ── Top utility bar ── */}
         <div className="bg-navy text-white text-[11px] py-1.5 px-4">
           <div className="max-w-7xl mx-auto flex items-center justify-between">
-            <span className="hidden sm:block text-blue-200">{todayLabel()}</span>
+            <span className="hidden sm:block text-blue-200" suppressHydrationWarning>{todayText || ' '}</span>
             <div className="flex items-center gap-3 ml-auto">
 
               {/* Country / World picker */}

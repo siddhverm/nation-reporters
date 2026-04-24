@@ -6,6 +6,31 @@ const prisma = new PrismaClient();
 async function main() {
   console.log('Seeding database...');
 
+  const detectSourceLanguage = (name: string): string => {
+    const n = name.toLowerCase();
+    if (n.includes('hindi') || n.includes('हिंदी')) return 'hi';
+    if (n.includes('marathi') || n.includes('maharashtra times') || n.includes('lokmat') || n.includes('sakal')) return 'mr';
+    if (n.includes('bengali') || n.includes('bangla') || n.includes('ananda') || n.includes('ananda') || n.includes('eisamay')) return 'bn';
+    if (n.includes('tamil') || n.includes('dinamalar') || n.includes('dinamani') || n.includes('vikatan')) return 'ta';
+    if (n.includes('telugu') || n.includes('eenadu') || n.includes('sakshi')) return 'te';
+    if (n.includes('kannada') || n.includes('vijaya karnataka') || n.includes('prajavani')) return 'kn';
+    if (n.includes('gujarati') || n.includes('divya bhaskar') || n.includes('gujarat samachar') || n.includes('sandesh')) return 'gu';
+    if (n.includes('punjabi') || n.includes('jagbani')) return 'pa';
+    if (n.includes('urdu') || n.includes('jang')) return 'ur';
+    if (n.includes('arabic') || n.includes('al arabiya') || n.includes('al jazeera arabic') || n.includes('ahram')) return 'ar';
+    if (n.includes('french') || n.includes('le monde') || n.includes('le figaro') || n.includes('radio-canada')) return 'fr';
+    if (n.includes('german') || n.includes('spiegel') || n.includes('die zeit') || n.includes('deutsche welle german')) return 'de';
+    if (n.includes('spanish') || n.includes('el país') || n.includes('el pais') || n.includes('el mundo') || n.includes('bbc mundo')) return 'es';
+    if (n.includes('portuguese') || n.includes('g1 globo') || n.includes('folha') || n.includes('bbc brasil')) return 'pt';
+    if (n.includes('russian') || n.includes('tass') || n.includes('ria novosti')) return 'ru';
+    if (n.includes('chinese') || n.includes('xinhua')) return 'zh';
+    if (n.includes('japanese') || n.includes('asahi')) return 'ja';
+    if (n.includes('korean') || n.includes('yonhap')) return 'ko';
+    if (n.includes('indonesian') || n.includes('kompas')) return 'id';
+    if (n.includes('turkish')) return 'tr';
+    return 'en';
+  };
+
   // Admin user
   await prisma.user.upsert({
     where: { email: 'admin@nationreporters.com' },
@@ -407,13 +432,15 @@ async function main() {
   ];
 
   for (const src of allSources) {
+    const language = detectSourceLanguage(src.name);
     await prisma.ingestedSource.upsert({
       where: { feedUrl: src.feedUrl },
-      update: { isActive: true },
+      update: { isActive: true, language },
       create: {
         name: src.name,
         feedUrl: src.feedUrl,
         type: 'rss',
+        language,
         isActive: true,
         isTrusted: src.isTrusted,
         rightsMetadata: { note: 'AI-rewritten summaries only. Original content credited to source.' },

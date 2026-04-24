@@ -3,6 +3,7 @@ import Image from 'next/image';
 
 const SECTIONS = ['India', 'World', 'Politics', 'Business', 'Sports', 'Entertainment', 'Technology'];
 const MORE = [
+  { label: 'Videos',        href: '/videos' },
   { label: 'Podcasts',       href: '/podcasts' },
   { label: 'Live TV',        href: '/live' },
   { label: 'Search',         href: '/search' },
@@ -110,6 +111,10 @@ export function Footer() {
               Owned &amp; Operated by{' '}
               <span className="text-slate-400">Congregate Tech Solutions Pvt Ltd</span>
               &nbsp;|&nbsp; GST: 27AALCC1533E1ZX
+            </p>
+            <p className="max-w-2xl text-[11px] leading-relaxed text-slate-400 mt-1">
+              Some stories are AI-assisted summaries based on third-party source feeds. Original copyrights and trademarks
+              remain with their respective owners. Each story includes source attribution and links for reference.
             </p>
           </div>
           <div className="flex gap-5">
