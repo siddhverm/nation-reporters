@@ -15,7 +15,7 @@ const STALE_TTL_MS = Number(process.env.API_PROXY_STALE_TTL_MS ?? 900000);
 type ProxyCacheEntry = {
   status: number;
   headers: Array<[string, string]>;
-  body: Uint8Array;
+  body: ArrayBuffer;
   storedAt: number;
 };
 
@@ -71,7 +71,7 @@ async function proxy(req: NextRequest, params: { path: string[] }) {
       responseHeaders.delete('transfer-encoding');
       responseHeaders.delete('connection');
 
-      const bytes = new Uint8Array(await upstream.arrayBuffer());
+      const bytes = await upstream.arrayBuffer();
 
       if (method === 'GET') {
         proxyCache.set(cacheKey, {
