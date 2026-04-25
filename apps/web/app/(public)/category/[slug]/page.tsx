@@ -176,6 +176,13 @@ export default function CategoryPage() {
           if (typeof window !== 'undefined') {
             localStorage.setItem(cacheKey, JSON.stringify(articles.slice(0, 120)));
           }
+        } else if (lang !== 'en') {
+          setDataNotice(
+            `No ${lang.toUpperCase()} stories available in ${label} right now. ` +
+            'Change language from the top bar or run ingestion to populate this feed.',
+          );
+        } else {
+          setDataNotice(`No English stories available in ${label} right now.`);
         }
         setArticles(ensureCategoryVolume(slug, articles));
         setLoading(false);

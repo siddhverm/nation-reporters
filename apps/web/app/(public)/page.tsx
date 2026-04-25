@@ -139,6 +139,14 @@ export default function HomePage() {
           } catch { /* ignore cache parse errors */ }
         }
       }
+      if (lang !== 'en') {
+        setDataNotice(
+          `No published stories are currently available in ${lang.toUpperCase()}. ` +
+          'Select another language from the top bar or run ingestion to populate this language feed.',
+        );
+      } else {
+        setDataNotice('No published stories are currently available. Run ingestion to repopulate the feed.');
+      }
       return [];
     };
 
