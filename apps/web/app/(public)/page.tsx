@@ -92,34 +92,37 @@ export default function HomePage() {
         if (!r.ok) throw new Error(`Primary fetch failed: ${r.status}`);
         const d = await r.json();
         const raw: Article[] = Array.isArray(d) ? d : (d.data ?? []);
-        const list = lang === 'en'
-          ? raw
-          : raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
-        if (list.length >= 20) {
-          setDataNotice(null);
+        const list = raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
+        if (list.length > 0) {
+          if (lang !== 'en' && list.length < 20) {
+            setDataNotice(
+              `Showing ${list.length} stor${list.length === 1 ? 'y' : 'ies'} in ${lang.toUpperCase()}. ` +
+                'We do not mix English into this view; run ingestion to grow per-language RSS inventory.',
+            );
+          } else {
+            setDataNotice(null);
+          }
           return withFallbackArticles(list);
         }
       } catch { /* fall through */ }
 
-      // Fallback: use latest pool; prefer selected language, then top up with English.
+      // Fallback: latest pool — same language only (no English top-up for non-English UI).
       try {
         const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200`);
         if (!r.ok) throw new Error(`Fallback fetch failed: ${r.status}`);
         const d = await r.json();
         const raw: Article[] = Array.isArray(d) ? d : (d.data ?? []);
-        const preferred = lang === 'en'
-          ? raw
-          : raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
-        if (preferred.length >= 20 || lang === 'en') {
-          setDataNotice(null);
+        const preferred = raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
+        if (preferred.length > 0) {
+          if (lang !== 'en' && preferred.length < 20) {
+            setDataNotice(
+              `Showing ${preferred.length} stor${preferred.length === 1 ? 'y' : 'ies'} in ${lang.toUpperCase()}. ` +
+                'More per-language stories appear as RSS ingestion publishes.',
+            );
+          } else {
+            setDataNotice(null);
+          }
           return withFallbackArticles(preferred);
-        }
-        const seen = new Set(preferred.map((a) => a.id));
-        const english = raw.filter((a) => (a.language ?? 'en').toLowerCase() === 'en' && !seen.has(a.id));
-        const mixed = [...preferred, ...english];
-        if (mixed.length > 0) {
-          setDataNotice(`Limited ${lang.toUpperCase()} inventory; topping up with English.`);
-          return withFallbackArticles(mixed);
         }
       } catch { /* continue to cache */ }
 

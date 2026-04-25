@@ -68,7 +68,7 @@ export default function CategoryPage() {
         if (!latest.ok) return baseList;
         const latestData: { data?: Article[] } = await latest.json();
         const latestList = (latestData.data ?? []).filter((a) => {
-          if (!targetLang || targetLang === 'en') return true;
+          if (!targetLang) return true;
           return (a.language ?? 'en').toLowerCase() === targetLang.toLowerCase();
         });
         const seen = new Set(baseList.map((a) => a.id));
@@ -115,8 +115,7 @@ export default function CategoryPage() {
       }
     };
 
-    // India section always shows all domestic news in any language (no lang filter)
-    // Other categories strictly follow selected language
+    // Category pages follow selected UI language (including India).
     fetch(`${base}/categories`)
       .then(async (r) => {
         if (!r.ok) throw new Error(`Categories fetch failed: ${r.status}`);
@@ -159,17 +158,16 @@ export default function CategoryPage() {
           const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
           const latestData: { data?: Article[] } = await latest.json();
           const latestList = latestData.data ?? [];
-          const preferred = lang === 'en'
-            ? latestList
-            : latestList.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
-          if (preferred.length >= 20 || lang === 'en') {
+          const preferred = latestList.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
+          if (preferred.length >= 20) {
             articles = preferred;
           } else {
-            const seen = new Set(preferred.map((a) => a.id));
-            const english = latestList.filter((a) => (a.language ?? 'en').toLowerCase() === 'en' && !seen.has(a.id));
-            articles = [...preferred, ...english];
-            if (articles.length > 0) {
-              setDataNotice(`Limited ${lang.toUpperCase()} inventory; topping up with English.`);
+            articles = preferred;
+            if (articles.length > 0 && lang !== 'en') {
+              setDataNotice(
+                `Showing ${articles.length} stor${articles.length === 1 ? 'y' : 'ies'} in ${lang.toUpperCase()}. ` +
+                'We do not mix English into this category view.',
+              );
             }
           }
         }

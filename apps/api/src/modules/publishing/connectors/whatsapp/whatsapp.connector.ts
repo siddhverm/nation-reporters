@@ -12,12 +12,29 @@ export class WhatsappConnector extends SocialConnector {
     super();
   }
 
+  private resolveChannelTarget(): string {
+    const explicit = this.config.get<string>('WHATSAPP_CHANNEL_ID');
+    if (explicit) return explicit;
+
+    const channelUrl = this.config.get<string>('WHATSAPP_CHANNEL_URL');
+    if (!channelUrl) throw new Error('Missing WHATSAPP_CHANNEL_ID or WHATSAPP_CHANNEL_URL');
+
+    try {
+      const parsed = new URL(channelUrl);
+      const last = parsed.pathname.split('/').filter(Boolean).pop();
+      if (!last) throw new Error('Invalid WHATSAPP_CHANNEL_URL format');
+      return last;
+    } catch {
+      throw new Error('Invalid WHATSAPP_CHANNEL_URL format');
+    }
+  }
+
   async publish(payload: PublishPayload): Promise<PublishResult> {
     try {
       const apiUrl = this.config.get<string>('WHATSAPP_API_URL')!;
       const token = this.config.get<string>('WHATSAPP_API_TOKEN')!;
       const phoneNumberId = this.config.get<string>('WHATSAPP_PHONE_NUMBER_ID')!;
-      const channelId = this.config.get<string>('WHATSAPP_CHANNEL_ID')!;
+      const channelId = this.resolveChannelTarget();
 
       const message = `*${payload.title}*\n\n${payload.excerpt || payload.caption || ''}\n\n${payload.url}`;
 

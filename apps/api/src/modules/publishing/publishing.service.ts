@@ -158,18 +158,23 @@ export class PublishingService {
   }
 
   async publishToSocialOnly(articleId: string) {
-    const socialPlatforms: Platform[] = [
-      Platform.TWITTER, Platform.FACEBOOK, Platform.INSTAGRAM,
-      Platform.TELEGRAM, Platform.LINKEDIN, Platform.THREADS, Platform.WHATSAPP,
-    ];
-    const activePlatforms = socialPlatforms.filter((p) => this.enabledPlatforms.has(p));
-    if (activePlatforms.length === 0) return;
-
     const article = await this.prisma.article.findUnique({
       where: { id: articleId },
       include: { socialCaptions: true, mediaAssets: { take: 5 } },
     });
     if (!article) return;
+
+    const socialPlatforms: Platform[] = [
+      Platform.TWITTER, Platform.FACEBOOK, Platform.INSTAGRAM,
+      Platform.TELEGRAM, Platform.LINKEDIN, Platform.THREADS, Platform.WHATSAPP,
+    ];
+    const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
+    if (videoAsset && this.enabledPlatforms.has(Platform.YOUTUBE)) {
+      socialPlatforms.push(Platform.YOUTUBE);
+    }
+
+    const activePlatforms = socialPlatforms.filter((p) => this.enabledPlatforms.has(p));
+    if (activePlatforms.length === 0) return;
 
     const jobs = await Promise.all(
       activePlatforms.map((platform) =>

@@ -161,7 +161,9 @@ export function Navbar() {
                 <button onClick={() => setWorldOpen(!worldOpen)}
                   className="flex items-center gap-1 text-blue-200 hover:text-white transition-colors font-semibold">
                   <span className="text-sm">{country?.flag ?? '🌍'}</span>
-                  <span className="hidden sm:inline">{country?.name ?? 'World'}</span>
+                  <span className="max-w-[9rem] sm:max-w-none truncate text-left text-xs sm:text-sm">
+                    {country?.name ?? 'World'}
+                  </span>
                   <ChevronDown className={`h-3 w-3 transition-transform ${worldOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {worldOpen && (

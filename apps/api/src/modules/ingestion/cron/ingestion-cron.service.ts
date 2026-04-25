@@ -244,6 +244,36 @@ export class IngestionCronService {
     }
   }
 
+  /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
+  private rawHtmlToDocContent(htmlOrText: string, maxTotalChars = 80000) {
+    const text = htmlOrText
+      .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+      .slice(0, maxTotalChars);
+    if (!text) {
+      return [{ type: 'paragraph', content: [{ type: 'text', text: '(No body text in feed item.)' }] }];
+    }
+    let parts = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
+    if (parts.length <= 1 && text.length > 6000) {
+      parts = [];
+      let cur = '';
+      const chunks = text.split(/(?<=[.!?।।])\s+/);
+      for (const sentence of chunks) {
+        if (cur.length + sentence.length > 4500) {
+          if (cur) parts.push(cur.trim());
+          cur = sentence;
+        } else {
+          cur = cur ? `${cur} ${sentence}` : sentence;
+        }
+      }
+      if (cur.trim()) parts.push(cur.trim());
+    }
+    return parts.map((p) => ({ type: 'paragraph', content: [{ type: 'text', text: p }] }));
+  }
+
   // Publish raw RSS content directly when AI is unavailable
   private async publishRaw(
     ingestedArticle: { id: string; sourceTitle: string; body: string; publishedAt: Date | null },
@@ -257,7 +287,8 @@ export class IngestionCronService {
     const existing = await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } });
     const slug = existing ? `${base}-${Date.now()}` : base;
 
-    const excerpt = ingestedArticle.body.slice(0, 200).replace(/<[^>]+>/g, '');
+    const plainLead = ingestedArticle.body.replace(/<[^>]+>/g, '').trim();
+    const excerpt = plainLead.slice(0, 400);
 
     const lang = source.language ?? this.detectSourceLang(source.name);
     // Map source name to category
@@ -272,7 +303,7 @@ export class IngestionCronService {
           type: 'doc',
           // Store image + video URLs in body metadata for frontend use
           ...(imageUrl && { imageUrl, imageCredit: 'Image sourced from original publisher. All rights belong to respective owners.' }),
-          content: [{ type: 'paragraph', content: [{ type: 'text', text: ingestedArticle.body.replace(/<[^>]+>/g, '').slice(0, 2000) }] }],
+          content: this.rawHtmlToDocContent(ingestedArticle.body),
         },
         excerpt,
         status: ArticleStatus.PUBLISHED,

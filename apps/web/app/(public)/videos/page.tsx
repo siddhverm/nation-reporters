@@ -21,48 +21,49 @@ interface Article {
   mediaAssets?: MediaAsset[];
 }
 
-const FALLBACK_VIDEOS: Article[] = [
-  {
-    id: 'vid-f-1',
-    title: 'AI Video Preview: India infrastructure roundup',
-    slug: 'video-fallback-1',
-    excerpt: 'Preview card shown while upstream video feed is temporarily unavailable.',
-    publishedAt: new Date().toISOString(),
-    language: 'en',
-    mediaAssets: [],
-  },
-  {
-    id: 'vid-f-2',
-    title: 'AI Video Preview: World policy and markets update',
-    slug: 'video-fallback-2',
-    excerpt: 'Live video stories appear automatically once ingestion sync recovers.',
-    publishedAt: new Date().toISOString(),
-    language: 'en',
-    mediaAssets: [],
-  },
-  {
-    id: 'vid-f-3',
-    title: 'AI Video Preview: Sports and entertainment highlights',
-    slug: 'video-fallback-3',
-    excerpt: 'This placeholder keeps the video section populated during outages.',
-    publishedAt: new Date().toISOString(),
-    language: 'en',
-    mediaAssets: [],
-  },
-];
+function isPlayableVideoUrl(url: string | undefined): boolean {
+  if (!url || !url.trim()) return false;
+  const u = url.toLowerCase();
+  if (u.includes('youtube.com') || u.includes('youtu.be')) return true;
+  if (u.endsWith('.mp4') || u.endsWith('.webm') || u.endsWith('.m3u8')) return true;
+  return u.startsWith('http');
+}
+
+function youtubeEmbedUrl(url: string): string | null {
+  try {
+    const u = new URL(url);
+    if (u.hostname === 'youtu.be') {
+      const id = u.pathname.replace(/^\//, '').split('/')[0];
+      return id ? `https://www.youtube.com/embed/${id}` : null;
+    }
+    if (u.hostname.includes('youtube.com')) {
+      const v = u.searchParams.get('v');
+      if (v) return `https://www.youtube.com/embed/${v}`;
+      const m = u.pathname.match(/\/(?:embed|shorts)\/([^/?]+)/);
+      if (m) return `https://www.youtube.com/embed/${m[1]}`;
+    }
+  } catch {
+    return null;
+  }
+  return null;
+}
 
 async function getVideos(): Promise<Article[]> {
+  const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
   try {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const res = await fetch(
       `${base}/articles?status=PUBLISHED&hasVideo=true&limit=30`,
       { next: { revalidate: 300 } },
     );
-    const data = await res.json() as { data?: Article[] };
+    if (!res.ok) return [];
+    const data = (await res.json()) as { data?: Article[] };
     const list = data.data ?? [];
-    return list.length > 0 ? list : FALLBACK_VIDEOS;
+    return list.filter((a) => {
+      const url = a.mediaAssets?.find((m) => m.type === 'VIDEO')?.url;
+      return isPlayableVideoUrl(url);
+    });
   } catch {
-    return FALLBACK_VIDEOS;
+    return [];
   }
 }
 
@@ -76,32 +77,37 @@ export default async function VideosPage() {
       </div>
 
       {videos.length === 0 ? (
-        <p className="text-gray-400 text-center py-16">Loading video feed…</p>
+        <div className="rounded-xl border border-gray-200 bg-white px-6 py-12 text-center text-gray-600">
+          <p className="font-semibold text-gray-800 mb-2">No published video stories yet</p>
+          <p className="text-sm max-w-md mx-auto">
+            Stories with a <strong>VIDEO</strong> media asset appear here automatically after ingestion
+            or AI processing attaches a source clip. Placeholder cards were removed so this page only
+            lists real playable items.
+          </p>
+        </div>
       ) : (
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           {videos.map((video) => {
             const url = video.mediaAssets?.find((m) => m.type === 'VIDEO')?.url;
-            const isPreview = video.slug.includes('fallback');
+            const embed = url ? youtubeEmbedUrl(url) : null;
             return (
               <div key={video.id} className="border rounded-xl p-4 bg-white">
                 <div className="aspect-video bg-black rounded-lg overflow-hidden mb-3">
-                  {url ? (
-                    <video controls preload="metadata" className="w-full h-full object-cover" src={url} />
+                  {embed ? (
+                    <iframe
+                      title={video.title}
+                      className="w-full h-full"
+                      src={embed}
+                      allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
+                      allowFullScreen
+                    />
                   ) : (
-                    <div className="w-full h-full flex items-center justify-center text-gray-400 text-sm">
-                      Preview mode: live video source unavailable
-                    </div>
+                    <video controls preload="metadata" className="w-full h-full object-cover" src={url} />
                   )}
                 </div>
-                {isPreview ? (
-                  <p className="font-semibold text-gray-700 line-clamp-2">
-                    {video.title}
-                  </p>
-                ) : (
-                  <Link href={`/article/${video.slug}`} className="font-semibold text-gray-900 hover:text-brand line-clamp-2">
-                    {video.title}
-                  </Link>
-                )}
+                <Link href={`/article/${video.slug}`} className="font-semibold text-gray-900 hover:text-brand line-clamp-2">
+                  {video.title}
+                </Link>
                 {video.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{video.excerpt}</p>}
                 <p className="text-xs text-gray-400 mt-2">
                   {video.publishedAt
@@ -109,7 +115,6 @@ export default async function VideosPage() {
                     : 'Published'}
                   {' · '}
                   {video.language.toUpperCase()}
-                  {isPreview ? ' · PREVIEW' : ''}
                 </p>
               </div>
             );

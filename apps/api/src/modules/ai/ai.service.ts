@@ -108,6 +108,15 @@ export class AiService {
         return null;
       }
 
+      const longParagraphs = rewrite.long
+        .split(/\n\s*\n/)
+        .map((p) => p.trim())
+        .filter(Boolean);
+      const docContent =
+        longParagraphs.length > 0
+          ? longParagraphs.map((text) => ({ type: 'paragraph' as const, content: [{ type: 'text' as const, text }] }))
+          : [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: rewrite.long }] }];
+
       // Create article from AI rewrite
       const article = await this.prisma.article.create({
         data: {
@@ -128,7 +137,7 @@ export class AiService {
           riskFlags: risk.flags,
           body: {
             type: 'doc',
-            content: [{ type: 'paragraph', content: [{ type: 'text', text: rewrite.long }] }],
+            content: docContent,
             aiVideo: {
               title: rewrite.title,
               narration: rewrite.podcastScript,

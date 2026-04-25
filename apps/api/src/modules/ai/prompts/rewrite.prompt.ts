@@ -19,9 +19,9 @@ Body: ${body}
 
 Produce a JSON response with these keys:
 - "title": rewritten headline (punchy, under 70 chars)
-- "short": complete article in ~150 words
-- "medium": complete article in ~400 words
-- "long": complete article in ~800 words
+- "short": complete article in ~250 words
+- "medium": complete article in ~550 words
+- "long": complete article in ~1100 words (substantive detail). Separate paragraphs with a blank line (two newline characters).
  - "summary": 2-sentence executive summary for editors
 - "podcastScript": podcast script with intro, body, and outro (conversational tone)
 - "language": "${targetLang}"
