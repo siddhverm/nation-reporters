@@ -85,7 +85,15 @@ export function Navbar() {
     const saved = localStorage.getItem('nr-country');
     const countryCode = saved ?? detectCountryFromBrowser();
     const found = COUNTRIES.find((c) => c.code === countryCode);
-    if (found) setCountry(found);
+    if (found) {
+      setCountry(found);
+      // Country controls default language unless user explicitly chose one.
+      if (!hasChosen) {
+        const countryDefaultLang = LANGUAGES.find((l) => l.code === found.lang) ? found.lang : 'en';
+        setLang(countryDefaultLang);
+        localStorage.setItem('nr-lang', countryDefaultLang);
+      }
+    }
     setTodayText(todayLabel());
   }, []);
 
@@ -159,7 +167,7 @@ export function Navbar() {
               {/* Country / World picker */}
               <div ref={worldRef} className="relative">
                 <button onClick={() => setWorldOpen(!worldOpen)}
-                  className="flex items-center gap-1 text-blue-200 hover:text-white transition-colors font-semibold">
+                  className="flex items-center gap-1 text-white sm:text-blue-200 hover:text-white transition-colors font-semibold">
                   <span className="text-sm">{country?.flag ?? '🌍'}</span>
                   <span className="max-w-[9rem] sm:max-w-none truncate text-left text-xs sm:text-sm">
                     {country?.name ?? 'World'}
@@ -207,7 +215,7 @@ export function Navbar() {
               <div ref={langRef} className="relative">
                 <button
                   onClick={() => setLangOpen(!langOpen)}
-                  className="flex items-center gap-1 text-blue-200 hover:text-white transition-colors font-semibold"
+                  className="flex items-center gap-1 text-white sm:text-blue-200 hover:text-white transition-colors font-semibold"
                 >
                   <Globe className="h-3 w-3" />
                   <span>{currentLang.native}</span>
@@ -231,12 +239,12 @@ export function Navbar() {
 
               <div className="w-px h-3 bg-blue-600" />
 
-              <Link href="/live" className="flex items-center gap-1.5 text-blue-200 hover:text-white transition-colors">
+              <Link href="/live" className="flex items-center gap-1.5 text-white sm:text-blue-200 hover:text-white transition-colors">
                 <span className="h-1.5 w-1.5 rounded-full bg-brand animate-pulse" />
                 <Radio className="h-3 w-3" />
                 <span className="font-semibold">LIVE</span>
               </Link>
-              <Link href="/podcasts" className="flex items-center gap-1 text-blue-200 hover:text-white transition-colors">
+              <Link href="/podcasts" className="flex items-center gap-1 text-white sm:text-blue-200 hover:text-white transition-colors">
                 <Mic className="h-3 w-3" /><span>Podcasts</span>
               </Link>
               <Link href="/login" className="hidden sm:block text-blue-200 hover:text-white transition-colors font-medium">
