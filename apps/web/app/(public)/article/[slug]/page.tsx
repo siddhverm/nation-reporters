@@ -11,6 +11,8 @@ interface Article {
   title: string;
   slug: string;
   body: Record<string, unknown> & { content?: { type?: string; content?: { text?: string; type?: string }[] }[] };
+  bodyShort?: string | null;
+  bodyMedium?: string | null;
   excerpt: string | null;
   seoTitle: string | null;
   seoDescription: string | null;
@@ -83,6 +85,13 @@ function extractParagraphs(body: Article['body']): string[] {
     .filter(Boolean);
 }
 
+function splitTextToParagraphs(text: string): string[] {
+  return text
+    .split(/\n\s*\n|(?<=[.!?।।])\s+(?=[A-Z0-9])/)
+    .map((p) => p.trim())
+    .filter((p) => p.length > 0);
+}
+
 export default function ArticlePage() {
   const { slug } = useParams<{ slug: string }>();
   const [article, setArticle] = useState<Article | null>(null);
@@ -143,7 +152,17 @@ export default function ArticlePage() {
     </div>
   );
 
-  const paragraphs = extractParagraphs(article.body);
+  const bodyParagraphs = extractParagraphs(article.body);
+  const fallbackText = [article.bodyMedium, article.bodyShort, article.excerpt]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .join('\n\n');
+  const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
+  const paragraphs =
+    bodyParagraphs.length > 0
+      ? (bodyParagraphs.join(' ').length < 900 && fallbackParagraphs.length > 0
+        ? [...bodyParagraphs, ...fallbackParagraphs]
+        : bodyParagraphs)
+      : fallbackParagraphs;
   const shareUrl   = typeof window !== 'undefined' ? window.location.href : '';
   const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);
