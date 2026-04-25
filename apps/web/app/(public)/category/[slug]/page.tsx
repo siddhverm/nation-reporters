@@ -60,7 +60,6 @@ export default function CategoryPage() {
     const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
     const cacheKey = `nr-category-cache-${slug}-${lang}`;
-    const isIndia = slug === 'india';
     const fillFromLatestLive = async (baseList: Article[], min = 20, targetLang?: string) => {
       if (baseList.length >= min) return baseList.slice(0, min);
       try {
@@ -131,8 +130,8 @@ export default function CategoryPage() {
 
         const buildUrl = (withLang: boolean) => {
           let url = `${base}/articles?status=PUBLISHED&limit=120`;
-          if (!isIndia && cat) url += `&categoryId=${cat.id}`;
-          if (withLang && !isIndia && lang !== 'en') url += `&language=${lang}`;
+          if (cat) url += `&categoryId=${cat.id}`;
+          if (withLang) url += `&language=${lang}`;
           return url;
         };
 
@@ -146,7 +145,7 @@ export default function CategoryPage() {
         }
 
         // India section: exclude World-categorised articles
-        if (isIndia && worldCat) {
+        if (slug === 'india' && worldCat) {
           articles = articles.filter((a) => a.categoryId !== worldCat.id);
         }
 

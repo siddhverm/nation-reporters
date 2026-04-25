@@ -73,9 +73,9 @@ export default function CountryPage() {
         const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30`, { signal: controller.signal });
         const d = await r.json() as { data?: Article[] };
         const fallbackRaw = d.data ?? [];
-        const fallback = resolvedLang === 'en'
-          ? fallbackRaw
-          : fallbackRaw.filter((a) => (a.language ?? 'en').toLowerCase() === resolvedLang.toLowerCase());
+        const fallback = fallbackRaw.filter(
+          (a) => (a.language ?? 'en').toLowerCase() === resolvedLang.toLowerCase(),
+        );
         setLocalArticles(fallback);
         setGlobalArticles([]);
       } catch { /* empty */ }

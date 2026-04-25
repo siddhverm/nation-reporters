@@ -81,8 +81,7 @@ export default async function VideosPage() {
           <p className="font-semibold text-gray-800 mb-2">No published video stories yet</p>
           <p className="text-sm max-w-md mx-auto">
             Stories with a <strong>VIDEO</strong> media asset appear here automatically after ingestion
-            or AI processing attaches a source clip. Placeholder cards were removed so this page only
-            lists real playable items.
+            or AI processing attaches a source clip. This page lists only real playable videos.
           </p>
         </div>
       ) : (
