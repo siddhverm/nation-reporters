@@ -108,14 +108,23 @@ export class AiService {
         return null;
       }
 
-      const longParagraphs = rewrite.long
+      const enrichedLong = (() => {
+        const long = (rewrite.long ?? '').trim();
+        const medium = (rewrite.medium ?? '').trim();
+        // Some feeds are terse; ensure full article page still has substantial detail.
+        if (long.length >= 2400) return long;
+        if (medium.length > 0) return `${medium}\n\n${long}`.trim();
+        return long;
+      })();
+
+      const longParagraphs = enrichedLong
         .split(/\n\s*\n/)
         .map((p) => p.trim())
         .filter(Boolean);
       const docContent =
         longParagraphs.length > 0
           ? longParagraphs.map((text) => ({ type: 'paragraph' as const, content: [{ type: 'text' as const, text }] }))
-          : [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: rewrite.long }] }];
+          : [{ type: 'paragraph' as const, content: [{ type: 'text' as const, text: enrichedLong }] }];
 
       // Create article from AI rewrite
       const article = await this.prisma.article.create({

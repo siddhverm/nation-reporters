@@ -32,6 +32,14 @@ export class GeminiClient {
       } catch (err) {
         const msg = (err as Error).message ?? '';
         const is429 = msg.includes('429') || msg.includes('quota') || msg.includes('Too Many');
+        const quotaHardBlocked =
+          msg.includes('limit: 0')
+          || msg.includes('Quota exceeded for metric')
+          || msg.includes('free_tier');
+        if (is429 && quotaHardBlocked) {
+          // Fail fast so ingestion can immediately switch to raw publishing path.
+          throw err;
+        }
         if (is429 && attempt < retries) {
           const backoff = Math.pow(2, attempt + 1) * 5000; // 10s, 20s, 40s
           this.logger.warn(`Rate limited — retrying in ${backoff / 1000}s (attempt ${attempt + 1}/${retries})`);
