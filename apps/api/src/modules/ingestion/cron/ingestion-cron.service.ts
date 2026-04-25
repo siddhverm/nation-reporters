@@ -290,7 +290,11 @@ export class IngestionCronService {
     const plainLead = ingestedArticle.body.replace(/<[^>]+>/g, '').trim();
     const excerpt = plainLead.slice(0, 400);
 
-    const lang = source.language ?? this.detectSourceLang(source.name);
+    const lang = this.normalizeLanguageTag(
+      source.language ?? this.detectSourceLang(source.name),
+      ingestedArticle.sourceTitle,
+      ingestedArticle.body,
+    );
     // Map source name to category
     const category = await this.detectCategory(ingestedArticle.sourceTitle);
     if (!category) return false;
@@ -358,6 +362,35 @@ export class IngestionCronService {
     if (name.includes('korean') || name.includes('yonhap')) return 'ko';
     if (name.includes('chinese') || name.includes('xinhua')) return 'zh';
     return 'en';
+  }
+
+  /**
+   * Guardrail: if text script clearly conflicts with an English tag, normalize it.
+   */
+  private inferLangFromText(text: string): string | null {
+    const t = text ?? '';
+    if (/[\u3040-\u30FF]/.test(t)) return 'ja'; // Hiragana/Katakana
+    if (/[\uAC00-\uD7AF]/.test(t)) return 'ko'; // Hangul
+    if (/[\u0400-\u04FF]/.test(t)) return 'ru'; // Cyrillic
+    if (/[\u0600-\u06FF]/.test(t)) return 'ar'; // Arabic script
+    if (/[\u0900-\u097F]/.test(t)) return 'hi'; // Devanagari (Hindi/Marathi), default to hi
+    if (/[\u0980-\u09FF]/.test(t)) return 'bn';
+    if (/[\u0A00-\u0A7F]/.test(t)) return 'pa';
+    if (/[\u0A80-\u0AFF]/.test(t)) return 'gu';
+    if (/[\u0B80-\u0BFF]/.test(t)) return 'ta';
+    if (/[\u0C00-\u0C7F]/.test(t)) return 'te';
+    if (/[\u0C80-\u0CFF]/.test(t)) return 'kn';
+    if (/[\u4E00-\u9FFF]/.test(t)) return 'zh';
+    return null;
+  }
+
+  private normalizeLanguageTag(preferred: string, ...samples: Array<string | null | undefined>) {
+    const preferredNorm = (preferred || 'en').toLowerCase();
+    const probe = samples.filter(Boolean).join('\n');
+    const inferred = this.inferLangFromText(probe);
+    if (!inferred) return preferredNorm;
+    if (preferredNorm === 'en') return inferred;
+    return preferredNorm;
   }
 
   private detectCategorySlug(title: string): CategorySlug | null {

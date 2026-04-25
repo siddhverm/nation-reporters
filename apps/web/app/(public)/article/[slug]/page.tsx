@@ -92,6 +92,22 @@ function splitTextToParagraphs(text: string): string[] {
     .filter((p) => p.length > 0);
 }
 
+function dedupeParagraphs(paragraphs: string[]): string[] {
+  const seen = new Set<string>();
+  const out: string[] = [];
+  for (const p of paragraphs) {
+    const key = p
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .trim();
+    if (!key || seen.has(key)) continue;
+    seen.add(key);
+    out.push(p);
+  }
+  return out;
+}
+
 export default function ArticlePage() {
   const { slug } = useParams<{ slug: string }>();
   const [article, setArticle] = useState<Article | null>(null);
@@ -157,12 +173,13 @@ export default function ArticlePage() {
     .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
     .join('\n\n');
   const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
-  const paragraphs =
+  const combined =
     bodyParagraphs.length > 0
       ? (bodyParagraphs.join(' ').length < 900 && fallbackParagraphs.length > 0
         ? [...bodyParagraphs, ...fallbackParagraphs]
         : bodyParagraphs)
       : fallbackParagraphs;
+  const paragraphs = dedupeParagraphs(combined);
   const shareUrl   = typeof window !== 'undefined' ? window.location.href : '';
   const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);

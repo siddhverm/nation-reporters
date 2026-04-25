@@ -71,6 +71,7 @@ export function Navbar() {
   const [showLangPrompt, setShowLangPrompt] = useState(false);
   const [todayText, setTodayText]           = useState('');
   const [q, setQ]                       = useState('');
+  const [languageAvailability, setLanguageAvailability] = useState<Record<string, boolean>>({});
   const router                          = useRouter();
   const langRef                         = useRef<HTMLDivElement>(null);
   const worldRef                        = useRef<HTMLDivElement>(null);
@@ -105,6 +106,31 @@ export function Navbar() {
     }
     document.addEventListener('mousedown', handler);
     return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  // Check which languages currently have published inventory.
+  useEffect(() => {
+    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
+    let cancelled = false;
+    const loadAvailability = async () => {
+      const entries = await Promise.all(
+        LANGUAGES.map(async (l) => {
+          try {
+            const r = await fetch(`${base}/articles?status=PUBLISHED&limit=1&language=${l.code}`);
+            if (!r.ok) return [l.code, l.code === 'en'] as const;
+            const d = await r.json();
+            const arr = Array.isArray(d) ? d : (d.data ?? []);
+            return [l.code, arr.length > 0] as const;
+          } catch {
+            return [l.code, l.code === 'en'] as const;
+          }
+        }),
+      );
+      if (cancelled) return;
+      setLanguageAvailability(Object.fromEntries(entries));
+    };
+    void loadAvailability();
+    return () => { cancelled = true; };
   }, []);
 
   function chooseLang(code: string) {
@@ -227,10 +253,21 @@ export function Navbar() {
                       Choose Language
                     </div>
                     {filteredLanguages.map((l) => (
-                      <button key={l.code} onClick={() => chooseLang(l.code)}
-                        className={`w-full flex items-center justify-between px-3 py-2 text-sm hover:bg-navy/5 transition-colors ${lang === l.code ? 'font-bold text-brand' : ''}`}>
+                      <button
+                        key={l.code}
+                        onClick={() => chooseLang(l.code)}
+                        disabled={!languageAvailability[l.code] && l.code !== lang}
+                        title={!languageAvailability[l.code] && l.code !== lang ? 'No published stories yet' : undefined}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
+                          !languageAvailability[l.code] && l.code !== lang
+                            ? 'text-gray-300 cursor-not-allowed'
+                            : 'hover:bg-navy/5'
+                        } ${lang === l.code ? 'font-bold text-brand' : ''}`}
+                      >
                         <span>{l.native}</span>
-                        <span className="text-xs text-gray-400">{l.label}</span>
+                        <span className="text-xs text-gray-400">
+                          {!languageAvailability[l.code] && l.code !== lang ? 'No stories' : l.label}
+                        </span>
                       </button>
                     ))}
                   </div>
@@ -343,8 +380,19 @@ export function Navbar() {
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Language</p>
               <div className="grid grid-cols-3 gap-2">
                 {filteredLanguages.slice(0, 6).map((l) => (
-                  <button key={l.code} onClick={() => chooseLang(l.code)}
-                    className={`text-center text-xs py-1.5 rounded-lg border transition-colors ${lang === l.code ? 'bg-brand text-white border-brand' : 'border-gray-200 text-gray-600 hover:border-brand hover:text-brand'}`}>
+                  <button
+                    key={l.code}
+                    onClick={() => chooseLang(l.code)}
+                    disabled={!languageAvailability[l.code] && l.code !== lang}
+                    className={`text-center text-xs py-1.5 rounded-lg border transition-colors ${
+                      !languageAvailability[l.code] && l.code !== lang
+                        ? 'border-gray-100 text-gray-300 cursor-not-allowed'
+                        : lang === l.code
+                          ? 'bg-brand text-white border-brand'
+                          : 'border-gray-200 text-gray-600 hover:border-brand hover:text-brand'
+                    }`}
+                    title={!languageAvailability[l.code] && l.code !== lang ? 'No published stories yet' : undefined}
+                  >
                     {l.native}
                   </button>
                 ))}

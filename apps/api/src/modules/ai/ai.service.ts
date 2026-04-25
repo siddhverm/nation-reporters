@@ -30,10 +30,14 @@ export class AiService {
   ) {}
 
   async processIngestedArticle(ingestedArticleId: string, options: ProcessIngestedOptions = {}) {
-    const language = options.language ?? 'en';
     const ingested = await this.prisma.ingestedArticle.findUniqueOrThrow({
       where: { id: ingestedArticleId },
     });
+    const language = this.normalizeLanguageTag(
+      options.language ?? 'en',
+      ingested.sourceTitle,
+      ingested.body,
+    );
 
     await this.prisma.ingestedArticle.update({
       where: { id: ingestedArticleId },
@@ -274,6 +278,32 @@ export class AiService {
     // Check global feature flag fallback
     const flag = await this.prisma.featureFlag.findUnique({ where: { key: 'FEATURE_AUTO_APPROVE' } });
     return flag?.enabled ?? false;
+  }
+
+  private inferLangFromText(text: string): string | null {
+    const t = text ?? '';
+    if (/[\u3040-\u30FF]/.test(t)) return 'ja';
+    if (/[\uAC00-\uD7AF]/.test(t)) return 'ko';
+    if (/[\u0400-\u04FF]/.test(t)) return 'ru';
+    if (/[\u0600-\u06FF]/.test(t)) return 'ar';
+    if (/[\u0900-\u097F]/.test(t)) return 'hi';
+    if (/[\u0980-\u09FF]/.test(t)) return 'bn';
+    if (/[\u0A00-\u0A7F]/.test(t)) return 'pa';
+    if (/[\u0A80-\u0AFF]/.test(t)) return 'gu';
+    if (/[\u0B80-\u0BFF]/.test(t)) return 'ta';
+    if (/[\u0C00-\u0C7F]/.test(t)) return 'te';
+    if (/[\u0C80-\u0CFF]/.test(t)) return 'kn';
+    if (/[\u4E00-\u9FFF]/.test(t)) return 'zh';
+    return null;
+  }
+
+  private normalizeLanguageTag(preferred: string, ...samples: Array<string | null | undefined>) {
+    const preferredNorm = (preferred || 'en').toLowerCase();
+    const probe = samples.filter(Boolean).join('\n');
+    const inferred = this.inferLangFromText(probe);
+    if (!inferred) return preferredNorm;
+    if (preferredNorm === 'en') return inferred;
+    return preferredNorm;
   }
 
   private async getAiBotId(): Promise<string> {
