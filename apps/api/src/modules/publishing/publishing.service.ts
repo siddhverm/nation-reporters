@@ -125,7 +125,8 @@ export class PublishingService {
       articleId: article.id,
       title: article.title,
       excerpt: article.excerpt ?? article.title,
-      url: `${this.publicWebBaseUrl}/article/${article.seoSlug ?? article.slug}`,
+      // Use canonical slug used by web route. seoSlug can be non-unique / unsuffixed.
+      url: `${this.publicWebBaseUrl}/article/${article.slug}`,
       imageUrl: imageAsset?.url,
       videoUrl: videoAsset?.url,
       caption: caption?.caption,

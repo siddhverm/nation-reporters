@@ -188,9 +188,17 @@ export class ArticlesService {
     };
     // Try UUID first, fall back to slug lookup
     const isUuid = /^[0-9a-f-]{36}$/.test(idOrSlug);
-    const article = isUuid
+    let article = isUuid
       ? await this.prisma.article.findUnique({ where: { id: idOrSlug }, include })
       : await this.prisma.article.findUnique({ where: { slug: idOrSlug }, include });
+    // Backward compatibility: some older shared links used seoSlug instead of canonical slug.
+    if (!article && !isUuid) {
+      article = await this.prisma.article.findFirst({
+        where: { seoSlug: idOrSlug },
+        include,
+        orderBy: { createdAt: 'desc' },
+      });
+    }
     if (!article) throw new NotFoundException('Article not found');
     return article;
   }
