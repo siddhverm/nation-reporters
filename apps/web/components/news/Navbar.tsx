@@ -397,8 +397,8 @@ export function Navbar() {
             {/* Mobile language picker */}
             <div className="mt-3 border-t pt-3">
               <p className="text-xs font-bold text-gray-500 uppercase tracking-wider mb-2">Language</p>
-              <div className="grid grid-cols-3 gap-2">
-                {filteredLanguages.slice(0, 6).map((l) => (
+              <div className="grid grid-cols-3 gap-2 max-h-44 overflow-y-auto pr-1">
+                {filteredLanguages.map((l) => (
                   <button
                     key={l.code}
                     onClick={() => chooseLang(l.code)}

@@ -74,7 +74,15 @@ export class IngestionCronService {
       try {
         await this.fetchSource(source, { remainingByCategory });
       } catch (err) {
-        this.logger.error(`Failed to fetch source ${source.name}`, err);
+        const message = (err as Error)?.message ?? 'Unknown source fetch error';
+        this.logger.error(`Failed to fetch source ${source.name}: ${message}`);
+        if (this.shouldTemporarilyDisableSource(message)) {
+          await this.prisma.ingestedSource.update({
+            where: { id: source.id },
+            data: { isActive: false },
+          });
+          this.logger.warn(`Source auto-disabled due to repeated hard failure: ${source.name}`);
+        }
       }
     }
     await this.logSectionInventoryWarnings();
@@ -242,6 +250,24 @@ export class IngestionCronService {
       await new Promise((resolve) => setTimeout(resolve, 800));
       return this.parser.parseURL(feedUrl);
     }
+  }
+
+  /**
+   * Disable clearly dead feeds automatically so ingestion cycles keep moving.
+   * Admin can re-enable the source later from Sources UI after fixing URL.
+   */
+  private shouldTemporarilyDisableSource(errorMessage: string): boolean {
+    const msg = (errorMessage || '').toLowerCase();
+    return (
+      msg.includes('status code 404') ||
+      msg.includes('status code 410') ||
+      msg.includes('status code 451') ||
+      msg.includes('status code 522') ||
+      msg.includes('status code 530') ||
+      msg.includes('enotfound') ||
+      msg.includes('getaddrinfo') ||
+      msg.includes('attribute without value')
+    );
   }
 
   /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
