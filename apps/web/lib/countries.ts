@@ -69,6 +69,57 @@ export const REGION_LABELS: Record<string, string> = {
 export const COUNTRY_BY_CODE = new Map(COUNTRIES.map((c) => [c.code, c]));
 export const COUNTRY_BY_SLUG = new Map(COUNTRIES.map((c) => [c.slug, c]));
 
+export const SUPPORTED_APP_LANGUAGES = [
+  'en', 'hi', 'mr', 'bn', 'te', 'ta', 'gu', 'kn', 'pa', 'ur',
+  'ar', 'fr', 'de', 'es', 'pt', 'ru', 'zh', 'ja', 'ko', 'id', 'tr', 'it',
+] as const;
+
+const SUPPORTED_LANGUAGE_SET = new Set<string>(SUPPORTED_APP_LANGUAGES);
+
+const COUNTRY_EXTRA_LANGS: Record<string, string[]> = {
+  IN: ['hi', 'mr', 'bn', 'te', 'ta', 'gu', 'kn', 'pa', 'ur'],
+  CA: ['fr'],
+  PK: ['ur'],
+  BD: ['bn'],
+  AE: ['ar'],
+  SA: ['ar'],
+  QA: ['ar'],
+  EG: ['ar'],
+  MX: ['es'],
+  ES: ['es'],
+  AR: ['es'],
+  CO: ['es'],
+  BR: ['pt'],
+  FR: ['fr'],
+  DE: ['de'],
+  RU: ['ru'],
+  CN: ['zh'],
+  JP: ['ja'],
+  KR: ['ko'],
+  ID: ['id'],
+  TR: ['tr'],
+  IT: ['it'],
+};
+
+export function getCountryLanguageCodes(country: Country | null): string[] {
+  if (!country) return ['en'];
+  const out = new Set<string>(['en']);
+  if (SUPPORTED_LANGUAGE_SET.has(country.lang)) out.add(country.lang);
+  for (const code of COUNTRY_EXTRA_LANGS[country.code] ?? []) {
+    if (SUPPORTED_LANGUAGE_SET.has(code)) out.add(code);
+  }
+  return [...out];
+}
+
+export function resolveCountryDefaultLanguage(country: Country | null, availability?: Record<string, boolean>): string {
+  if (!country) return 'en';
+  const preferred = SUPPORTED_LANGUAGE_SET.has(country.lang) ? country.lang : 'en';
+  if (!availability) return preferred;
+  if (availability[preferred]) return preferred;
+  if (availability.en) return 'en';
+  return preferred;
+}
+
 // Detect country from browser language
 export function detectCountryFromBrowser(): string {
   if (typeof window === 'undefined') return 'IN';

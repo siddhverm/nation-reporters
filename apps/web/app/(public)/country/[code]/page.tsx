@@ -4,7 +4,13 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight, Globe } from 'lucide-react';
-import { COUNTRY_BY_SLUG, REGION_LABELS, COUNTRIES } from '@/lib/countries';
+import {
+  COUNTRY_BY_SLUG,
+  REGION_LABELS,
+  COUNTRIES,
+  getCountryLanguageCodes,
+  resolveCountryDefaultLanguage,
+} from '@/lib/countries';
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 
 interface Article {
@@ -48,10 +54,17 @@ export default function CountryPage() {
 
     const load = async (preferredLang: string) => {
       setLoading(true);
-      const resolvedLang = typeof window !== 'undefined'
-        ? ((preferredLang || localStorage.getItem('nr-lang')) ?? country?.lang ?? 'en')
-        : ((preferredLang || country?.lang) ?? 'en');
+      const allowedLanguages = new Set(getCountryLanguageCodes(country ?? null));
+      const requested = typeof window !== 'undefined'
+        ? ((preferredLang || localStorage.getItem('nr-lang')) ?? resolveCountryDefaultLanguage(country ?? null))
+        : ((preferredLang || resolveCountryDefaultLanguage(country ?? null)) ?? 'en');
+      const resolvedLang = allowedLanguages.has((requested ?? '').toLowerCase())
+        ? (requested ?? 'en').toLowerCase()
+        : resolveCountryDefaultLanguage(country ?? null);
       setLocalLanguage(resolvedLang);
+      if (typeof window !== 'undefined') {
+        localStorage.setItem('nr-lang', resolvedLang);
+      }
 
       try {
         const countryFeedRes = await fetch(
@@ -82,8 +95,8 @@ export default function CountryPage() {
       setLoading(false);
     };
     const selected = typeof window !== 'undefined'
-      ? (localStorage.getItem('nr-lang') ?? country?.lang ?? 'en')
-      : (country?.lang ?? 'en');
+      ? (localStorage.getItem('nr-lang') ?? resolveCountryDefaultLanguage(country ?? null))
+      : resolveCountryDefaultLanguage(country ?? null);
     void load(selected);
 
     const onLangChange = (e: Event) => {

@@ -19,7 +19,9 @@ export default function WorldPage() {
         if (!countries.length) return null;
         return (
           <section key={region} className="mb-8">
-            <h2 className="text-sm font-black text-navy uppercase tracking-widest border-b-2 border-brand pb-2 mb-4">{label}</h2>
+            <h2 className="text-base sm:text-sm font-black text-navy uppercase tracking-wide sm:tracking-widest border-b-2 border-brand pb-2 mb-4">
+              {label}
+            </h2>
             <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-6 gap-3">
               {countries.map((c) => (
                 <Link key={c.code} href={`/country/${c.slug}`}

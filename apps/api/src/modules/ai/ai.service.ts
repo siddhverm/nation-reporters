@@ -112,14 +112,12 @@ export class AiService {
         return null;
       }
 
-      const enrichedLong = (() => {
-        const long = (rewrite.long ?? '').trim();
-        const medium = (rewrite.medium ?? '').trim();
-        // Some feeds are terse; ensure full article page still has substantial detail.
-        if (long.length >= 2400) return long;
-        if (medium.length > 0) return `${medium}\n\n${long}`.trim();
-        return long;
-      })();
+      const enrichedLong = this.buildEnrichedLongBody(
+        rewrite.long,
+        rewrite.medium,
+        rewrite.short,
+        rewrite.summary,
+      );
 
       const longParagraphs = enrichedLong
         .split(/\n\s*\n/)
@@ -295,6 +293,49 @@ export class AiService {
     if (/[\u0C80-\u0CFF]/.test(t)) return 'kn';
     if (/[\u4E00-\u9FFF]/.test(t)) return 'zh';
     return null;
+  }
+
+  private normalizeParagraphKey(paragraph: string): string {
+    return paragraph
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .trim();
+  }
+
+  private dedupeParagraphs(paragraphs: string[]): string[] {
+    const out: string[] = [];
+    const seen: string[] = [];
+    for (const paragraph of paragraphs) {
+      const current = this.normalizeParagraphKey(paragraph);
+      if (!current) continue;
+      const alreadySeen = seen.some((s) => s === current || s.includes(current) || current.includes(s));
+      if (alreadySeen) continue;
+      seen.push(current);
+      out.push(paragraph.trim());
+    }
+    return out;
+  }
+
+  private buildEnrichedLongBody(
+    longText?: string | null,
+    mediumText?: string | null,
+    shortText?: string | null,
+    summaryText?: string | null,
+  ): string {
+    const long = (longText ?? '').trim();
+    const medium = (mediumText ?? '').trim();
+    const short = (shortText ?? '').trim();
+    const summary = (summaryText ?? '').trim();
+
+    const preferred = long.length >= 2400 ? [long] : [medium, long, short, summary];
+    const paragraphs = preferred
+      .flatMap((value) => value.split(/\n\s*\n/))
+      .map((p) => p.trim())
+      .filter((p) => p.length > 0);
+
+    const deduped = this.dedupeParagraphs(paragraphs);
+    return deduped.join('\n\n').trim();
   }
 
   private normalizeLanguageTag(preferred: string, ...samples: Array<string | null | undefined>) {

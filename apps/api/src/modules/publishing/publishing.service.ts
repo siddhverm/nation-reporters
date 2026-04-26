@@ -18,6 +18,7 @@ const MAX_RETRIES = 3;
 export class PublishingService {
   private readonly logger = new Logger(PublishingService.name);
   private readonly connectors = new Map<Platform, SocialConnector>();
+  private readonly publicWebBaseUrl: string;
 
   // Platforms that have credentials configured
   private readonly enabledPlatforms: Set<Platform>;
@@ -34,6 +35,8 @@ export class PublishingService {
     threads: ThreadsConnector,
     whatsapp: WhatsappConnector,
   ) {
+    this.publicWebBaseUrl = (config.get<string>('PUBLIC_WEB_BASE_URL') || 'https://news.nationreporters.com').replace(/\/+$/, '');
+
     this.connectors.set(Platform.TWITTER, twitter);
     this.connectors.set(Platform.TELEGRAM, telegram);
     this.connectors.set(Platform.FACEBOOK, facebook);
@@ -122,7 +125,7 @@ export class PublishingService {
       articleId: article.id,
       title: article.title,
       excerpt: article.excerpt ?? article.title,
-      url: `https://nationreporters.com/article/${article.seoSlug ?? article.slug}`,
+      url: `${this.publicWebBaseUrl}/article/${article.seoSlug ?? article.slug}`,
       imageUrl: imageAsset?.url,
       videoUrl: videoAsset?.url,
       caption: caption?.caption,

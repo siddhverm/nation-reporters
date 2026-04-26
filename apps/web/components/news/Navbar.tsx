@@ -4,7 +4,14 @@ import Image from 'next/image';
 import { useState, useEffect, useRef } from 'react';
 import { Search, Menu, X, Mic, Radio, Globe, ChevronDown } from 'lucide-react';
 import { useRouter } from 'next/navigation';
-import { COUNTRIES, REGION_LABELS, detectCountryFromBrowser, type Country } from '@/lib/countries';
+import {
+  COUNTRIES,
+  REGION_LABELS,
+  detectCountryFromBrowser,
+  getCountryLanguageCodes,
+  resolveCountryDefaultLanguage,
+  type Country,
+} from '@/lib/countries';
 
 const NAV_LINKS = [
   { label: 'India',         href: '/category/india', resetToIndia: true },
@@ -90,7 +97,7 @@ export function Navbar() {
       setCountry(found);
       // Country controls default language unless user explicitly chose one.
       if (!hasChosen) {
-        const countryDefaultLang = LANGUAGES.find((l) => l.code === found.lang) ? found.lang : 'en';
+        const countryDefaultLang = resolveCountryDefaultLanguage(found);
         setLang(countryDefaultLang);
         localStorage.setItem('nr-lang', countryDefaultLang);
       }
@@ -144,15 +151,25 @@ export function Navbar() {
     window.location.reload();
   }
 
-  // Languages filtered by selected country's relevant languages
+  // Languages filtered by selected country's relevant languages only
   const filteredLanguages = (() => {
-    if (!country) return LANGUAGES;
-    const countryLang = country.lang;
-    // Always include English + country's primary language + globally common ones
-    const priority = new Set(['en', countryLang]);
-    const countryGroup = country.region === 'south-asia' ? 'India' : 'Global';
-    return LANGUAGES.filter((l) => priority.has(l.code) || l.group === countryGroup);
+    const codes = new Set(getCountryLanguageCodes(country));
+    return LANGUAGES.filter((l) => codes.has(l.code));
   })();
+
+  useEffect(() => {
+    if (!country || !Object.keys(languageAvailability).length) return;
+    const allowedCodes = new Set(getCountryLanguageCodes(country));
+    const langAllowed = allowedCodes.has(lang);
+    const langAvailable = languageAvailability[lang] ?? false;
+    if (langAllowed && langAvailable) return;
+    const defaultLang = resolveCountryDefaultLanguage(country, languageAvailability);
+    if (defaultLang !== lang) {
+      setLang(defaultLang);
+      localStorage.setItem('nr-lang', defaultLang);
+      window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang: defaultLang } }));
+    }
+  }, [country, lang, languageAvailability]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -201,7 +218,7 @@ export function Navbar() {
                   <ChevronDown className={`h-3 w-3 transition-transform ${worldOpen ? 'rotate-180' : ''}`} />
                 </button>
                 {worldOpen && (
-                  <div className="absolute right-0 top-7 bg-white text-gray-800 rounded-xl shadow-xl border border-gray-100 w-72 z-50 overflow-hidden max-h-96 overflow-y-auto">
+                  <div className="absolute right-0 top-7 bg-white text-gray-800 rounded-xl shadow-xl border border-gray-200 w-[20rem] max-w-[92vw] z-50 overflow-hidden max-h-96 overflow-y-auto">
                     <div className="px-3 py-2 bg-navy text-white text-[10px] font-bold uppercase tracking-wider flex items-center justify-between">
                       <span>Browse by Country</span>
                       <Link href="/world" onClick={() => setWorldOpen(false)} className="text-signal hover:underline normal-case text-[10px]">See all →</Link>
@@ -210,14 +227,16 @@ export function Navbar() {
                       const regionCountries = COUNTRIES.filter((c) => c.region === region);
                       return (
                         <div key={region}>
-                          <div className="px-3 py-1 bg-gray-50 text-[10px] font-bold text-gray-500 uppercase tracking-wider">{label}</div>
+                          <div className="px-3 py-1.5 bg-gray-100 text-[11px] font-extrabold text-navy uppercase tracking-wide border-y border-gray-200">
+                            {label}
+                          </div>
                           {regionCountries.map((c) => (
                             <Link key={c.code} href={`/country/${c.slug}`}
                               onClick={() => {
                                 setWorldOpen(false);
                                 localStorage.setItem('nr-country', c.code);
-                                // Switch language to match country's primary language
-                                const newLang = LANGUAGES.find((l) => l.code === c.lang) ? c.lang : 'en';
+                                // Industry pattern: auto-switch to country default language with English fallback.
+                                const newLang = resolveCountryDefaultLanguage(c, languageAvailability);
                                 localStorage.setItem('nr-lang', newLang);
                                 setCountry(c);
                                 setLang(newLang);

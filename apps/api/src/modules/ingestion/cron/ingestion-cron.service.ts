@@ -158,7 +158,7 @@ export class IngestionCronService {
     const items = (feed.items ?? []).slice(0, this.maxFeedItemsScan);
 
     for (const item of items) {
-      const categorySlug = this.detectCategorySlug(item.title ?? '');
+      const categorySlug = this.detectCategorySlug(item.title ?? '', source.name);
       if (!categorySlug) continue;
       if (options?.remainingByCategory && options.remainingByCategory[categorySlug] <= 0) continue;
 
@@ -271,7 +271,8 @@ export class IngestionCronService {
       }
       if (cur.trim()) parts.push(cur.trim());
     }
-    return parts.map((p) => ({ type: 'paragraph', content: [{ type: 'text', text: p }] }));
+    const dedupedParts = this.dedupeParagraphs(parts);
+    return dedupedParts.map((p) => ({ type: 'paragraph', content: [{ type: 'text', text: p }] }));
   }
 
   // Publish raw RSS content directly when AI is unavailable
@@ -346,21 +347,26 @@ export class IngestionCronService {
 
   private detectSourceLang(sourceName: string): string {
     const name = sourceName.toLowerCase();
-    if (name.includes('hindi') || name.includes('हिंदी')) return 'hi';
-    if (name.includes('marathi') || name.includes('maratha')) return 'mr';
-    if (name.includes('bengali') || name.includes('bangla') || name.includes('ananda')) return 'bn';
-    if (name.includes('tamil') || name.includes('dinamalar') || name.includes('dinamani')) return 'ta';
-    if (name.includes('telugu') || name.includes('eenadu') || name.includes('sakshi')) return 'te';
-    if (name.includes('kannada') || name.includes('prajavani')) return 'kn';
-    if (name.includes('punjabi')) return 'pa';
-    if (name.includes('gujarati') || name.includes('divya bhaskar')) return 'gu';
-    if (name.includes('arabic') || name.includes('عربي') || name.includes('al jazeera arabic')) return 'ar';
+    if (name.includes('hindi') || name.includes('हिंदी') || name.includes('jagran') || name.includes('amar ujala') || name.includes('abp live hindi')) return 'hi';
+    if (name.includes('marathi') || name.includes('maratha') || name.includes('maharashtra times') || name.includes('lokmat') || name.includes('sakal')) return 'mr';
+    if (name.includes('bengali') || name.includes('bangla') || name.includes('ananda') || name.includes('eisamay') || name.includes('abp ananda') || name.includes('prothom alo')) return 'bn';
+    if (name.includes('tamil') || name.includes('dinamalar') || name.includes('dinamani') || name.includes('vikatan')) return 'ta';
+    if (name.includes('telugu') || name.includes('eenadu') || name.includes('sakshi') || name.includes('tv9 telugu')) return 'te';
+    if (name.includes('kannada') || name.includes('prajavani') || name.includes('vijaya karnataka') || name.includes('tv9 kannada')) return 'kn';
+    if (name.includes('punjabi') || name.includes('jagbani') || name.includes('punjab kesari')) return 'pa';
+    if (name.includes('gujarati') || name.includes('divya bhaskar') || name.includes('gujarat samachar') || name.includes('sandesh')) return 'gu';
+    if (name.includes('arabic') || name.includes('عربي') || name.includes('al jazeera arabic') || name.includes('al arabiya') || name.includes('ahram')) return 'ar';
     if (name.includes('urdu') || name.includes('jang') || name.includes('geo urdu')) return 'ur';
-    if (name.includes('french') || name.includes('le monde') || name.includes('le figaro')) return 'fr';
-    if (name.includes('german') || name.includes('spiegel') || name.includes('zeit')) return 'de';
+    if (name.includes('french') || name.includes('le monde') || name.includes('le figaro') || name.includes('radio-canada') || name.includes('ledevoir') || name.includes('rfi')) return 'fr';
+    if (name.includes('german') || name.includes('spiegel') || name.includes('zeit') || name.includes('deutsche welle german') || name.includes('süddeutsche')) return 'de';
+    if (name.includes('spanish') || name.includes('el país') || name.includes('el pais') || name.includes('el mundo') || name.includes('rtve') || name.includes('bbc mundo') || name.includes('infobae')) return 'es';
+    if (name.includes('portuguese') || name.includes('g1 globo') || name.includes('folha') || name.includes('bbc brasil')) return 'pt';
+    if (name.includes('russian') || name.includes('tass') || name.includes('ria novosti') || name.includes('rt russian')) return 'ru';
     if (name.includes('japanese') || name.includes('nhk') || name.includes('asahi')) return 'ja';
-    if (name.includes('korean') || name.includes('yonhap')) return 'ko';
-    if (name.includes('chinese') || name.includes('xinhua')) return 'zh';
+    if (name.includes('korean') || name.includes('yonhap') || name.includes('korea herald') || name.includes('joongang')) return 'ko';
+    if (name.includes('chinese') || name.includes('xinhua') || name.includes('cgtn')) return 'zh';
+    if (name.includes('indonesian') || name.includes('kompas')) return 'id';
+    if (name.includes('turkish')) return 'tr';
     return 'en';
   }
 
@@ -384,6 +390,26 @@ export class IngestionCronService {
     return null;
   }
 
+  private normalizeParagraphKey(paragraph: string): string {
+    return paragraph
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .trim();
+  }
+
+  private dedupeParagraphs(paragraphs: string[]): string[] {
+    const keys = new Set<string>();
+    const out: string[] = [];
+    for (const paragraph of paragraphs) {
+      const key = this.normalizeParagraphKey(paragraph);
+      if (!key || keys.has(key)) continue;
+      keys.add(key);
+      out.push(paragraph);
+    }
+    return out;
+  }
+
   private normalizeLanguageTag(preferred: string, ...samples: Array<string | null | undefined>) {
     const preferredNorm = (preferred || 'en').toLowerCase();
     const probe = samples.filter(Boolean).join('\n');
@@ -393,15 +419,22 @@ export class IngestionCronService {
     return preferredNorm;
   }
 
-  private detectCategorySlug(title: string): CategorySlug | null {
-    const t = title.toLowerCase();
-    if (t.match(/sport|cricket|football|ipl|tennis|olympics/)) return 'sports';
-    if (t.match(/tech|ai|digital|startup|cyber|software|app/)) return 'tech';
-    if (t.match(/business|economy|market|stock|sensex|gdp|rupee|trade/)) return 'business';
-    if (t.match(/politics|election|parliament|minister|cm |pm |governor|bjp|congress/)) return 'politics';
-    if (t.match(/film|cinema|bollywood|celebrity|entertainment|award/)) return 'entertainment';
-    if (t.match(/world|us |usa|uk |china|europe|russia|pakistan|international/)) return 'world';
-    return 'india';
+  private detectCategorySlug(title: string, sourceName = ''): CategorySlug | null {
+    const t = `${title} ${sourceName}`.toLowerCase();
+    // Sports
+    if (t.match(/sport|cricket|football|ipl|tennis|olympics|मैच|क्रिकेट|ఫుట్‌బాల్|క్రికెట్|ಫುಟ್ಬಾಲ್|ಕ್ರೀಡೆ/)) return 'sports';
+    // Tech
+    if (t.match(/tech|ai|digital|startup|cyber|software|app|तकनीक|प्रौद्योगिकी|టెక్|ಸാങ്കേതിക/)) return 'tech';
+    // Business
+    if (t.match(/business|economy|market|stock|sensex|gdp|rupee|trade|बाजार|अर्थव्यवस्था|शेयर|వ్యాపార|ಮಾರುಕಟ್ಟೆ/)) return 'business';
+    // Politics / governance / public affairs
+    if (t.match(/politics|election|parliament|minister|cm |pm |governor|bjp|congress|सरकार|चुनाव|संसद|मंत्री|ರಾಜಕೀಯ|चालू घडामोडी|current affairs/)) return 'politics';
+    // Entertainment
+    if (t.match(/film|cinema|bollywood|celebrity|entertainment|award|movie|actor|actress|फिल्म|मनोरंजन|సినిమా|ಮನರಂಜನೆ/)) return 'entertainment';
+    // World + current affairs + conflict
+    if (t.match(/world|us |usa|uk |china|europe|russia|pakistan|international|global|breaking|war|ceasefire|diplomacy|geopolitics|विदेश|दुनिया|अंतरराष्ट्रीय|ವಿಶ್ವ|ప్రపంచం|العالم|monde|mundo/)) return 'world';
+    // Prefer world as neutral fallback so top bars get current-affairs coverage even when title is generic.
+    return 'world';
   }
 
   private async detectCategory(title: string): Promise<{ id: string } | null> {
