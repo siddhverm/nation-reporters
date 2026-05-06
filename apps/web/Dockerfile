@@ -1,12 +1,17 @@
 FROM node:20-alpine AS deps
 WORKDIR /app
-COPY package*.json ./
+COPY package.json package-lock.json ./
+COPY apps/web/package.json ./apps/web/
+COPY packages/shared-types/package.json ./packages/shared-types/
 RUN npm ci
 
 FROM node:20-alpine AS builder
 WORKDIR /app
 COPY --from=deps /app/node_modules ./node_modules
-COPY . .
+COPY apps/web/ ./apps/web/
+COPY packages/shared-types/ ./packages/shared-types/
+COPY package.json ./
+WORKDIR /app/apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
 RUN npm run build
 
