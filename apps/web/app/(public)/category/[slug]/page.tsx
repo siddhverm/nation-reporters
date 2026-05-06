@@ -5,6 +5,8 @@ import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight } from 'lucide-react';
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
+import { fetchJsonFromApi } from '@/lib/api-client';
+import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Article {
   id: string;
@@ -22,6 +24,11 @@ interface Category {
   id: string;
   name: string;
   slug: string;
+}
+
+function toArticleList(payload: { data?: Article[] } | Article[] | null | undefined): Article[] {
+  if (!payload) return [];
+  return Array.isArray(payload) ? payload : (payload.data ?? []);
 }
 
 function ensureCategoryVolume(_slug: string, list: Article[], min = 20): Article[] {
@@ -57,16 +64,13 @@ export default function CategoryPage() {
   const accent = SLUG_COLORS[slug] ?? 'bg-brand';
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
     const cacheKey = `nr-category-cache-${slug}-${lang}`;
     const fillFromLatestLive = async (baseList: Article[], min = 20, targetLang?: string) => {
       if (baseList.length >= min) return baseList.slice(0, min);
       try {
-        const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=120`);
-        if (!latest.ok) return baseList;
-        const latestData: { data?: Article[] } = await latest.json();
-        const latestList = (latestData.data ?? []).filter((a) => {
+        const latestData = await fetchJsonFromApi<{ data?: Article[] }>('/articles?status=PUBLISHED&limit=120');
+        const latestList = toArticleList(latestData).filter((a) => {
           if (!targetLang) return true;
           return (a.language ?? 'en').toLowerCase() === targetLang.toLowerCase();
         });
@@ -79,10 +83,8 @@ export default function CategoryPage() {
     };
     const loadLatestFallback = async () => {
       try {
-        const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
-        if (!latest.ok) throw new Error(`Latest fetch failed: ${latest.status}`);
-        const latestData: { data?: Article[] } = await latest.json();
-        const latestList = latestData.data ?? [];
+        const latestData = await fetchJsonFromApi<{ data?: Article[] }>('/articles?status=PUBLISHED&limit=30');
+        const latestList = toArticleList(latestData);
         const liveFilled = await fillFromLatestLive(latestList, 20, lang);
         if (liveFilled.length > 0 && typeof window !== 'undefined') {
           localStorage.setItem(cacheKey, JSON.stringify(liveFilled.slice(0, 120)));
@@ -115,11 +117,7 @@ export default function CategoryPage() {
     };
 
     // Category pages follow selected UI language (including India).
-    fetch(`${base}/categories`)
-      .then(async (r) => {
-        if (!r.ok) throw new Error(`Categories fetch failed: ${r.status}`);
-        return r.json();
-      })
+    fetchJsonFromApi<Category[]>('/categories')
       .then(async (cats: Category[]) => {
         if (!Array.isArray(cats) || cats.length === 0) {
           await loadLatestFallback();
@@ -129,16 +127,14 @@ export default function CategoryPage() {
         const worldCat = cats.find((c) => c.slug === 'world');
 
         const buildUrl = (withLang: boolean) => {
-          let url = `${base}/articles?status=PUBLISHED&limit=120`;
+          let url = `/articles?status=PUBLISHED&limit=120`;
           if (cat) url += `&categoryId=${cat.id}`;
           if (withLang) url += `&language=${lang}`;
           return url;
         };
 
-        const res = await fetch(buildUrl(true));
-        if (!res.ok) throw new Error(`Category articles fetch failed: ${res.status}`);
-        const data: { data?: Article[] } = await res.json();
-        let articles = data.data ?? [];
+        const data = await fetchJsonFromApi<{ data?: Article[] } | Article[]>(buildUrl(true));
+        let articles = toArticleList(data);
 
         if (lang !== 'en') {
           articles = articles.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
@@ -154,9 +150,8 @@ export default function CategoryPage() {
 
         // Final fallback for empty sections: show latest published mixed feed
         if (articles.length === 0) {
-          const latest = await fetch(`${base}/articles?status=PUBLISHED&limit=30`);
-          const latestData: { data?: Article[] } = await latest.json();
-          const latestList = latestData.data ?? [];
+          const latestData = await fetchJsonFromApi<{ data?: Article[] }>('/articles?status=PUBLISHED&limit=30');
+          const latestList = toArticleList(latestData);
           const preferred = latestList.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
           if (preferred.length >= 20) {
             articles = preferred;
@@ -166,6 +161,18 @@ export default function CategoryPage() {
               setDataNotice(
                 `Showing ${articles.length} stor${articles.length === 1 ? 'y' : 'ies'} in ${lang.toUpperCase()}. ` +
                 'We do not mix English into this category view.',
+              );
+            }
+          }
+          if (articles.length === 0 && lang !== 'en') {
+            const enData = await fetchJsonFromApi<{ data?: Article[] }>(
+              `/articles?status=PUBLISHED&limit=120${cat ? `&categoryId=${cat.id}` : ''}&language=en`,
+            );
+            const enArticles = toArticleList(enData);
+            if (enArticles.length > 0) {
+              articles = enArticles;
+              setDataNotice(
+                `No ${lang.toUpperCase()} stories available in ${label} right now. Showing English stories for continuity.`,
               );
             }
           }
@@ -237,7 +244,7 @@ export default function CategoryPage() {
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
-                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero))} alt={hero.title}
+                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero))} alt={safeArticleText(hero.title, 'Article')}
                     fill className="object-cover" unoptimized />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
@@ -245,9 +252,11 @@ export default function CategoryPage() {
                       {label}
                     </span>
                     <h2 className="text-white font-serif font-bold text-xl leading-snug group-hover:text-signal transition-colors line-clamp-3">
-                      {hero.title}
+                      {safeArticleText(hero.title)}
                     </h2>
-                    {hero.excerpt && <p className="text-blue-200 text-sm mt-1 line-clamp-2">{hero.excerpt}</p>}
+                    {hero.excerpt && (
+                      <p className="text-blue-200 text-sm mt-1 line-clamp-2">{safeArticleText(hero.excerpt)}</p>
+                    )}
                     {hero.publishedAt && (
                       <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">
                         <Clock className="h-3 w-3" />{timeAgo(hero.publishedAt)}
@@ -262,12 +271,14 @@ export default function CategoryPage() {
                   <Link key={a.id} href={`/article/${a.slug}`}
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all news-card">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={a.title}
+                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')}
                         fill className="object-cover" unoptimized />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
-                      {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                      <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
+                      {a.excerpt && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                      )}
                       {a.publishedAt && (
                         <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
                           <Clock className="h-3 w-3" />{timeAgo(a.publishedAt)}

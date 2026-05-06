@@ -56,7 +56,18 @@ export class GeminiClient {
     const { text, tokensUsed } = await this.generate(
       `${prompt}\n\nRespond ONLY with valid JSON, no markdown, no explanation.`,
     );
-    const data = JSON.parse(text.replace(/```json\n?|\n?```/g, '').trim()) as T;
+    const data = JSON.parse(this.extractJsonObject(text)) as T;
     return { data, tokensUsed };
+  }
+
+  /** Tolerate markdown fences or leading/trailing prose from the model. */
+  private extractJsonObject(raw: string): string {
+    const stripped = raw.replace(/```json\s*/gi, '').replace(/```\s*/g, '').trim();
+    const start = stripped.indexOf('{');
+    const end = stripped.lastIndexOf('}');
+    if (start === -1 || end === -1 || end <= start) {
+      throw new Error('Gemini: response did not contain a JSON object');
+    }
+    return stripped.slice(start, end + 1);
   }
 }

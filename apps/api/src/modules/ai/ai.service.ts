@@ -1,6 +1,13 @@
 import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
+import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from './gemini.client';
+import {
+  fetchArticlePlainText,
+  MIN_SOURCE_ARTICLE_PLAIN_CHARS,
+  rssBodyLooksLikeTitleOnly,
+} from './source-article-text.util';
+import { acceptLanguageHeaderForLocale, resolveArticleLanguage } from './language-resolution.util';
 import { rewritePrompt } from './prompts/rewrite.prompt';
 import { tagPrompt } from './prompts/tag.prompt';
 import { captionsPrompt } from './prompts/captions.prompt';
@@ -18,26 +25,46 @@ type ProcessIngestedOptions = {
   allowedCategories?: string[];
 };
 
+const PUBLISH_CATEGORY_SLUGS = [
+  'india',
+  'world',
+  'politics',
+  'business',
+  'sports',
+  'entertainment',
+  'tech',
+] as const;
+
 @Injectable()
 export class AiService {
   private readonly logger = new Logger(AiService.name);
 
+  private readonly fetchSourceArticle: boolean;
+  private readonly fetchSourceTimeoutMs: number;
+  private readonly fetchSourceMaxBytes: number;
+
   constructor(
     private readonly gemini: GeminiClient,
     private readonly prisma: PrismaService,
+    private readonly config: ConfigService,
     @Inject(forwardRef(() => PublishingService))
     private readonly publishing: PublishingService,
-  ) {}
+  ) {
+    const flag = (this.config.get<string>('FETCH_SOURCE_ARTICLE') ?? '').toLowerCase();
+    this.fetchSourceArticle = !['0', 'false', 'no', 'off'].includes(flag);
+    this.fetchSourceTimeoutMs = Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000);
+    this.fetchSourceMaxBytes = Number(this.config.get('FETCH_SOURCE_MAX_BYTES') ?? 1_000_000);
+  }
 
   async processIngestedArticle(ingestedArticleId: string, options: ProcessIngestedOptions = {}) {
     const ingested = await this.prisma.ingestedArticle.findUniqueOrThrow({
       where: { id: ingestedArticleId },
     });
-    const language = this.normalizeLanguageTag(
-      options.language ?? 'en',
-      ingested.sourceTitle,
-      ingested.body,
-    );
+    const feedLangHint = options.language ?? 'en';
+    const langForFetch = resolveArticleLanguage(feedLangHint, {
+      title: ingested.sourceTitle,
+      body: ingested.body,
+    });
 
     await this.prisma.ingestedArticle.update({
       where: { id: ingestedArticleId },
@@ -45,32 +72,98 @@ export class AiService {
     });
 
     try {
-      // 1. Rewrite
+      const rssPlain = this.stripIngestedToPlain(ingested.body);
+      let bodyForRewrite = rssPlain;
+      const titlePlain = this.stripIngestedToPlain(ingested.sourceTitle).split('\n')[0].trim();
+      const looksTitleOnly = rssBodyLooksLikeTitleOnly(rssPlain, titlePlain);
+      /** Ingestion may already have merged source-page HTML — still re-fetch if body is only the headline. */
+      const skipFetchBecauseIngestionEnriched = rssPlain.length >= 1100 && !looksTitleOnly;
+      if (this.fetchSourceArticle && ingested.sourceUrl && !skipFetchBecauseIngestionEnriched) {
+        const fetched = await fetchArticlePlainText(
+          ingested.sourceUrl,
+          {
+            timeoutMs: this.fetchSourceTimeoutMs,
+            maxBytes: this.fetchSourceMaxBytes,
+          },
+          { acceptLanguage: acceptLanguageHeaderForLocale(langForFetch) },
+        );
+        const rssIsThin = rssPlain.length < 700;
+        if (fetched && fetched.length >= MIN_SOURCE_ARTICLE_PLAIN_CHARS) {
+          const materiallyLonger = fetched.length > rssPlain.length + 40;
+          const muchLongerThanHeadline = fetched.length > titlePlain.length + 120;
+          if (materiallyLonger || rssIsThin || looksTitleOnly || muchLongerThanHeadline) {
+            bodyForRewrite = fetched;
+            this.logger.log(
+              `AI input: using fetched article (${fetched.length}c) vs RSS (${rssPlain.length}c) titleOnly=${looksTitleOnly} url=${ingested.sourceUrl.slice(0, 72)}`,
+            );
+          }
+        }
+      }
+
+      const language = resolveArticleLanguage(feedLangHint, {
+        title: ingested.sourceTitle,
+        body: bodyForRewrite,
+      });
+      if (language !== langForFetch) {
+        this.logger.log(
+          `Resolved output language=${language} (fetch hint was ${langForFetch}) from body script/title`,
+        );
+      }
+
+      // 1. Rewrite (short / medium / long + multilingual reader summary)
       const { data: rewrite, tokensUsed: rwTokens } = await this.gemini.generateJson<{
         title: string; short: string; medium: string; long: string;
         summary: string; podcastScript: string; language: string;
-      }>(rewritePrompt(ingested.sourceTitle, ingested.body, language));
+      }>(rewritePrompt(ingested.sourceTitle, bodyForRewrite, language));
+
+      const readerSummary = this.ensureReaderSummary(
+        rewrite.summary,
+        rewrite.short,
+        rewrite.medium,
+        rewrite.long,
+        bodyForRewrite.length,
+        language,
+      );
+      const longForPrompts = this.clipForPrompt(rewrite.long, 14_000);
 
       // 2. Tag
       const { data: tags } = await this.gemini.generateJson<{
         category: string; region: string; tags: string[];
         entities: object; isBreaking: boolean;
-      }>(tagPrompt(rewrite.title, rewrite.long));
+      }>(tagPrompt(rewrite.title, longForPrompts));
+
+      const categorySlug = this.normalizeCategorySlug(tags.category);
+      const categoryRef = await this.prisma.category.findFirst({
+        where: { slug: categorySlug },
+        select: { id: true },
+      });
 
       // 3. SEO
-      const { data: seo } = await this.gemini.generateJson<{
+      const { data: seoRaw } = await this.gemini.generateJson<{
         seoTitle: string; seoDescription: string; slug: string; hashtags: string[];
-      }>(seoPrompt(rewrite.title, rewrite.long, language));
+      }>(seoPrompt(rewrite.title, longForPrompts, language));
+      const seoDescription =
+        (seoRaw.seoDescription ?? '').trim().length >= 40
+          ? seoRaw.seoDescription
+          : this.clipExcerpt(readerSummary, 155) ?? seoRaw.seoDescription;
+      const seo = { ...seoRaw, seoDescription: seoDescription ?? seoRaw.seoDescription };
 
-      // 4. Captions
-      const { data: captions } = await this.gemini.generateJson<Record<string, string>>(
-        captionsPrompt(rewrite.title, rewrite.summary, language),
-      );
+      // 4. Captions (fallback so publishing still works if this call fails)
+      let captions: Record<string, string>;
+      try {
+        const { data } = await this.gemini.generateJson<Record<string, string>>(
+          captionsPrompt(rewrite.title, readerSummary, language),
+        );
+        captions = data;
+      } catch (capErr) {
+        this.logger.warn(`Caption generation failed, using fallbacks: ${(capErr as Error).message}`);
+        captions = this.buildFallbackSocialCaptions(rewrite.title, readerSummary);
+      }
 
       // 5. Risk
       const { data: risk } = await this.gemini.generateJson<{
         score: number; confidence: number; flags: string[]; reasoning: string;
-      }>(riskPrompt(rewrite.title, rewrite.long));
+      }>(riskPrompt(rewrite.title, longForPrompts));
 
       const aiRewrite = await this.prisma.aiRewrite.create({
         data: {
@@ -81,11 +174,11 @@ export class AiService {
           rewrittenBodyShort: rewrite.short,
           rewrittenBodyMedium: rewrite.medium,
           rewrittenBodyLong: rewrite.long,
-          summary: rewrite.summary,
+          summary: readerSummary,
           podcastScript: rewrite.podcastScript,
           language,
           tags: tags.tags,
-          category: tags.category,
+          category: categorySlug,
           region: tags.region,
           seoTitle: seo.seoTitle,
           seoDescription: seo.seoDescription,
@@ -97,13 +190,13 @@ export class AiService {
 
       // Determine auto-approve from risk rules
       const policyAutoApprove = await this.checkAutoApprove(
-        risk.score, risk.confidence, tags.category,
+        risk.score, risk.confidence, categorySlug,
       );
       const autoApprove = options.forceAutoPublish ? true : policyAutoApprove;
 
       if (
         options.allowedCategories?.length &&
-        !options.allowedCategories.includes((tags.category ?? '').toLowerCase())
+        !options.allowedCategories.includes(categorySlug)
       ) {
         await this.prisma.ingestedArticle.update({
           where: { id: ingestedArticleId },
@@ -116,7 +209,7 @@ export class AiService {
         rewrite.long,
         rewrite.medium,
         rewrite.short,
-        rewrite.summary,
+        readerSummary,
       );
 
       const longParagraphs = enrichedLong
@@ -135,7 +228,9 @@ export class AiService {
           slug: `${seo.slug}-${Date.now()}`,
           bodyShort: rewrite.short,
           bodyMedium: rewrite.medium,
+          excerpt: this.clipExcerpt(readerSummary),
           language,
+          categoryId: categoryRef?.id ?? null,
           seoTitle: seo.seoTitle,
           seoDescription: seo.seoDescription,
           seoSlug: seo.slug,
@@ -152,7 +247,7 @@ export class AiService {
             aiVideo: {
               title: rewrite.title,
               narration: rewrite.podcastScript,
-              summary: rewrite.summary,
+              summary: readerSummary,
               language,
               status: options.sourceVideoUrl ? 'ready_with_source_video' : 'ready_for_tts_video_generation',
             },
@@ -212,9 +307,9 @@ export class AiService {
 
       for (const [platform, caption] of Object.entries(captions)) {
         const p = platformMap[platform];
-        if (p) {
+        if (p && typeof caption === 'string' && caption.trim().length > 0) {
           await this.prisma.socialCaption.create({
-            data: { articleId: article.id, platform: p, caption, hashtags: seo.hashtags },
+            data: { articleId: article.id, platform: p, caption: caption.trim(), hashtags: seo.hashtags },
           });
         }
       }
@@ -251,14 +346,206 @@ export class AiService {
 
   async regenerateCaptions(articleId: string) {
     const article = await this.prisma.article.findUniqueOrThrow({ where: { id: articleId } });
+    const teaser = (article.excerpt ?? article.bodyShort ?? article.title).trim();
     const { data: captions } = await this.gemini.generateJson<Record<string, string>>(
-      captionsPrompt(article.title, article.excerpt ?? article.title),
+      captionsPrompt(article.title, teaser, article.language ?? 'en'),
     );
     return captions;
   }
 
   async getRisk(articleId: string) {
     return this.prisma.riskAssessment.findUnique({ where: { articleId } });
+  }
+
+  private normalizeCategorySlug(value: string | undefined): string {
+    const v = (value ?? 'world').toLowerCase().trim().replace(/\s+/g, '');
+    const allowed = PUBLISH_CATEGORY_SLUGS as readonly string[];
+    if (allowed.includes(v)) return v;
+    const map: Record<string, string> = {
+      health: 'tech',
+      science: 'tech',
+      crime: 'world',
+      environment: 'world',
+      lifestyle: 'entertainment',
+      culture: 'entertainment',
+    };
+    const mapped = map[v];
+    if (mapped && allowed.includes(mapped)) return mapped;
+    return 'world';
+  }
+
+  /**
+   * Public teaser: never a one-line hook if we have ~short/~medium copy.
+   * Models often return a single metaphor; extend from story body until ~200+ chars / 2+ sentences.
+   */
+  private ensureReaderSummary(
+    summary: string | undefined,
+    shortBody: string | undefined,
+    mediumBody?: string | undefined,
+    longBody?: string | undefined,
+    sourceBodyLength?: number,
+    targetLang = 'en',
+  ): string {
+    const MIN_CHARS = this.targetSummaryChars(sourceBodyLength, longBody, mediumBody, shortBody);
+    const HARD_MAX = Math.min(1200, Math.max(420, Math.floor(MIN_CHARS * 1.9)));
+    let s = this.stripLeadingLatinLabel(summary, targetLang);
+    s = this.trimTrailingSummaryEllipsis(s);
+    const short = (shortBody ?? '').trim();
+    const medium = (mediumBody ?? '').trim();
+    const long = (longBody ?? '').trim();
+
+    const splitSentences = (t: string): string[] =>
+      t
+        .split(/(?<=[.!?।])\s+/)
+        .map((x) => x.trim())
+        .filter((x) => x.length > 0);
+
+    const roughSentenceCount = (text: string): number => Math.max(1, splitSentences(text).length);
+
+    const substantiveEnough = (text: string): boolean => {
+      if (this.summaryLooksTeaserIncomplete(text)) return false;
+      return text.length >= MIN_CHARS || (text.length >= 110 && roughSentenceCount(text) >= 2);
+    };
+
+    if (substantiveEnough(s)) return s.slice(0, HARD_MAX).trim();
+
+    const padded = this.padTeaserFromArticleBodies(s, short, medium, long, MIN_CHARS);
+    let out = padded.slice(0, HARD_MAX).trim();
+    out = this.stripLeadingLatinLabel(out, targetLang);
+    out = this.trimTrailingSummaryEllipsis(out);
+    if (this.summaryLooksTeaserIncomplete(out) && (short || medium || long)) {
+      out = this.padTeaserFromArticleBodies(out, short, medium, long, MIN_CHARS).slice(0, HARD_MAX).trim();
+      out = this.trimTrailingSummaryEllipsis(out);
+    }
+    return out;
+  }
+
+  /**
+   * Models sometimes emit "Exclusive: …" / "Interview: …" in English before native script.
+   * Strip that label when the server target is not Latin-primary.
+   */
+  private stripLeadingLatinLabel(summary: string | undefined, targetLang: string): string {
+    const code = (targetLang || 'en').toLowerCase();
+    const latinPrimary = new Set(['en', 'fr', 'de', 'es', 'pt', 'sw', 'tr', 'id', 'ms']);
+    if (latinPrimary.has(code)) return (summary ?? '').trim();
+
+    let s = (summary ?? '').trim();
+    const colon = s.indexOf(':');
+    if (colon < 3 || colon > 120) return s;
+    const head = s.slice(0, colon);
+    const tail = s.slice(colon + 1).trim();
+    if (!tail) return s;
+    if (!/^[A-Za-z0-9][A-Za-z0-9\s,''"()\-]{1,118}$/.test(head)) return s;
+    if (!/[^\x00-\x7F\u200C\u200D]/.test(tail)) return s;
+    return tail;
+  }
+
+  private trimTrailingSummaryEllipsis(text: string): string {
+    return text
+      .replace(/[…⋯]+[\s]*$/u, '')
+      .replace(/\.{2,}[\s]*$/u, '')
+      .trim();
+  }
+
+  /** Ellipsis or missing closing punctuation on a long blurb → treat as incomplete so we pad from bodies. */
+  private summaryLooksTeaserIncomplete(text: string): boolean {
+    const t = text.trim();
+    if (!t) return true;
+    const low = t.toLowerCase();
+    // Common teaser-style closers that read like an intro, not a complete summary.
+    if (
+      /आइए जानते हैं|विस्तार से जानें|पूरा पढ़ें|पढ़िए|देखिए|जानिए/.test(t) ||
+      /let'?s know|read on|read more|details (inside|below)|stay tuned/.test(low)
+    ) {
+      return true;
+    }
+    if (/[…⋯]\s*$/u.test(t)) return true;
+    if (/\.{3,}\s*$/u.test(t)) return true;
+    if (t.length >= 90 && !/[.!?।。！？\u0964\u0965]["')\]]?\s*$/u.test(t)) return true;
+    return false;
+  }
+
+  private targetSummaryChars(
+    sourceBodyLength: number | undefined,
+    longBody?: string,
+    mediumBody?: string,
+    shortBody?: string,
+  ): number {
+    const sourceLen = Math.max(
+      sourceBodyLength ?? 0,
+      (longBody ?? '').trim().length,
+      (mediumBody ?? '').trim().length,
+      (shortBody ?? '').trim().length,
+    );
+    if (sourceLen >= 9000) return 520;
+    if (sourceLen >= 5000) return 430;
+    if (sourceLen >= 2600) return 320;
+    if (sourceLen >= 1200) return 250;
+    return 190;
+  }
+
+  private splitSentencesForTeaser(t: string): string[] {
+    return t
+      .split(/(?<=[.!?।])\s+/)
+      .map((x) => x.trim())
+      .filter((x) => x.length > 0);
+  }
+
+  /** Append sentences from short/medium that are not already covered by the thin summary. */
+  private padTeaserFromArticleBodies(
+    teaser: string,
+    shortBody: string,
+    mediumBody: string,
+    longBody: string,
+    minChars: number,
+  ): string {
+    let base = teaser.trim();
+    const bodies = [shortBody, mediumBody, longBody].filter((b) => b.trim().length > 0);
+    if (bodies.length === 0) return base;
+
+    const baseLow = base.toLowerCase();
+
+    for (const body of bodies) {
+      const firstBlock = (body.split(/\n\n+/)[0] ?? body).trim();
+      for (const sent of this.splitSentencesForTeaser(firstBlock)) {
+        if (sent.length < 14) continue;
+        const prefix = sent.slice(0, Math.min(56, sent.length)).toLowerCase();
+        if (baseLow.includes(prefix)) continue;
+        base = `${base} ${sent}`.replace(/\s+/g, ' ').trim();
+        if (base.length >= minChars && this.splitSentencesForTeaser(base).length >= 2) return base;
+      }
+      if (base.length >= minChars) return base;
+      if (!teaser && firstBlock.length > base.length) base = firstBlock.slice(0, 720).trim();
+    }
+
+    if (base.length < minChars && shortBody.trim()) {
+      const fb = (shortBody.split(/\n\n+/)[0] ?? shortBody).trim();
+      if (fb.length > base.length + 80) {
+        base = `${base} ${fb}`.replace(/\s+/g, ' ').trim().slice(0, 850);
+      }
+    }
+
+    if (base.length < 80 && shortBody.trim()) return shortBody.trim().slice(0, 720);
+    return base;
+  }
+
+  private clipForPrompt(text: string, max: number): string {
+    const t = (text ?? '').trim();
+    if (t.length <= max) return t;
+    return `${t.slice(0, max)}…`;
+  }
+
+  private buildFallbackSocialCaptions(title: string, summary: string): Record<string, string> {
+    const sum = (summary || title).trim();
+    const core = `${title}\n\n${sum}`;
+    return {
+      twitter: `${title} — ${sum}`.replace(/\s+/g, ' ').trim().slice(0, 270),
+      facebook: core.slice(0, 5000),
+      instagram: core.slice(0, 2200),
+      linkedin: core.slice(0, 3000),
+      whatsapp: `${title}. ${sum}`.slice(0, 900),
+      telegram: `${title}\n${sum}`.slice(0, 3500),
+    };
   }
 
   private async checkAutoApprove(
@@ -276,23 +563,6 @@ export class AiService {
     // Check global feature flag fallback
     const flag = await this.prisma.featureFlag.findUnique({ where: { key: 'FEATURE_AUTO_APPROVE' } });
     return flag?.enabled ?? false;
-  }
-
-  private inferLangFromText(text: string): string | null {
-    const t = text ?? '';
-    if (/[\u3040-\u30FF]/.test(t)) return 'ja';
-    if (/[\uAC00-\uD7AF]/.test(t)) return 'ko';
-    if (/[\u0400-\u04FF]/.test(t)) return 'ru';
-    if (/[\u0600-\u06FF]/.test(t)) return 'ar';
-    if (/[\u0900-\u097F]/.test(t)) return 'hi';
-    if (/[\u0980-\u09FF]/.test(t)) return 'bn';
-    if (/[\u0A00-\u0A7F]/.test(t)) return 'pa';
-    if (/[\u0A80-\u0AFF]/.test(t)) return 'gu';
-    if (/[\u0B80-\u0BFF]/.test(t)) return 'ta';
-    if (/[\u0C00-\u0C7F]/.test(t)) return 'te';
-    if (/[\u0C80-\u0CFF]/.test(t)) return 'kn';
-    if (/[\u4E00-\u9FFF]/.test(t)) return 'zh';
-    return null;
   }
 
   private normalizeParagraphKey(paragraph: string): string {
@@ -338,13 +608,21 @@ export class AiService {
     return deduped.join('\n\n').trim();
   }
 
-  private normalizeLanguageTag(preferred: string, ...samples: Array<string | null | undefined>) {
-    const preferredNorm = (preferred || 'en').toLowerCase();
-    const probe = samples.filter(Boolean).join('\n');
-    const inferred = this.inferLangFromText(probe);
-    if (!inferred) return preferredNorm;
-    if (preferredNorm === 'en') return inferred;
-    return preferredNorm;
+  private stripIngestedToPlain(htmlOrText: string, maxTotalChars = 80_000): string {
+    return htmlOrText
+      .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim()
+      .slice(0, maxTotalChars);
+  }
+
+  private clipExcerpt(text: string | null | undefined, max = 560): string | undefined {
+    const t = (text ?? '').trim().replace(/\s+/g, ' ');
+    if (!t) return undefined;
+    if (t.length <= max) return t;
+    return `${t.slice(0, max - 1)}…`;
   }
 
   private async getAiBotId(): Promise<string> {

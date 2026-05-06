@@ -26,6 +26,8 @@ export const envSchema = z.object({
   FEATURE_AUTO_APPROVE: z.coerce.boolean().default(false),
   FEATURE_TTS: z.coerce.boolean().default(false),
   INGESTION_MAX_PER_CATEGORY: z.coerce.number().int().positive().default(20),
+  /** Max successfully published items per RSS source each cron run (each source also gets its own per-category budget). */
+  INGESTION_MAX_ITEMS_PER_SOURCE: z.coerce.number().int().positive().default(28),
   INGESTION_MAX_FEED_ITEMS_SCAN: z.coerce.number().int().positive().default(100),
   COUNTRY_FEED_CACHE_TTL_MS: z.coerce.number().int().positive().default(120000),
   INGESTION_EXPECTED_INTERVAL_HOURS: z.coerce.number().positive().default(10),

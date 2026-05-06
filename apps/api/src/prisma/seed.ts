@@ -1,35 +1,13 @@
 import { PrismaClient } from '@prisma/client';
 import * as bcrypt from 'bcryptjs';
+import { detectFeedSourceLanguage } from '../modules/ingestion/source-language.util';
 
 const prisma = new PrismaClient();
 
+type SeedSourceRow = { name: string; feedUrl: string; isTrusted: boolean; language?: string };
+
 async function main() {
   console.log('Seeding database...');
-
-  const detectSourceLanguage = (name: string): string => {
-    const n = name.toLowerCase();
-    if (n.includes('hindi') || n.includes('हिंदी')) return 'hi';
-    if (n.includes('marathi') || n.includes('maharashtra times') || n.includes('lokmat') || n.includes('sakal')) return 'mr';
-    if (n.includes('bengali') || n.includes('bangla') || n.includes('ananda') || n.includes('ananda') || n.includes('eisamay')) return 'bn';
-    if (n.includes('tamil') || n.includes('dinamalar') || n.includes('dinamani') || n.includes('vikatan')) return 'ta';
-    if (n.includes('telugu') || n.includes('eenadu') || n.includes('sakshi')) return 'te';
-    if (n.includes('kannada') || n.includes('vijaya karnataka') || n.includes('prajavani')) return 'kn';
-    if (n.includes('gujarati') || n.includes('divya bhaskar') || n.includes('gujarat samachar') || n.includes('sandesh')) return 'gu';
-    if (n.includes('punjabi') || n.includes('jagbani')) return 'pa';
-    if (n.includes('urdu') || n.includes('jang')) return 'ur';
-    if (n.includes('arabic') || n.includes('al arabiya') || n.includes('al jazeera arabic') || n.includes('ahram')) return 'ar';
-    if (n.includes('french') || n.includes('le monde') || n.includes('le figaro') || n.includes('radio-canada')) return 'fr';
-    if (n.includes('german') || n.includes('spiegel') || n.includes('die zeit') || n.includes('deutsche welle german')) return 'de';
-    if (n.includes('spanish') || n.includes('el país') || n.includes('el pais') || n.includes('el mundo') || n.includes('bbc mundo')) return 'es';
-    if (n.includes('portuguese') || n.includes('g1 globo') || n.includes('folha') || n.includes('bbc brasil')) return 'pt';
-    if (n.includes('russian') || n.includes('tass') || n.includes('ria novosti')) return 'ru';
-    if (n.includes('chinese') || n.includes('xinhua')) return 'zh';
-    if (n.includes('japanese') || n.includes('asahi')) return 'ja';
-    if (n.includes('korean') || n.includes('yonhap')) return 'ko';
-    if (n.includes('indonesian') || n.includes('kompas')) return 'id';
-    if (n.includes('turkish')) return 'tr';
-    return 'en';
-  };
 
   // Admin user
   await prisma.user.upsert({
@@ -177,6 +155,8 @@ async function main() {
     { name: 'Anandabazar Patrika', feedUrl: 'https://www.anandabazar.com/rss/latest-news.xml', isTrusted: true },
     { name: 'Ei Samay', feedUrl: 'https://eisamay.com/rssfeedstopstories.cms', isTrusted: true },
     { name: 'ABP Ananda', feedUrl: 'https://www.abpananda.com/rss/latest.xml', isTrusted: true },
+    { name: 'Kolkata24x7 Bangla', feedUrl: 'https://www.kolkata24x7.in/feed/', isTrusted: false },
+    { name: 'All Newspaper Bangla Kolkata24x7', feedUrl: 'https://allnewspaperbangla.com/kolkata24x7/feed/', isTrusted: false },
   ];
 
   // RSS Feed Sources — Tamil (Tamil Nadu)
@@ -204,13 +184,58 @@ async function main() {
   const gujaratiSources = [
     { name: 'Divya Bhaskar', feedUrl: 'https://www.divyabhaskar.co.in/rss/top-news.xml', isTrusted: true },
     { name: 'Gujarat Samachar', feedUrl: 'https://www.gujaratsamachar.com/rss/top-news.xml', isTrusted: true },
+    { name: 'News18 Gujarati', feedUrl: 'https://gujarati.news18.com/rss/latest.xml', isTrusted: true },
     { name: 'Sandesh', feedUrl: 'https://sandesh.com/feed/', isTrusted: true },
   ];
 
   // RSS Feed Sources — Punjabi (Punjab)
-  const punjabiSources = [
+  const punjabiSources: SeedSourceRow[] = [
     { name: 'Jagbani', feedUrl: 'https://www.jagbani.com/rss/latest-news', isTrusted: true },
     { name: 'Punjab Kesari', feedUrl: 'https://www.punjabkesari.in/rss/latest-news', isTrusted: true },
+    { name: 'Punjabi Tribune Online', feedUrl: 'https://www.punjabitribuneonline.com/feed/', isTrusted: true },
+    { name: 'News18 Punjabi', feedUrl: 'https://punjab.news18.com/rss/latest.xml', isTrusted: true },
+    { name: 'Punjabi Jagran', feedUrl: 'https://www.punjabijagran.com/rss', isTrusted: true },
+    { name: 'Ajit Punjabi', feedUrl: 'https://www.ajitjalandhar.com/rss.xml', isTrusted: false },
+  ];
+
+  // RSS — Urdu (stable international + Pakistan)
+  const urduSources: SeedSourceRow[] = [
+    { name: 'BBC Urdu', feedUrl: 'https://feeds.bbci.co.uk/urdu/rss.xml', isTrusted: true },
+    { name: 'Deutsche Welle Urdu', feedUrl: 'https://rss.dw.com/rdf/rss-ur-all', isTrusted: true },
+    { name: 'Akhbar Urdu', feedUrl: 'https://akhbarurdu.com/feed/', isTrusted: false },
+    { name: 'Urdu News', feedUrl: 'https://www.urdunews.com/rss.xml', isTrusted: true },
+    { name: 'News18 Urdu', feedUrl: 'https://urdu.news18.com/rss/latest.xml', isTrusted: true },
+    { name: 'The Wire Urdu', feedUrl: 'https://thewireurdu.com/feed/', isTrusted: true },
+  ];
+
+  // RSS — Extra Bengali (backup when regional sites throttle RSS)
+  const extraBengaliSources: SeedSourceRow[] = [
+    { name: 'BBC Bangla', feedUrl: 'https://feeds.bbci.co.uk/bengali/rss.xml', isTrusted: true },
+    { name: 'Prothom Alo', feedUrl: 'https://www.prothomalo.com/feed/', isTrusted: true },
+  ];
+
+  // RSS — Malayalam
+  const malayalamSources: SeedSourceRow[] = [
+    { name: 'News18 Malayalam', feedUrl: 'https://malayalam.news18.com/rss/latest.xml', isTrusted: true },
+    { name: 'Asianet News Malayalam', feedUrl: 'https://www.asianetnews.com/rss', isTrusted: true },
+    { name: 'Mathrubhumi', feedUrl: 'https://www.mathrubhumi.com/rss-feed', isTrusted: true },
+  ];
+
+  // RSS — Italian
+  const italySources: SeedSourceRow[] = [
+    { name: 'ANSA Italian', feedUrl: 'https://www.ansa.it/sito/notizie/topnews.xml', isTrusted: true },
+    { name: 'La Repubblica Italian', feedUrl: 'https://www.repubblica.it/rss/homepage/rss2.0.xml', isTrusted: true },
+  ];
+
+  // RSS — Turkish + Malay (DW language feeds are reliable for ingestion)
+  const turkishSources: SeedSourceRow[] = [
+    { name: 'Deutsche Welle Turkish', feedUrl: 'https://rss.dw.com/rdf/rss-tr-all', isTrusted: true },
+    { name: 'Hurriyet Turkish', feedUrl: 'https://www.hurriyet.com.tr/rss/gundem', isTrusted: false },
+  ];
+
+  const malaySources: SeedSourceRow[] = [
+    { name: 'Deutsche Welle Malay', feedUrl: 'https://rss.dw.com/rdf/rss-ms-all', isTrusted: true },
+    { name: 'Astro Awani Malay', feedUrl: 'https://www.astroawani.com/rss/latest', isTrusted: false },
   ];
 
   // ── GLOBAL RSS SOURCES BY COUNTRY & LANGUAGE ──────────────────────────────
@@ -343,12 +368,12 @@ async function main() {
     { name: 'RFI Africa (French)', feedUrl: 'https://www.rfi.fr/afrique/rss', isTrusted: false },
   ];
 
-  // Pakistan — Urdu + English
-  const pakistanSources = [
-    { name: 'Dawn Pakistan', feedUrl: 'https://www.dawn.com/feed', isTrusted: true },
-    { name: 'Geo News Pakistan', feedUrl: 'https://www.geo.tv/rss/1', isTrusted: true },
-    { name: 'Jang Urdu', feedUrl: 'https://jang.com.pk/rss/1', isTrusted: true },
-    { name: 'ARY News', feedUrl: 'https://arynews.tv/feed/', isTrusted: false },
+  // Pakistan — mixed; tag languages explicitly so homepage filters work
+  const pakistanSources: SeedSourceRow[] = [
+    { name: 'Dawn Pakistan', feedUrl: 'https://www.dawn.com/feed', isTrusted: true, language: 'en' },
+    { name: 'Geo News Pakistan', feedUrl: 'https://www.geo.tv/rss/1', isTrusted: true, language: 'en' },
+    { name: 'Jang Urdu', feedUrl: 'https://jang.com.pk/rss/1', isTrusted: true, language: 'ur' },
+    { name: 'ARY News', feedUrl: 'https://arynews.tv/feed/', isTrusted: false, language: 'en' },
   ];
 
   // Bangladesh — Bengali
@@ -413,17 +438,19 @@ async function main() {
     { name: 'Gadgets 360', feedUrl: 'https://feeds.feedburner.com/gadgets360-latest', isTrusted: true },
   ];
 
-  const allSources = [
+  const allSources: SeedSourceRow[] = [
     ...englishSources, ...hindiSources,
-    ...marathiSources, ...bengaliSources, ...tamilSources,
+    ...marathiSources, ...bengaliSources, ...extraBengaliSources, ...tamilSources,
     ...teluguSources, ...kannadaSources, ...gujaratiSources, ...punjabiSources,
+    ...urduSources, ...malayalamSources,
     ...usaSources, ...ukSources, ...australiaSources, ...canadaSources,
     ...germanySources, ...franceSources, ...spainSources,
     ...latinAmericaSources, ...brazilSources,
     ...middleEastSources, ...russiaSources,
     ...chinaSources, ...japanSources, ...koreaSources,
-    ...seAsiaSources, ...africaSources,
+    ...seAsiaSources, ...malaySources, ...africaSources,
     ...pakistanSources, ...bangladeshSources,
+    ...italySources, ...turkishSources,
     ...internationalSources,
     ...sportsSources,
     ...worldConflictSources,
@@ -432,10 +459,10 @@ async function main() {
   ];
 
   for (const src of allSources) {
-    const language = detectSourceLanguage(src.name);
+    const language = src.language ?? detectFeedSourceLanguage(src.name);
     await prisma.ingestedSource.upsert({
       where: { feedUrl: src.feedUrl },
-      update: { isActive: true, language },
+      update: { isActive: true, language, isTrusted: src.isTrusted },
       create: {
         name: src.name,
         feedUrl: src.feedUrl,

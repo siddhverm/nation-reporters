@@ -70,14 +70,14 @@ export const COUNTRY_BY_CODE = new Map(COUNTRIES.map((c) => [c.code, c]));
 export const COUNTRY_BY_SLUG = new Map(COUNTRIES.map((c) => [c.slug, c]));
 
 export const SUPPORTED_APP_LANGUAGES = [
-  'en', 'hi', 'mr', 'bn', 'te', 'ta', 'gu', 'kn', 'pa', 'ur',
+  'en', 'hi', 'mr', 'bn', 'te', 'ta', 'gu', 'kn', 'pa', 'ur', 'ml',
   'ar', 'fr', 'de', 'es', 'pt', 'ru', 'zh', 'ja', 'ko', 'id', 'tr', 'it',
 ] as const;
 
 const SUPPORTED_LANGUAGE_SET = new Set<string>(SUPPORTED_APP_LANGUAGES);
 
 const COUNTRY_EXTRA_LANGS: Record<string, string[]> = {
-  IN: ['hi', 'mr', 'bn', 'te', 'ta', 'gu', 'kn', 'pa', 'ur'],
+  IN: ['hi', 'mr', 'bn', 'te', 'ta', 'gu', 'kn', 'pa', 'ur', 'ml'],
   CA: ['fr'],
   PK: ['ur'],
   BD: ['bn'],

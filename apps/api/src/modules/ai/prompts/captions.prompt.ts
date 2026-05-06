@@ -1,20 +1,14 @@
-const LANG_NAMES: Record<string, string> = {
-  en: 'English', hi: 'Hindi', mr: 'Marathi', bn: 'Bengali',
-  ta: 'Tamil', te: 'Telugu', kn: 'Kannada', gu: 'Gujarati', pa: 'Punjabi',
-  ur: 'Urdu', ar: 'Arabic', fr: 'French', de: 'German', es: 'Spanish',
-  pt: 'Portuguese', ru: 'Russian', zh: 'Chinese', ja: 'Japanese', ko: 'Korean',
-  id: 'Indonesian', ms: 'Malay', sw: 'Swahili',
-};
+import { languageDisplayName } from './lang-names';
 
 export function captionsPrompt(title: string, summary: string, targetLang = 'en') {
-  const langName = LANG_NAMES[targetLang] ?? 'English';
+  const langName = languageDisplayName(targetLang);
   return `
 Create social media captions for this news story.
 
 Headline: ${title}
 Summary: ${summary}
 
-Write all captions in ${langName}.
+Write all captions entirely in ${langName}. Do not switch to English unless the target language is English.
 
 Respond with JSON:
 {

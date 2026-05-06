@@ -2,6 +2,7 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Clock, ChevronRight, ChevronLeft, Archive, Search } from 'lucide-react';
+import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Article {
   id: string;
@@ -170,10 +171,10 @@ export default function ArchivePage() {
                       className="group flex items-start gap-3 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                       <div className="flex-1 min-w-0">
                         <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug">
-                          {a.title}
+                          {safeArticleText(a.title)}
                         </h3>
                         {a.excerpt && (
-                          <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{a.excerpt}</p>
+                          <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{safeArticleText(a.excerpt)}</p>
                         )}
                       </div>
                       {a.publishedAt && (

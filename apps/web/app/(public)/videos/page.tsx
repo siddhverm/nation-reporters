@@ -1,6 +1,7 @@
 import { Metadata } from 'next';
 import Link from 'next/link';
 import { PlayCircle } from 'lucide-react';
+import { safeArticleText } from '@/lib/rss-plain-text';
 
 export const metadata: Metadata = { title: 'Videos' };
 export const revalidate = 300;
@@ -94,7 +95,7 @@ export default async function VideosPage() {
                 <div className="aspect-video bg-black rounded-lg overflow-hidden mb-3">
                   {embed ? (
                     <iframe
-                      title={video.title}
+                      title={safeArticleText(video.title, 'Video')}
                       className="w-full h-full"
                       src={embed}
                       allow="accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture"
@@ -105,9 +106,11 @@ export default async function VideosPage() {
                   )}
                 </div>
                 <Link href={`/article/${video.slug}`} className="font-semibold text-gray-900 hover:text-brand line-clamp-2">
-                  {video.title}
+                  {safeArticleText(video.title)}
                 </Link>
-                {video.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{video.excerpt}</p>}
+                {video.excerpt && (
+                  <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(video.excerpt)}</p>
+                )}
                 <p className="text-xs text-gray-400 mt-2">
                   {video.publishedAt
                     ? new Date(video.publishedAt).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' })

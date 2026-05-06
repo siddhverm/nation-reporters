@@ -1,16 +1,25 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useState, type ReactNode } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
 import { getArticleImage, getBodyImageCredit, getPreferredArticleImage } from '@/lib/news-image';
+import {
+  htmlToPlainText,
+  rssPlainLine,
+  isFeedBodyPlaceholder,
+  sanitizeReaderSummaryForDisplay,
+} from '@/lib/rss-plain-text';
 
 interface Article {
   id: string;
   title: string;
   slug: string;
-  body: Record<string, unknown> & { content?: { type?: string; content?: { text?: string; type?: string }[] }[] };
+  body: Record<string, unknown> & {
+    content?: { type?: string; content?: { text?: string; type?: string }[] }[];
+    aiVideo?: { summary?: string };
+  };
   bodyShort?: string | null;
   bodyMedium?: string | null;
   excerpt: string | null;
@@ -77,12 +86,131 @@ function buildGenericFallback(slug: string) {
   };
 }
 
-function extractParagraphs(body: Article['body']): string[] {
-  if (!body?.content) return [];
-  return body.content
-    .filter((b) => b.type === 'paragraph')
-    .map((b) => b.content?.map((n) => n.text ?? '').join('') ?? '')
+/** Flatten TipTap / ProseMirror node tree to plain text (handles bold, links, hardBreak, etc.). */
+function collectTextDeep(node: unknown): string {
+  if (!node || typeof node !== 'object') return '';
+  const n = node as Record<string, unknown>;
+  if (n.type === 'hardBreak') return '\n';
+  if (typeof n.text === 'string') return htmlToPlainText(n.text, true);
+  if (Array.isArray(n.content)) {
+    return (n.content as unknown[]).map(collectTextDeep).join('');
+  }
+  return '';
+}
+
+/** TipTap doc: walk blocks (paragraph, heading, list items, blockquote) and collect readable lines. */
+function extractParagraphs(body: Article['body'] | string | null | undefined): string[] {
+  let doc: Record<string, unknown> | null = body as Record<string, unknown>;
+  if (typeof body === 'string') {
+    try {
+      doc = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+  }
+  if (!doc?.content || !Array.isArray(doc.content)) return [];
+  const out: string[] = [];
+  const pushBlock = (node: { type?: string; content?: unknown[] }) => {
+    const text = collectTextDeep(node).replace(/\n+/g, ' ').replace(/\s+/g, ' ').trim();
+    if (text) out.push(text);
+  };
+  const visit = (nodes: { type?: string; content?: unknown[] }[]) => {
+    for (const node of nodes) {
+      if (!node) continue;
+      const t = node.type;
+      if (t === 'paragraph' || t === 'heading') {
+        pushBlock(node);
+      } else if (t === 'listItem') {
+        pushBlock(node);
+      } else if (t === 'blockquote' || t === 'bulletList' || t === 'orderedList') {
+        if (Array.isArray(node.content)) {
+          visit(node.content as { type?: string; content?: unknown[] }[]);
+        }
+      } else if (t === 'text') {
+        const tx = (node as { text?: string }).text?.trim();
+        if (tx) out.push(tx);
+      } else if (Array.isArray(node.content)) {
+        visit(node.content as { type?: string; content?: unknown[] }[]);
+      }
+    }
+  };
+  visit(doc.content as { type?: string; content?: unknown[] }[]);
+  return out
+    .map((s) => stripFeedBoilerplate(rssPlainLine(s) || s))
     .filter(Boolean);
+}
+
+/** When block types are non-standard, still recover readable paragraphs from the whole doc. */
+function extractPlainParagraphsFromBody(body: Article['body'] | string | null | undefined): string[] {
+  let doc: Record<string, unknown> | null = body as Record<string, unknown>;
+  if (typeof body === 'string') {
+    try {
+      doc = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      return [];
+    }
+  }
+  if (!doc?.content || !Array.isArray(doc.content)) return [];
+  const rawBlob = collectTextDeep({ content: doc.content });
+  const blob = htmlToPlainText(rawBlob, false)
+    .replace(/\n+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (blob.length < 50 || isFeedBodyPlaceholder(blob)) return [];
+  const chunks = splitTextToParagraphs(stripFeedBoilerplate(blob)).filter((c) => !isFeedBodyPlaceholder(c));
+  const single = stripFeedBoilerplate(blob);
+  return chunks.length > 0 ? chunks : isFeedBodyPlaceholder(single) ? [] : [single];
+}
+
+/** Full story text from TipTap (paragraphs joined). Used when per-paragraph filters wrongly empty the body. */
+function extractFullPlainBodyDoc(body: Article['body'] | string | null | undefined): string {
+  const paras = extractParagraphs(body);
+  if (paras.length > 0) return paras.join('\n\n');
+  let doc: Record<string, unknown> | null = body as Record<string, unknown>;
+  if (typeof body === 'string') {
+    try {
+      doc = JSON.parse(body) as Record<string, unknown>;
+    } catch {
+      return '';
+    }
+  }
+  if (!doc?.content || !Array.isArray(doc.content)) return '';
+  const blob = stripFeedBoilerplate(
+    htmlToPlainText(collectTextDeep({ content: doc.content }), false).replace(/\s+/g, ' ').trim(),
+  );
+  return blob;
+}
+
+function wordCount(s: string): number {
+  return s.trim().split(/\s+/).filter(Boolean).length;
+}
+
+/**
+ * Last line of defence: show entire TipTap plain text when it clearly adds material beyond the Summary
+ * (filters can drop every paragraph even though the doc holds the full AI long-form).
+ */
+function fullPlainBodyLastResort(article: Article, displaySummary: string, titleText: string): string | null {
+  const full = extractFullPlainBodyDoc(article.body);
+  if (!full || full.length < 45 || isFeedBodyPlaceholder(full)) return null;
+  if (titleText && isTitleEcho(full, titleText)) return null;
+  const sum = displaySummary.trim();
+  if (!sum) return full.length >= 60 ? full : null;
+  if (normalizeText(full) === normalizeText(sum)) return null;
+  const moreWords = wordCount(full) > wordCount(sum) + 6;
+  const moreChars = full.length > sum.length + 35;
+  if (!moreWords && !moreChars && isNearDuplicate(full, sum)) return null;
+  const peeled = stripDuplicateSummaryPrefix(full, sum);
+  const candidate = peeled.length >= 45 ? peeled : full;
+  if (normalizeText(candidate) === normalizeText(sum)) return null;
+  return candidate;
+}
+
+/** SEO meta text sometimes holds extra readable context when the doc body is thin. */
+function seoBodyFallback(article: Article, excerptText: string): string | null {
+  const s = (article.seoDescription ?? '').trim();
+  if (s.length < 70) return null;
+  if (isNearDuplicate(s, excerptText) && s.length < excerptText.length + 50) return null;
+  return s;
 }
 
 function splitTextToParagraphs(text: string): string[] {
@@ -90,6 +218,14 @@ function splitTextToParagraphs(text: string): string[] {
     .split(/\n\s*\n|(?<=[.!?।।])\s+(?=[A-Z0-9])/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
+}
+
+function stripFeedBoilerplate(text: string): string {
+  return text
+    .replace(/\s+continue reading\.?\.?\.*\s*$/i, '')
+    .replace(/\s+read more\.?\.?\.*\s*$/i, '')
+    .replace(/\s+\.\.\.\s*$/i, '')
+    .trim();
 }
 
 function dedupeParagraphs(paragraphs: string[]): string[] {
@@ -108,6 +244,280 @@ function dedupeParagraphs(paragraphs: string[]): string[] {
   return out;
 }
 
+function normalizeText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .replace(/[^\p{L}\p{N}\s]/gu, '')
+    .trim();
+}
+
+function isNearDuplicate(a: string, b: string): boolean {
+  const na = normalizeText(a);
+  const nb = normalizeText(b);
+  if (!na || !nb) return false;
+  if (na === nb) return true;
+  if (na.includes(nb) || nb.includes(na)) return true;
+  const minLen = Math.min(na.length, nb.length);
+  if (minLen < 30) return false;
+  const overlap = na.split(' ').filter((w) => nb.includes(w)).length;
+  const ratio = overlap / Math.max(na.split(' ').length, 1);
+  return ratio >= 0.85;
+}
+
+const MIN_SUMMARY_CHARS = 28;
+/** Prefer a fuller Summary box when the API excerpt is only a one-line hook. */
+const MIN_SUBSTANTIVE_SUMMARY_CHARS = 170;
+
+/** Headlines in body copy often repeat tokens from the title; only treat as title-echo when reasonably short. */
+function isTitleEcho(paragraph: string, titleText: string): boolean {
+  const p = paragraph.trim();
+  const t = titleText.trim();
+  if (!p || !t) return false;
+  const np = normalizeText(p);
+  const nt = normalizeText(t);
+  if (!np || !nt) return false;
+  if (np === nt || np.startsWith(nt) || nt.startsWith(np)) return true;
+  if (p.length >= t.length * 2.2 && p.length >= 100) return false;
+  return isNearDuplicate(p, t);
+}
+
+function trimSummaryDisplay(text: string, maxLen = 520): string {
+  const t = stripFeedBoilerplate(text).trim();
+  if (t.length <= maxLen) return t;
+  const cut = t.slice(0, maxLen);
+  const last = Math.max(
+    cut.lastIndexOf('.'),
+    cut.lastIndexOf('!'),
+    cut.lastIndexOf('?'),
+    cut.lastIndexOf('।'),
+  );
+  if (last > 100) return cut.slice(0, last + 1).trim();
+  return `${cut.trim()}…`;
+}
+
+/**
+ * Only the opening of the summary is used to detect duplicate body *paragraphs*.
+ * Comparing every paragraph to a long summary falsely marks real story sentences as duplicates.
+ */
+function ledeSnippetForDedupe(teaser: string, maxLen = 300): string {
+  const t = stripFeedBoilerplate(teaser).trim();
+  if (!t || t.length <= maxLen) return t;
+  const cut = t.slice(0, maxLen);
+  const end = Math.max(
+    cut.lastIndexOf('. '),
+    cut.lastIndexOf('? '),
+    cut.lastIndexOf('! '),
+    cut.lastIndexOf('।'),
+  );
+  if (end >= 50) return t.slice(0, end + 1).trim();
+  return cut.trim();
+}
+
+/**
+ * Summary box: prefer excerpt, but if it is only a short hook, use a longer field or merge in sentences from bodyShort.
+ */
+function pickDisplaySummary(article: Article, titleText: string): string {
+  const lang = (article.language || 'en').toLowerCase();
+  const finalize = (s: string) =>
+    trimSummaryDisplay(sanitizeReaderSummaryForDisplay(s, lang), 720);
+  const title = titleText.trim();
+  const tryCand = (raw: string | null | undefined): string | null => {
+    if (typeof raw !== 'string') return null;
+    const t = stripFeedBoilerplate(rssPlainLine(raw.trim()) || raw.trim());
+    if (t.length < MIN_SUMMARY_CHARS) return null;
+    if (isFeedBodyPlaceholder(t)) return null;
+    if (title && isTitleEcho(t, title)) return null;
+    return t;
+  };
+
+  const orderedFields = [article.excerpt, article.bodyShort, article.bodyMedium, article.seoDescription];
+  const fieldCands: string[] = [];
+  for (const c of orderedFields) {
+    const out = tryCand(c);
+    if (out) fieldCands.push(out);
+  }
+
+  for (const c of fieldCands) {
+    if (c.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS) return finalize(c);
+  }
+
+  let best =
+    fieldCands.length > 0
+      ? fieldCands.reduce((a, b) => (b.length > a.length ? b : a))
+      : '';
+
+  if (!best) {
+    for (const p of extractParagraphs(article.body)) {
+      const out = tryCand(p);
+      if (out) {
+        best = out;
+        break;
+      }
+    }
+  }
+  if (!best) {
+    const aiSum = tryCand(article.body?.aiVideo?.summary);
+    best = aiSum ?? '';
+  }
+  if (!best) return '';
+
+  if (best.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS) {
+    const out = finalize(best);
+    return isTitleEcho(out, title) ? '' : out;
+  }
+
+  const donor = tryCand(article.bodyShort) ?? tryCand(article.bodyMedium);
+  if (donor && donor.length > best.length + 24) {
+    const bLow = best.toLowerCase();
+    for (const sent of donor.split(/(?<=[.!?।])\s+/).map((s) => s.trim()).filter(Boolean)) {
+      if (sent.length < 16) continue;
+      if (bLow.includes(sent.slice(0, Math.min(48, sent.length)).toLowerCase())) continue;
+      best = `${best} ${sent}`.replace(/\s+/g, ' ').trim();
+      if (best.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS) break;
+    }
+  }
+
+  const out = finalize(best);
+  return isTitleEcho(out, title) ? '' : out;
+}
+
+/**
+ * True only when a short opening line repeats the teaser — not when a long body paragraph
+ * merely shares common words (the old isNearDuplicate ratio falsely matched long copy to short teasers).
+ */
+function isRedundantOpeningVsTeaser(paragraph: string, teaser: string): boolean {
+  const p = paragraph.trim();
+  const t = teaser.trim();
+  if (!p || !t) return false;
+  const pl = p.length;
+  const el = t.length;
+  /** Teaser (summary lede) is much longer than this paragraph — likely a real story sentence, not a copy of the whole summary. */
+  if (el > pl + 80) return false;
+  const np = normalizeText(p);
+  const nt = normalizeText(t);
+  if (np === nt) return true;
+  /** Same facts, one block slightly longer (whitespace / trailing clause). */
+  if ((np.startsWith(nt) || nt.startsWith(np)) && Math.abs(p.length - t.length) <= 35) return true;
+  if (pl > el + 120) return false;
+  if (pl > Math.max(el * 1.45, el + 40)) return false;
+  return isNearDuplicate(p, t);
+}
+
+/** Drop title echoes; drop teaser echoes only for short redundant openers, not full article blocks. */
+function filterBodyParagraphs(
+  paragraphs: string[],
+  teaserText: string,
+  titleText: string,
+): string[] {
+  return paragraphs.filter((p) => {
+    if (titleText && isTitleEcho(p, titleText)) return false;
+    if (!teaserText) return true;
+    if (!isRedundantOpeningVsTeaser(p, teaserText)) return true;
+    return false;
+  });
+}
+
+/** If leading blocks repeat the teaser/title, drop them so only distinct story copy remains. */
+function stripLeadingTeaserEcho(paragraphs: string[], teaser: string, titleText: string): string[] {
+  if (paragraphs.length === 0) return paragraphs;
+  const [first, ...rest] = paragraphs;
+  const drop =
+    (!!titleText && isTitleEcho(first, titleText)) ||
+    (!!teaser && isRedundantOpeningVsTeaser(first, teaser));
+  if (!drop) return paragraphs;
+  if (rest.length === 0) return [];
+  return stripLeadingTeaserEcho(rest, teaser, titleText);
+}
+
+function filterTitleOnly(paragraphs: string[], titleText: string): string[] {
+  return paragraphs.filter((p) => !titleText || !isTitleEcho(p, titleText));
+}
+
+function tieredStoryParagraphs(article: Article, titleText: string, teaserDedupe: string): string[] {
+  const tiers = [article.bodyMedium, article.bodyShort].filter(
+    (v): v is string => typeof v === 'string' && v.trim().length > 0,
+  );
+  for (const raw of tiers) {
+    const cleaned = stripFeedBoilerplate(raw).trim();
+    if (!cleaned || isFeedBodyPlaceholder(cleaned)) continue;
+    const parts = dedupeParagraphs(
+      splitTextToParagraphs(cleaned).map(stripFeedBoilerplate).filter(Boolean),
+    ).filter((p) => !isFeedBodyPlaceholder(p));
+    const filtered = filterBodyParagraphs(filterTitleOnly(parts, titleText), teaserDedupe, titleText);
+    if (filtered.length > 0) return filtered;
+  }
+  return [];
+}
+
+/** When TipTap body is empty but API has long-form fields, show them minus teaser echo. */
+function rawLongFormParagraphs(article: Article, titleText: string, teaserDedupe: string): string[] {
+  const m = article.bodyMedium?.trim();
+  const s = article.bodyShort?.trim();
+  const raw = m && s ? (m.length >= s.length ? m : s) : m ?? s ?? '';
+  if (!raw || raw.length < 40) return [];
+  const cleaned = stripFeedBoilerplate(raw).trim();
+  if (isFeedBodyPlaceholder(cleaned)) return [];
+  const parts = splitTextToParagraphs(cleaned).filter((p) => !isFeedBodyPlaceholder(p));
+  const blocks = parts.length > 0 ? parts : [cleaned];
+  const withoutTitle = blocks.filter((p) => !titleText || !isTitleEcho(p, titleText));
+  const base = withoutTitle.length > 0 ? withoutTitle : blocks;
+  return filterBodyParagraphs(base, teaserDedupe, titleText);
+}
+
+/**
+ * When paragraph filtering removes everything, still show API long fields if they clearly extend
+ * beyond the summary (common when excerpt === lede but medium holds the full rewrite).
+ */
+function stripDuplicateSummaryPrefix(full: string, summary: string): string {
+  if (!summary || full.length < summary.length + 80) return full;
+  const head = full.slice(0, Math.min(full.length, summary.length + 120));
+  if (!isNearDuplicate(head, summary)) return full;
+  const tail = full.slice(summary.length).trim().replace(/^[\s.•\-–:;]+/, '');
+  return tail.length >= 50 ? tail : full;
+}
+
+function mediumShortLastResort(article: Article, displaySummary: string, titleText: string): string | null {
+  const m = article.bodyMedium?.trim();
+  const s = article.bodyShort?.trim();
+  let raw = '';
+  if (m && s) {
+    raw = m.length >= s.length ? `${m}\n\n${s}` : `${s}\n\n${m}`;
+  } else {
+    raw = (m ?? s ?? '').trim();
+  }
+  raw = stripFeedBoilerplate(raw);
+  if (!raw || raw.length < 60 || isFeedBodyPlaceholder(raw)) return null;
+  if (titleText && isTitleEcho(raw, titleText)) return null;
+  const sum = displaySummary.trim();
+  if (sum && (raw.length > sum.length + 40 || wordCount(raw) > wordCount(sum) + 5)) {
+    const peeled = stripDuplicateSummaryPrefix(raw, sum);
+    if (normalizeText(peeled) !== normalizeText(sum) && peeled.length >= 45) return peeled;
+    if (raw.length > sum.length + 40) return raw;
+  }
+  if (sum && raw.length <= sum.length + 50 && isNearDuplicate(raw, sum)) return null;
+  return stripDuplicateSummaryPrefix(raw, sum);
+}
+
+function pickFallbackBodyParagraph(article: Article, titleText: string, displaySummary: string): string {
+  const chunks = [article.bodyMedium, article.bodyShort, article.excerpt]
+    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+    .map((s) => stripFeedBoilerplate(s.trim()));
+  for (const chunk of chunks) {
+    if (isFeedBodyPlaceholder(chunk)) continue;
+    if (titleText && isTitleEcho(chunk, titleText)) continue;
+    if (
+      displaySummary &&
+      isNearDuplicate(chunk, displaySummary) &&
+      chunk.length < displaySummary.length + 55
+    ) {
+      continue;
+    }
+    return chunk;
+  }
+  return '';
+}
+
 export default function ArticlePage() {
   const { slug } = useParams<{ slug: string }>();
   const [article, setArticle] = useState<Article | null>(null);
@@ -115,9 +525,29 @@ export default function ArticlePage() {
   const [error, setError]      = useState(false);
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
-    fetch(`${base}/articles/${slug}`)
-      .then((r) => { if (!r.ok) throw new Error(); return r.json(); })
+    const bases = [
+      process.env.NEXT_PUBLIC_API_URL,
+      '/api/proxy',
+      '/api/v1',
+      'http://localhost:3001/api/v1',
+      'http://localhost:3005/api/v1',
+    ].filter((v): v is string => !!v);
+
+    const fetchArticle = async () => {
+      for (const base of bases) {
+        try {
+          const r = await fetch(`${base.replace(/\/$/, '')}/articles/${slug}`);
+          if (!r.ok) continue;
+          const data: Article = await r.json();
+          if (data?.id) return data;
+        } catch {
+          // try next endpoint candidate
+        }
+      }
+      throw new Error('Article fetch failed on all endpoints');
+    };
+
+    fetchArticle()
       .then((data: Article) => { setArticle(data); setLoading(false); })
       .catch(() => {
         const fallback = FALLBACK_ARTICLES[slug]
@@ -168,22 +598,138 @@ export default function ArticlePage() {
     </div>
   );
 
-  const bodyParagraphs = extractParagraphs(article.body);
-  const fallbackText = [article.bodyMedium, article.bodyShort, article.excerpt]
+  const structuredParas = extractParagraphs(article.body).filter((p) => !isFeedBodyPlaceholder(p));
+  const bodyStructured =
+    structuredParas.length > 0
+      ? structuredParas
+      : extractPlainParagraphsFromBody(article.body).filter((p) => !isFeedBodyPlaceholder(p));
+  // Do not merge excerpt into body text — it duplicates the teaser and breaks dedupe/filter.
+  const fallbackText = [article.bodyMedium, article.bodyShort]
     .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
     .join('\n\n');
   const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
-  const combined =
-    bodyParagraphs.length > 0
-      ? (bodyParagraphs.join(' ').length < 900 && fallbackParagraphs.length > 0
-        ? [...bodyParagraphs, ...fallbackParagraphs]
-        : bodyParagraphs)
-      : fallbackParagraphs;
-  const paragraphs = dedupeParagraphs(combined);
-  const shareUrl   = typeof window !== 'undefined' ? window.location.href : '';
+  const combinedForDedupe = [...bodyStructured, ...fallbackParagraphs];
+  const deduped = dedupeParagraphs(
+    combinedForDedupe.map(stripFeedBoilerplate).filter(Boolean),
+  ).filter((p) => !isFeedBodyPlaceholder(p));
+  const excerptRaw = stripFeedBoilerplate(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim());
+  const excerptText = isFeedBodyPlaceholder(excerptRaw) ? '' : excerptRaw;
+  const titleText = rssPlainLine(article.title) || (article.title ?? '').trim();
+  const displaySummary = pickDisplaySummary(article, titleText);
+  const teaserFull = (displaySummary || excerptText).trim();
+  const teaserForDedupe = teaserFull ? ledeSnippetForDedupe(teaserFull) : '';
+
+  const filteredParagraphs = filterBodyParagraphs(deduped, teaserForDedupe, titleText);
+
+  let paragraphs =
+    filteredParagraphs.length > 0
+      ? filteredParagraphs
+      : stripLeadingTeaserEcho(deduped, teaserForDedupe, titleText);
+  if (paragraphs.length === 0) {
+    const tiered = tieredStoryParagraphs(article, titleText, teaserForDedupe);
+    if (tiered.length > 0) paragraphs = tiered;
+  }
+  if (paragraphs.length === 0) {
+    const raw = rawLongFormParagraphs(article, titleText, teaserForDedupe);
+    if (raw.length > 0) paragraphs = raw;
+  }
+
+  paragraphs = filterBodyParagraphs(paragraphs, teaserForDedupe, titleText);
+
+  const lastResortMedium = mediumShortLastResort(article, displaySummary, titleText);
+  const lastResortFullDoc = fullPlainBodyLastResort(article, displaySummary, titleText);
+
+  const fallbackBodyText =
+    pickFallbackBodyParagraph(article, titleText, displaySummary) ||
+    (excerptText && (!displaySummary || !isNearDuplicate(excerptText, displaySummary)) ? excerptText : '') ||
+    '';
+
+  const fallbackIsDuplicateOfSummary =
+    !!displaySummary &&
+    !!fallbackBodyText &&
+    isNearDuplicate(fallbackBodyText, displaySummary) &&
+    fallbackBodyText.trim().length < displaySummary.length + 80;
+  const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
+  const showSummaryBlock = displaySummary.length >= MIN_SUMMARY_CHARS;
+  const teaserForSeo = (displaySummary || excerptText).trim();
+  const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
+
   const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
+  const renderProseBlocks = (text: string, keyPrefix: string) => {
+    const parts = splitTextToParagraphs(text).filter(Boolean);
+    return parts.length > 0
+      ? parts.map((p, i) => <p key={`${keyPrefix}-${i}`}>{p}</p>)
+      : <p>{text}</p>;
+  };
+
+  let bodyContent: ReactNode = null;
+  if (paragraphs.length > 0) {
+    bodyContent = paragraphs.map((p, i) => <p key={i}>{p}</p>);
+  } else if (lastResortMedium) {
+    bodyContent = renderProseBlocks(lastResortMedium, 'lr-med');
+  } else if (lastResortFullDoc) {
+    bodyContent = renderProseBlocks(lastResortFullDoc, 'lr-doc');
+  } else if (fallbackBodyText && !fallbackIsDuplicateOfSummary) {
+    bodyContent = <p>{fallbackBodyText}</p>;
+  } else if (seoExtra) {
+    bodyContent = (
+      <div className="space-y-4">
+        <p className="text-gray-800 leading-relaxed not-italic">{seoExtra}</p>
+        {article.provenance?.sourceUrl && (
+          <a
+            href={article.provenance.sourceUrl}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="inline-flex items-center rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white hover:bg-brand transition-colors"
+          >
+            Read full report at source
+          </a>
+        )}
+      </div>
+    );
+  } else if (displaySummary || excerptText) {
+    /** Summary-only publishing: no separate long body in the API — do not imply “syncing” or duplicate the teaser. */
+    if (showSummaryBlock) {
+      bodyContent = null;
+    } else {
+      bodyContent = (
+        <div className="space-y-3">
+          <p className="text-gray-500 italic">Only short source summary is available for this story.</p>
+          {article.provenance?.sourceUrl && (
+            <a
+              href={article.provenance.sourceUrl}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white hover:bg-brand transition-colors"
+            >
+              Read full report at source
+            </a>
+          )}
+        </div>
+      );
+    }
+  } else if (article.provenance?.sourceUrl) {
+    bodyContent = (
+      <div className="space-y-3">
+        <p className="text-gray-500 italic">
+          Full details are available on the original publisher page.
+        </p>
+        <a
+          href={article.provenance.sourceUrl}
+          target="_blank"
+          rel="noopener noreferrer"
+          className="inline-flex items-center rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white hover:bg-brand transition-colors"
+        >
+          Read full report at source
+        </a>
+      </div>
+    );
+  } else {
+    // No usable body or source link: keep article clean and avoid showing a dead-end placeholder.
+    bodyContent = null;
+  }
 
   return (
     <div className="bg-gray-50 min-h-screen">
@@ -192,7 +738,7 @@ export default function ArticlePage() {
         <div className="max-w-3xl mx-auto flex items-center gap-2 text-sm text-blue-200">
           <Link href="/" className="hover:text-white flex items-center gap-1"><ArrowLeft className="h-3.5 w-3.5" /> Home</Link>
           <ChevronRight className="h-3 w-3" />
-          <span className="truncate text-white">{article.title}</span>
+          <span className="truncate text-white">{titleText}</span>
         </div>
       </div>
 
@@ -200,7 +746,8 @@ export default function ArticlePage() {
         {/* Schema.org */}
         <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
           '@context': 'https://schema.org', '@type': 'NewsArticle',
-          headline: article.title, description: article.excerpt,
+          headline: titleText,
+          description: showSummaryBlock ? displaySummary : (article.bodyShort ?? article.seoDescription ?? titleText),
           datePublished: article.publishedAt,
           publisher: { '@type': 'Organization', name: 'Nation Reporters', url: 'https://nationreporters.com' },
         }) }} />
@@ -210,7 +757,7 @@ export default function ArticlePage() {
           {/* Hero image */}
           <div className="relative overflow-hidden">
             <div className="h-64 md:h-80 relative">
-              <Image src={getArticleImage(article.slug, undefined, 'hero', sourceImageUrl)} alt={article.title}
+              <Image src={getArticleImage(article.slug, undefined, 'hero', sourceImageUrl)} alt={titleText}
                 fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
               <div className="absolute bottom-3 left-4">
@@ -219,7 +766,7 @@ export default function ArticlePage() {
                 </span>
               </div>
             </div>
-            {imageCredit && (
+            {sourceImageUrl && imageCredit && (
               <p className="text-[10px] text-gray-400 px-3 py-1 bg-gray-50 text-right italic">
                 📷 {imageCredit}
               </p>
@@ -228,13 +775,14 @@ export default function ArticlePage() {
 
           <div className="p-6">
             <h1 className="text-2xl md:text-3xl font-bold font-serif text-navy leading-snug mb-3">
-              {article.title}
+              {titleText}
             </h1>
 
-            {article.excerpt && (
-              <p className="text-gray-600 text-base leading-relaxed border-l-4 border-brand pl-4 mb-4 italic">
-                {article.excerpt}
-              </p>
+            {showSummaryBlock && (
+              <div className="mb-4 border-l-4 border-brand pl-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand mb-1">Summary</p>
+                <p className="text-gray-600 text-base leading-relaxed italic">{displaySummary}</p>
+              </div>
             )}
 
             <div className="flex items-center justify-between flex-wrap gap-3 mb-6 pb-4 border-b border-gray-100">
@@ -255,7 +803,7 @@ export default function ArticlePage() {
                   className="bg-[#1877F2] text-white text-xs px-2.5 py-1 rounded-lg flex items-center gap-1 hover:opacity-90">
                   <Facebook className="h-3 w-3" /> FB
                 </a>
-                <a href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(article.title)}`}
+                <a href={`https://twitter.com/intent/tweet?url=${encodeURIComponent(shareUrl)}&text=${encodeURIComponent(titleText)}`}
                   target="_blank" rel="noopener noreferrer"
                   className="bg-[#1DA1F2] text-white text-xs px-2.5 py-1 rounded-lg flex items-center gap-1 hover:opacity-90">
                   <Twitter className="h-3 w-3" /> X
@@ -263,19 +811,19 @@ export default function ArticlePage() {
               </div>
             </div>
 
-            {/* Article body */}
-            <div className="prose prose-base max-w-none text-gray-800 leading-relaxed space-y-4">
-              {videoAsset && (
-                <div className="not-prose mb-4">
-                  <div className="aspect-video bg-black rounded-lg overflow-hidden">
-                    <video controls preload="metadata" className="w-full h-full object-cover" src={videoAsset.url} />
+            {/* Article body: omit when this item is summary-only (no wire story body in API). */}
+            {(videoAsset || bodyContent) && (
+              <div className="prose prose-base max-w-none text-gray-800 leading-relaxed space-y-4">
+                {videoAsset && (
+                  <div className="not-prose mb-4">
+                    <div className="aspect-video bg-black rounded-lg overflow-hidden">
+                      <video controls preload="metadata" className="w-full h-full object-cover" src={videoAsset.url} />
+                    </div>
                   </div>
-                </div>
-              )}
-              {paragraphs.length > 0
-                ? paragraphs.map((p, i) => <p key={i}>{p}</p>)
-                : <p className="text-gray-500 italic">Article content is being processed…</p>}
-            </div>
+                )}
+                {bodyContent}
+              </div>
+            )}
 
             {/* Hashtags */}
             {article.hashtags?.length > 0 && (

@@ -10,6 +10,14 @@ import { ProvenanceService } from '../provenance/provenance.service';
 import { AiService } from '../../ai/ai.service';
 import { ArticleStatus } from '@prisma/client';
 import { PublishingService } from '../../publishing/publishing.service';
+import {
+  fetchArticlePlainText,
+  isAllowedArticleFetchUrl,
+  MIN_SOURCE_ARTICLE_PLAIN_CHARS,
+  rssBodyLooksLikeTitleOnly,
+} from '../../ai/source-article-text.util';
+import { acceptLanguageHeaderForLocale, resolveArticleLanguage } from '../../ai/language-resolution.util';
+import { detectFeedSourceLanguage } from '../source-language.util';
 
 type CategorySlug =
   | 'india'
@@ -20,6 +28,14 @@ type CategorySlug =
   | 'entertainment'
   | 'tech';
 type RemainingQuota = Record<CategorySlug, number>;
+
+type IngestedSourceRow = {
+  id: string;
+  feedUrl: string;
+  name: string;
+  language?: string | null;
+  isTrusted: boolean;
+};
 
 @Injectable()
 export class IngestionCronService {
@@ -35,8 +51,12 @@ export class IngestionCronService {
     },
   });
   private readonly maxPerCategory: number;
+  private readonly maxItemsPerSource: number;
   private readonly maxFeedItemsScan: number;
   private readonly minSectionInventory: number;
+  private readonly fetchSourceArticle: boolean;
+  private readonly fetchSourceTimeoutMs: number;
+  private readonly fetchSourceMaxBytes: number;
 
   constructor(
     private readonly config: ConfigService,
@@ -47,8 +67,50 @@ export class IngestionCronService {
     private readonly publishing: PublishingService,
   ) {
     this.maxPerCategory = Number(this.config.get('INGESTION_MAX_PER_CATEGORY') ?? 20);
+    this.maxItemsPerSource = Number(this.config.get('INGESTION_MAX_ITEMS_PER_SOURCE') ?? 28);
     this.maxFeedItemsScan = Number(this.config.get('INGESTION_MAX_FEED_ITEMS_SCAN') ?? 100);
     this.minSectionInventory = Number(this.config.get('INGESTION_MIN_SECTION_INVENTORY') ?? 20);
+    const fetchFlag = (this.config.get<string>('FETCH_SOURCE_ARTICLE') ?? '').toLowerCase();
+    this.fetchSourceArticle = !['0', 'false', 'no', 'off'].includes(fetchFlag);
+    this.fetchSourceTimeoutMs = Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000);
+    this.fetchSourceMaxBytes = Number(this.config.get('FETCH_SOURCE_MAX_BYTES') ?? 1_000_000);
+  }
+
+  /**
+   * Prefer HTML fetched from item.link when RSS body is thin or the page has more text
+   * (same rules as AI path — ensures DB + raw-publish path see full story when possible).
+   */
+  private async enrichBodyFromSourcePage(
+    rssBody: string,
+    sourceUrl: string,
+    sourceLang: string,
+    itemTitlePlain: string,
+  ): Promise<string> {
+    if (!this.fetchSourceArticle || !sourceUrl || !isAllowedArticleFetchUrl(sourceUrl)) {
+      return rssBody;
+    }
+    const rssPlain = this.stripHtmlToPlain(rssBody, true);
+    const rssIsThin = rssPlain.length < 700;
+    const looksTitleOnly = rssBodyLooksLikeTitleOnly(rssPlain, itemTitlePlain);
+    try {
+      const fetched = await fetchArticlePlainText(
+        sourceUrl,
+        { timeoutMs: this.fetchSourceTimeoutMs, maxBytes: this.fetchSourceMaxBytes },
+        { acceptLanguage: acceptLanguageHeaderForLocale(sourceLang) },
+      );
+      if (!fetched || fetched.length < MIN_SOURCE_ARTICLE_PLAIN_CHARS) return rssBody;
+      const materiallyLonger = fetched.length > rssPlain.length + 40;
+      const muchLongerThanHeadline = fetched.length > (itemTitlePlain?.length ?? 0) + 120;
+      if (materiallyLonger || rssIsThin || looksTitleOnly || muchLongerThanHeadline) {
+        this.logger.log(
+          `Ingestion: stored body from source page (${fetched.length}c) vs RSS (${rssPlain.length}c) titleOnly=${looksTitleOnly}`,
+        );
+        return fetched;
+      }
+    } catch (e) {
+      this.logger.warn(`Ingestion source fetch failed ${sourceUrl.slice(0, 64)}: ${(e as Error).message}`);
+    }
+    return rssBody;
   }
 
   // 08:00, 14:00, 20:00 IST (UTC+5:30 = 02:30, 08:30, 14:30 UTC)
@@ -56,23 +118,23 @@ export class IngestionCronService {
   async runScheduledIngestion() {
     this.logger.log('Scheduled ingestion started');
     const sources = await this.prisma.ingestedSource.findMany({ where: { isActive: true } });
-    const remainingByCategory: RemainingQuota = {
-      india: this.maxPerCategory,
-      world: this.maxPerCategory,
-      politics: this.maxPerCategory,
-      business: this.maxPerCategory,
-      sports: this.maxPerCategory,
-      entertainment: this.maxPerCategory,
-      tech: this.maxPerCategory,
-    };
+    const sorted = this.sortSourcesForIngestion(sources as IngestedSourceRow[]);
 
-    for (const source of sources) {
-      if (Object.values(remainingByCategory).every((remaining) => remaining <= 0)) {
-        this.logger.log('Scheduled ingestion quota reached for all sections');
-        break;
-      }
+    for (const source of sorted) {
+      const remainingByCategory: RemainingQuota = {
+        india: this.maxPerCategory,
+        world: this.maxPerCategory,
+        politics: this.maxPerCategory,
+        business: this.maxPerCategory,
+        sports: this.maxPerCategory,
+        entertainment: this.maxPerCategory,
+        tech: this.maxPerCategory,
+      };
       try {
-        await this.fetchSource(source, { remainingByCategory });
+        await this.fetchSource(source, {
+          remainingByCategory,
+          maxItemsPerSource: this.maxItemsPerSource,
+        });
       } catch (err) {
         const message = (err as Error)?.message ?? 'Unknown source fetch error';
         this.logger.error(`Failed to fetch source ${source.name}: ${message}`);
@@ -94,7 +156,10 @@ export class IngestionCronService {
       select: { id: true, slug: true },
     });
     const categorySlugById = new Map(categories.map((c) => [c.id, c.slug]));
-    const monitoredLangs = ['en', 'hi', 'mr', 'bn', 'ta', 'te', 'gu', 'kn', 'pa', 'ur', 'ar', 'fr', 'de', 'es', 'pt', 'ru', 'zh', 'ja', 'ko'];
+    const monitoredLangs = [
+      'en', 'hi', 'mr', 'bn', 'ta', 'te', 'gu', 'kn', 'pa', 'ur', 'ml',
+      'ar', 'fr', 'de', 'es', 'pt', 'ru', 'zh', 'ja', 'ko', 'id', 'ms', 'tr', 'it',
+    ];
     const since = new Date(Date.now() - 24 * 60 * 60 * 1000);
 
     const grouped = await this.prisma.article.groupBy({
@@ -150,27 +215,40 @@ export class IngestionCronService {
 
   async fetchSource(
     source: { id: string; feedUrl: string; name: string; language?: string },
-    options?: { remainingByCategory?: RemainingQuota },
+    options?: { remainingByCategory?: RemainingQuota; maxItemsPerSource?: number },
   ) {
     const feed = await this.parseFeedWithRetry(source.feedUrl, source.name);
     let ingested = 0;
 
     // Prefer explicit non-English source language; otherwise infer from source name.
     // This avoids accidental default "en" for multilingual feeds.
-    const inferredLang = this.detectSourceLang(source.name);
-    const sourceLang = source.language && source.language !== 'en'
-      ? source.language
-      : inferredLang;
+    const inferredLang = detectFeedSourceLanguage(source.name);
+    const feedLangHint =
+      source.language && source.language !== 'en'
+        ? source.language
+        : inferredLang;
 
     // Scan latest items and publish quota-eligible stories across sections
     const items = (feed.items ?? []).slice(0, this.maxFeedItemsScan);
 
     for (const item of items) {
-      const categorySlug = this.detectCategorySlug(item.title ?? '', source.name);
+      const titlePlain = this.rssPlainLine(item.title ?? '') || (item.title ?? '').replace(/<[^>]+>/g, ' ').trim();
+      const categorySlug = this.detectCategorySlug(titlePlain || (item.title ?? ''), source.name);
       if (!categorySlug) continue;
       if (options?.remainingByCategory && options.remainingByCategory[categorySlug] <= 0) continue;
 
-      const body = item.content ?? item.contentSnippet ?? item.summary ?? item.title ?? '';
+      const rawBody = this.pickRssBody(item);
+      const langForEnrichFetch = resolveArticleLanguage(feedLangHint, {
+        title: titlePlain,
+        body: rawBody,
+      });
+      const body = await this.enrichBodyFromSourcePage(
+        rawBody,
+        item.link ?? '',
+        langForEnrichFetch,
+        titlePlain,
+      );
+      const articleLang = resolveArticleLanguage(feedLangHint, { title: titlePlain, body });
       const hash = crypto.createHash('sha256').update(item.link ?? item.title ?? '').digest('hex');
       const imageUrl = this.extractImage(item);
       const sourceVideoUrl = this.extractVideo(item);
@@ -183,7 +261,7 @@ export class IngestionCronService {
           data: {
             sourceId: source.id,
             sourceUrl: item.link ?? '',
-            sourceTitle: item.title ?? 'Untitled',
+            sourceTitle: titlePlain || 'Untitled',
             body,
             publishedAt: item.pubDate ? new Date(item.pubDate) : undefined,
             contentHash: hash,
@@ -193,39 +271,37 @@ export class IngestionCronService {
         await this.provenance.record({
           ingestedArticleId: ingestedArticle.id,
           sourceUrl: item.link ?? '',
-          sourceTitle: item.title ?? 'Untitled',
+          sourceTitle: titlePlain || 'Untitled',
           sourceName: source.name,
           fetchedAt: new Date(),
         });
 
-        // Try AI processing; if Gemini rate-limits, fall back to publishing raw
+        let publishedOk = false;
         try {
           const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
-            language: sourceLang,
+            language: articleLang,
             imageUrl: imageUrl ?? undefined,
             sourceVideoUrl: sourceVideoUrl ?? undefined,
             forceAutoPublish: true,
             allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
           });
-          if (!article) continue;
-
-          if (options?.remainingByCategory) {
-            options.remainingByCategory[categorySlug]--;
-          }
+          if (article) publishedOk = true;
         } catch (aiErr) {
-          const msg = (aiErr as Error).message ?? '';
-          const is429 = msg.includes('429') || msg.includes('quota') || msg.includes('Too Many');
-          if (is429) {
-            this.logger.warn(`Gemini quota — publishing raw article: ${item.title?.slice(0, 60)}`);
-            const published = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
-            if (published && options?.remainingByCategory) {
-              options.remainingByCategory[categorySlug]--;
-            }
-          } else {
-            throw aiErr;
+          this.logger.warn(
+            `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — publishing raw RSS/source text`,
+          );
+          publishedOk = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
+          if (!publishedOk) {
+            this.logger.warn(`Raw publish failed after AI error: ${titlePlain.slice(0, 50)}`);
           }
         }
+        if (!publishedOk) continue;
+        if (options?.remainingByCategory) {
+          options.remainingByCategory[categorySlug]--;
+        }
         ingested++;
+        const cap = options?.maxItemsPerSource ?? this.maxItemsPerSource;
+        if (ingested >= cap) break;
       } catch (err) {
         if ((err as any)?.code !== 'P2002') {
           this.logger.warn(`Skipping item: ${(err as Error).message?.slice(0, 80)}`);
@@ -270,15 +346,79 @@ export class IngestionCronService {
     );
   }
 
+  private decodeHtmlEntities(s: string): string {
+    let out = s
+      .replace(/&nbsp;/gi, ' ')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&pound;/gi, '£')
+      .replace(/&euro;/gi, '€')
+      .replace(/&copy;/gi, '©');
+    out = out.replace(/&#(\d+);/g, (_, dec) => {
+      const n = Number.parseInt(dec, 10);
+      if (Number.isNaN(n)) return _;
+      try {
+        return String.fromCodePoint(n);
+      } catch {
+        return _;
+      }
+    });
+    out = out.replace(/&#x([0-9a-f]+);/gi, (_, hex) => {
+      const n = Number.parseInt(hex, 16);
+      if (Number.isNaN(n)) return _;
+      try {
+        return String.fromCodePoint(n);
+      } catch {
+        return _;
+      }
+    });
+    return out;
+  }
+
+  /** Strip tags; optional multiline (paragraph breaks) vs single line (headlines). */
+  private stripHtmlToPlain(htmlOrText: string, multiline: boolean): string {
+    let t = htmlOrText ?? '';
+    if (multiline) {
+      t = t.replace(/<\/p>\s*<p[^>]*>/gi, '\n\n').replace(/<br\s*\/?>/gi, '\n');
+    } else {
+      t = t.replace(/<\/p>\s*<p[^>]*>/gi, ' ').replace(/<br\s*\/?>/gi, ' ');
+    }
+    t = t.replace(/<[^>]+>/g, multiline ? '' : ' ');
+    if (multiline) {
+      t = t.replace(/\n{3,}/g, '\n\n').trim();
+    } else {
+      t = t.replace(/\s+/g, ' ').trim();
+    }
+    return this.decodeHtmlEntities(t);
+  }
+
+  /** RSS title / one-line teaser: no HTML, decoded entities. */
+  private rssPlainLine(htmlOrText: string): string {
+    return this.stripHtmlToPlain(htmlOrText, false);
+  }
+
+  /**
+   * First non-empty RSS field. Empty string `content` must not block fallback to `title`
+   * (many feeds ship HTML links only in the title).
+   */
+  private pickRssBody(item: {
+    content?: string;
+    contentSnippet?: string;
+    summary?: string;
+    title?: string;
+  }): string {
+    for (const v of [item.content, item.contentSnippet, item.summary, item.title]) {
+      if (typeof v === 'string' && v.trim().length > 0) return v;
+    }
+    return '';
+  }
+
   /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
   private rawHtmlToDocContent(htmlOrText: string, maxTotalChars = 80000) {
-    const text = htmlOrText
-      .replace(/<\/p>\s*<p[^>]*>/gi, '\n\n')
-      .replace(/<br\s*\/?>/gi, '\n')
-      .replace(/<[^>]+>/g, '')
-      .replace(/\n{3,}/g, '\n\n')
-      .trim()
-      .slice(0, maxTotalChars);
+    const text = this.stripHtmlToPlain(htmlOrText, true).slice(0, maxTotalChars);
     if (!text) {
       return [{ type: 'paragraph', content: [{ type: 'text', text: '(No body text in feed item.)' }] }];
     }
@@ -303,38 +443,77 @@ export class IngestionCronService {
 
   // Publish raw RSS content directly when AI is unavailable
   private async publishRaw(
-    ingestedArticle: { id: string; sourceTitle: string; body: string; publishedAt: Date | null },
+    ingestedArticle: {
+      id: string;
+      sourceUrl: string;
+      sourceTitle: string;
+      body: string;
+      publishedAt: Date | null;
+    },
     source: { name: string; language?: string },
     imageUrl?: string,
   ): Promise<boolean> {
     const adminUser = await this.prisma.user.findFirst({ where: { role: 'ADMIN' } });
     if (!adminUser) return false;
 
-    const base = ingestedArticle.sourceTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
+    const displayTitle =
+      this.rssPlainLine(ingestedArticle.sourceTitle) ||
+      ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const base = displayTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
     const existing = await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } });
     const slug = existing ? `${base}-${Date.now()}` : base;
 
-    const plainLead = ingestedArticle.body.replace(/<[^>]+>/g, '').trim();
-    const excerpt = plainLead.slice(0, 400);
+    let rawBodyForArticle = ingestedArticle.body;
+    let plainLead = this.stripHtmlToPlain(rawBodyForArticle, true).trim();
+    const feedPlaceholder = /\(No body text in feed item\.\)/i.test(plainLead);
+    const langHint = source.language ?? detectFeedSourceLanguage(source.name);
+    const langForRawFetch = resolveArticleLanguage(langHint, {
+      title: displayTitle,
+      body: rawBodyForArticle,
+    });
+    const needSourceFetch =
+      this.fetchSourceArticle &&
+      !!ingestedArticle.sourceUrl &&
+      isAllowedArticleFetchUrl(ingestedArticle.sourceUrl) &&
+      (plainLead.length < 400 ||
+        feedPlaceholder ||
+        rssBodyLooksLikeTitleOnly(plainLead, displayTitle));
+    if (needSourceFetch) {
+      try {
+        const fetched = await fetchArticlePlainText(
+          ingestedArticle.sourceUrl,
+          { timeoutMs: this.fetchSourceTimeoutMs, maxBytes: this.fetchSourceMaxBytes },
+          { acceptLanguage: acceptLanguageHeaderForLocale(langForRawFetch) },
+        );
+        if (fetched && fetched.length >= MIN_SOURCE_ARTICLE_PLAIN_CHARS) {
+          plainLead = fetched;
+          rawBodyForArticle = fetched;
+          this.logger.log(`publishRaw: using source page body (${fetched.length}c) for ${displayTitle.slice(0, 48)}`);
+        }
+      } catch (e) {
+        this.logger.warn(`publishRaw source fetch failed: ${(e as Error).message}`);
+      }
+    }
 
-    const lang = this.normalizeLanguageTag(
-      source.language ?? this.detectSourceLang(source.name),
-      ingestedArticle.sourceTitle,
-      ingestedArticle.body,
-    );
+    const lang = resolveArticleLanguage(langHint, {
+      title: displayTitle,
+      body: rawBodyForArticle,
+    });
+
+    const excerpt = (plainLead || displayTitle).slice(0, 400);
     // Map source name to category
-    const category = await this.detectCategory(ingestedArticle.sourceTitle);
+    const category = await this.detectCategory(displayTitle);
     if (!category) return false;
 
     const article = await this.prisma.article.create({
       data: {
-        title: ingestedArticle.sourceTitle,
+        title: displayTitle,
         slug,
         body: {
           type: 'doc',
           // Store image + video URLs in body metadata for frontend use
           ...(imageUrl && { imageUrl, imageCredit: 'Image sourced from original publisher. All rights belong to respective owners.' }),
-          content: this.rawHtmlToDocContent(ingestedArticle.body),
+          content: this.rawHtmlToDocContent(rawBodyForArticle),
         },
         excerpt,
         status: ArticleStatus.PUBLISHED,
@@ -360,6 +539,21 @@ export class IngestionCronService {
       });
     }
 
+    if (ingestedArticle.sourceUrl) {
+      await this.provenance
+        .record({
+          articleId: article.id,
+          sourceUrl: ingestedArticle.sourceUrl,
+          sourceTitle: displayTitle,
+          sourceName: source.name,
+          fetchedAt: new Date(),
+          attributionNote: 'Syndicated summary; original reporting at source.',
+        })
+        .catch((err) =>
+          this.logger.warn(`Provenance for raw article ${article.id}: ${(err as Error).message}`),
+        );
+    }
+
     await this.publishing.publishToSocialOnly(article.id).catch((err) => {
       this.logger.warn(`Social publish failed for raw fallback ${article.id}: ${(err as Error).message}`);
     });
@@ -369,51 +563,6 @@ export class IngestionCronService {
       data: { status: 'PUBLISHED' },
     });
     return true;
-  }
-
-  private detectSourceLang(sourceName: string): string {
-    const name = sourceName.toLowerCase();
-    if (name.includes('hindi') || name.includes('हिंदी') || name.includes('jagran') || name.includes('amar ujala') || name.includes('abp live hindi')) return 'hi';
-    if (name.includes('marathi') || name.includes('maratha') || name.includes('maharashtra times') || name.includes('lokmat') || name.includes('sakal')) return 'mr';
-    if (name.includes('bengali') || name.includes('bangla') || name.includes('ananda') || name.includes('eisamay') || name.includes('abp ananda') || name.includes('prothom alo')) return 'bn';
-    if (name.includes('tamil') || name.includes('dinamalar') || name.includes('dinamani') || name.includes('vikatan')) return 'ta';
-    if (name.includes('telugu') || name.includes('eenadu') || name.includes('sakshi') || name.includes('tv9 telugu')) return 'te';
-    if (name.includes('kannada') || name.includes('prajavani') || name.includes('vijaya karnataka') || name.includes('tv9 kannada')) return 'kn';
-    if (name.includes('punjabi') || name.includes('jagbani') || name.includes('punjab kesari')) return 'pa';
-    if (name.includes('gujarati') || name.includes('divya bhaskar') || name.includes('gujarat samachar') || name.includes('sandesh')) return 'gu';
-    if (name.includes('arabic') || name.includes('عربي') || name.includes('al jazeera arabic') || name.includes('al arabiya') || name.includes('ahram')) return 'ar';
-    if (name.includes('urdu') || name.includes('jang') || name.includes('geo urdu')) return 'ur';
-    if (name.includes('french') || name.includes('le monde') || name.includes('le figaro') || name.includes('radio-canada') || name.includes('ledevoir') || name.includes('rfi')) return 'fr';
-    if (name.includes('german') || name.includes('spiegel') || name.includes('zeit') || name.includes('deutsche welle german') || name.includes('süddeutsche')) return 'de';
-    if (name.includes('spanish') || name.includes('el país') || name.includes('el pais') || name.includes('el mundo') || name.includes('rtve') || name.includes('bbc mundo') || name.includes('infobae')) return 'es';
-    if (name.includes('portuguese') || name.includes('g1 globo') || name.includes('folha') || name.includes('bbc brasil')) return 'pt';
-    if (name.includes('russian') || name.includes('tass') || name.includes('ria novosti') || name.includes('rt russian')) return 'ru';
-    if (name.includes('japanese') || name.includes('nhk') || name.includes('asahi')) return 'ja';
-    if (name.includes('korean') || name.includes('yonhap') || name.includes('korea herald') || name.includes('joongang')) return 'ko';
-    if (name.includes('chinese') || name.includes('xinhua') || name.includes('cgtn')) return 'zh';
-    if (name.includes('indonesian') || name.includes('kompas')) return 'id';
-    if (name.includes('turkish')) return 'tr';
-    return 'en';
-  }
-
-  /**
-   * Guardrail: if text script clearly conflicts with an English tag, normalize it.
-   */
-  private inferLangFromText(text: string): string | null {
-    const t = text ?? '';
-    if (/[\u3040-\u30FF]/.test(t)) return 'ja'; // Hiragana/Katakana
-    if (/[\uAC00-\uD7AF]/.test(t)) return 'ko'; // Hangul
-    if (/[\u0400-\u04FF]/.test(t)) return 'ru'; // Cyrillic
-    if (/[\u0600-\u06FF]/.test(t)) return 'ar'; // Arabic script
-    if (/[\u0900-\u097F]/.test(t)) return 'hi'; // Devanagari (Hindi/Marathi), default to hi
-    if (/[\u0980-\u09FF]/.test(t)) return 'bn';
-    if (/[\u0A00-\u0A7F]/.test(t)) return 'pa';
-    if (/[\u0A80-\u0AFF]/.test(t)) return 'gu';
-    if (/[\u0B80-\u0BFF]/.test(t)) return 'ta';
-    if (/[\u0C00-\u0C7F]/.test(t)) return 'te';
-    if (/[\u0C80-\u0CFF]/.test(t)) return 'kn';
-    if (/[\u4E00-\u9FFF]/.test(t)) return 'zh';
-    return null;
   }
 
   private normalizeParagraphKey(paragraph: string): string {
@@ -436,31 +585,49 @@ export class IngestionCronService {
     return out;
   }
 
-  private normalizeLanguageTag(preferred: string, ...samples: Array<string | null | undefined>) {
-    const preferredNorm = (preferred || 'en').toLowerCase();
-    const probe = samples.filter(Boolean).join('\n');
-    const inferred = this.inferLangFromText(probe);
-    if (!inferred) return preferredNorm;
-    if (preferredNorm === 'en') return inferred;
-    return preferredNorm;
-  }
-
   private detectCategorySlug(title: string, sourceName = ''): CategorySlug | null {
     const t = `${title} ${sourceName}`.toLowerCase();
+    const src = sourceName.toLowerCase();
     // Sports
-    if (t.match(/sport|cricket|football|ipl|tennis|olympics|मैच|क्रिकेट|ఫుట్‌బాల్|క్రికెట్|ಫುಟ್ಬಾಲ್|ಕ್ರೀಡೆ/)) return 'sports';
+    if (t.match(/sport|cricket|football|ipl|tennis|olympics|ম্যাচ|ক্রিকেট|ਖੇਡ|ફૂટબોલ|मैच|क्रिकेट|ఫుట్‌బాల్|క్రికెట್|ಫುಟ್ಬಾಲ್|ಕ್ರೀಡೆ/)) return 'sports';
     // Tech
     if (t.match(/tech|ai|digital|startup|cyber|software|app|तकनीक|प्रौद्योगिकी|టెక్|ಸാങ്കേതിക/)) return 'tech';
     // Business
-    if (t.match(/business|economy|market|stock|sensex|gdp|rupee|trade|बाजार|अर्थव्यवस्था|शेयर|వ్యాపార|ಮಾರುಕಟ್ಟೆ/)) return 'business';
+    if (t.match(/business|economy|market|stock|sensex|gdp|rupee|trade|বাজার|ਵਪਾਰ|બિઝનેસ|बाजार|अर्थव्यवस्था|शेयर|వ్యాపార|ಮಾರುಕಟ್ಟೆ/)) return 'business';
     // Politics / governance / public affairs
-    if (t.match(/politics|election|parliament|minister|cm |pm |governor|bjp|congress|सरकार|चुनाव|संसद|मंत्री|ರಾಜಕೀಯ|चालू घडामोडी|current affairs/)) return 'politics';
+    if (t.match(/politics|election|parliament|minister|cm |pm |governor|bjp|congress|রাজনীতি|ਚੋਣ|રાજકારણ|सरकार|चुनाव|संसद|मंत्री|ರಾಜಕೀಯ|चालू घडामोडी|current affairs/)) return 'politics';
     // Entertainment
     if (t.match(/film|cinema|bollywood|celebrity|entertainment|award|movie|actor|actress|फिल्म|मनोरंजन|సినిమా|ಮನರಂಜನೆ/)) return 'entertainment';
     // World + current affairs + conflict
-    if (t.match(/world|us |usa|uk |china|europe|russia|pakistan|international|global|breaking|war|ceasefire|diplomacy|geopolitics|विदेश|दुनिया|अंतरराष्ट्रीय|ವಿಶ್ವ|ప్రపంచం|العالم|monde|mundo/)) return 'world';
-    // Prefer world as neutral fallback so top bars get current-affairs coverage even when title is generic.
+    if (t.match(/world|us |usa|uk |china|europe|russia|pakistan|international|global|breaking|war|ceasefire|diplomacy|geopolitics|বিশ্ব|ਵਿਸ਼ਵ|વિશ્વ|विदेश|दुनिया|अंतरराष्ट्रीय|ವಿಶ್ವ|ప్రపంచం|العالم|monde|mundo/)) return 'world';
+    if (
+      /anandabazar|eisamay|ei samay|abp ananda|divya bhaskar|gujarat samachar|sandesh|jagbani|punjab kesari|ajit|lokmat|sakal|maharashtra times|eenadu|sakshi|dinamalar|dinamani|vikatan|prajavani|vijaykarnataka|tv9|amarujala|jagran|patrika|navbharat|zeenews|abp live|ndtvkhabar|indiatoday/i.test(
+        src,
+      )
+    ) {
+      if (!t.match(/world|international|foreign|washington|beijing|moscow|ukraine|gaza|israel|united nations|संयुक्त राष्ट्र/)) return 'india';
+    }
     return 'world';
+  }
+
+  /**
+   * Trusted regional feeds first; each source gets its own per-run quotas so early English feeds
+   * cannot exhaust budgets and block Bengali / Gujarati / Punjabi / Urdu publishers.
+   */
+  private sortSourcesForIngestion(sources: IngestedSourceRow[]): IngestedSourceRow[] {
+    const langRank = (code: string | null | undefined): number => {
+      const c = (code || 'en').toLowerCase().split(/[-_]/)[0] ?? 'en';
+      const tier0 = new Set(['bn', 'gu', 'pa', 'ur', 'ml', 'ta', 'te', 'kn', 'hi', 'mr']);
+      if (tier0.has(c)) return 0;
+      if (c !== 'en') return 1;
+      return 2;
+    };
+    return [...sources].sort((a, b) => {
+      if (a.isTrusted !== b.isTrusted) return a.isTrusted ? -1 : 1;
+      const lr = langRank(a.language) - langRank(b.language);
+      if (lr !== 0) return lr;
+      return (a.name || '').localeCompare(b.name || '', 'en');
+    });
   }
 
   private async detectCategory(title: string): Promise<{ id: string } | null> {

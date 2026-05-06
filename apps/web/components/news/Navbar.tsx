@@ -12,6 +12,7 @@ import {
   resolveCountryDefaultLanguage,
   type Country,
 } from '@/lib/countries';
+import { fetchJsonFromApi } from '@/lib/api-client';
 
 const NAV_LINKS = [
   { label: 'India',         href: '/category/india', resetToIndia: true },
@@ -38,6 +39,7 @@ const LANGUAGES = [
   { code: 'kn', label: 'Kannada',    native: 'ಕನ್ನಡ',       group: 'India' },
   { code: 'pa', label: 'Punjabi',    native: 'ਪੰਜਾਬੀ',      group: 'India' },
   { code: 'ur', label: 'Urdu',       native: 'اردو',        group: 'India' },
+  { code: 'ml', label: 'Malayalam',  native: 'മലയാളം',      group: 'India' },
   // Global
   { code: 'ar', label: 'Arabic',     native: 'العربية',     group: 'Global' },
   { code: 'fr', label: 'French',     native: 'Français',    group: 'Global' },
@@ -117,15 +119,14 @@ export function Navbar() {
 
   // Check which languages currently have published inventory.
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     let cancelled = false;
     const loadAvailability = async () => {
       const entries = await Promise.all(
         LANGUAGES.map(async (l) => {
           try {
-            const r = await fetch(`${base}/articles?status=PUBLISHED&limit=1&language=${l.code}`);
-            if (!r.ok) return [l.code, l.code === 'en'] as const;
-            const d = await r.json();
+            const d = await fetchJsonFromApi<{ data?: unknown[] } | unknown[]>(
+              `/articles?status=PUBLISHED&limit=1&language=${l.code}`,
+            );
             const arr = Array.isArray(d) ? d : (d.data ?? []);
             return [l.code, arr.length > 0] as const;
           } catch {
@@ -158,11 +159,12 @@ export function Navbar() {
   })();
 
   useEffect(() => {
-    if (!country || !Object.keys(languageAvailability).length) return;
+    if (!country) return;
     const allowedCodes = new Set(getCountryLanguageCodes(country));
     const langAllowed = allowedCodes.has(lang);
-    const langAvailable = languageAvailability[lang] ?? false;
-    if (langAllowed && langAvailable) return;
+    // Keep explicit user selection even when current inventory is low.
+    // Only reset if selected language is outside the country's allowed set.
+    if (langAllowed) return;
     const defaultLang = resolveCountryDefaultLanguage(country, languageAvailability);
     if (defaultLang !== lang) {
       setLang(defaultLang);
@@ -275,17 +277,14 @@ export function Navbar() {
                       <button
                         key={l.code}
                         onClick={() => chooseLang(l.code)}
-                        disabled={!languageAvailability[l.code] && l.code !== lang}
-                        title={!languageAvailability[l.code] && l.code !== lang ? 'No published stories yet' : undefined}
-                        className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors ${
-                          !languageAvailability[l.code] && l.code !== lang
-                            ? 'text-gray-300 cursor-not-allowed'
-                            : 'hover:bg-navy/5'
-                        } ${lang === l.code ? 'font-bold text-brand' : ''}`}
+                        title={!languageAvailability[l.code] ? 'No published stories yet (fallback applies)' : undefined}
+                        className={`w-full flex items-center justify-between px-3 py-2 text-sm transition-colors hover:bg-navy/5 ${
+                          lang === l.code ? 'font-bold text-brand' : ''
+                        }`}
                       >
                         <span>{l.native}</span>
                         <span className="text-xs text-gray-400">
-                          {!languageAvailability[l.code] && l.code !== lang ? 'No stories' : l.label}
+                          {!languageAvailability[l.code] ? 'No stories yet' : l.label}
                         </span>
                       </button>
                     ))}
@@ -402,15 +401,12 @@ export function Navbar() {
                   <button
                     key={l.code}
                     onClick={() => chooseLang(l.code)}
-                    disabled={!languageAvailability[l.code] && l.code !== lang}
                     className={`text-center text-xs py-1.5 rounded-lg border transition-colors ${
-                      !languageAvailability[l.code] && l.code !== lang
-                        ? 'border-gray-100 text-gray-300 cursor-not-allowed'
-                        : lang === l.code
-                          ? 'bg-brand text-white border-brand'
-                          : 'border-gray-200 text-gray-600 hover:border-brand hover:text-brand'
+                      lang === l.code
+                        ? 'bg-brand text-white border-brand'
+                        : 'border-gray-200 text-gray-600 hover:border-brand hover:text-brand'
                     }`}
-                    title={!languageAvailability[l.code] && l.code !== lang ? 'No published stories yet' : undefined}
+                    title={!languageAvailability[l.code] ? 'No published stories yet (fallback applies)' : undefined}
                   >
                     {l.native}
                   </button>

@@ -2,6 +2,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Search as SearchIcon } from 'lucide-react';
+import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Hit {
   id: string;
@@ -58,8 +59,10 @@ export default function SearchPage() {
       <div className="space-y-4">
         {hits.map((hit) => (
           <Link key={hit.id} href={`/article/${hit.slug}`} className="group block border-b pb-4">
-            <h3 className="font-semibold text-gray-900 group-hover:text-brand transition-colors">{hit.title}</h3>
-            {hit.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{hit.excerpt}</p>}
+            <h3 className="font-semibold text-gray-900 group-hover:text-brand transition-colors">{safeArticleText(hit.title)}</h3>
+            {hit.excerpt && (
+              <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(hit.excerpt)}</p>
+            )}
             {hit.publishedAt && (
               <p className="text-xs text-gray-400 mt-1">{new Date(hit.publishedAt).toLocaleDateString()}</p>
             )}

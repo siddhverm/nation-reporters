@@ -121,10 +121,11 @@ export class PublishingService {
     }
 
     const caption = article.socialCaptions?.find((c: any) => c.platform === job.platform);
+    const excerptForPublish = this.resolvePublishExcerpt(article);
     const payload: PublishPayload = {
       articleId: article.id,
       title: article.title,
-      excerpt: article.excerpt ?? article.title,
+      excerpt: excerptForPublish,
       // Use canonical slug used by web route. seoSlug can be non-unique / unsuffixed.
       url: `${this.publicWebBaseUrl}/article/${article.slug}`,
       imageUrl: imageAsset?.url,
@@ -209,6 +210,48 @@ export class PublishingService {
       where: { status: JobStatus.DEAD_LETTERED },
       orderBy: { createdAt: 'desc' },
     });
+  }
+
+  /**
+   * Social teaser must be a real summary, not a echo of the headline (common bad AI row).
+   * Prefer excerpt when distinct; otherwise bodyMedium / bodyShort / SEO description.
+   */
+  private resolvePublishExcerpt(article: {
+    title: string;
+    excerpt: string | null;
+    bodyShort: string | null;
+    bodyMedium: string | null;
+    seoDescription: string | null;
+  }): string {
+    const title = (article.title ?? '').trim();
+    const excerpt = (article.excerpt ?? '').trim();
+    const norm = (s: string) =>
+      s.toLowerCase().replace(/\s+/g, ' ').replace(/[^\p{L}\p{N}\s]/gu, '').trim();
+    const nt = norm(title);
+    const ne = norm(excerpt);
+    const excerptEchoesTitle =
+      excerpt.length > 0 &&
+      (ne === nt ||
+        (nt.length > 12 &&
+          ne.length <= nt.length + 40 &&
+          (nt.includes(ne) || ne.includes(nt) || ne.slice(0, 40) === nt.slice(0, 40))));
+
+    const clip = (s: string, max: number) => (s.length <= max ? s : `${s.slice(0, max - 1)}…`);
+
+    if (excerpt.length >= 50 && !excerptEchoesTitle) return clip(excerpt, 900);
+
+    for (const block of [article.bodyMedium, article.bodyShort]) {
+      const t = typeof block === 'string' ? block.trim() : '';
+      if (t.length < 120) continue;
+      const head = norm(t.slice(0, Math.min(280, t.length)));
+      if (head === nt || head.length < 20) continue;
+      return clip(t, 900);
+    }
+
+    if (excerpt.length > 0) return clip(excerpt, 900);
+    const seo = (article.seoDescription ?? '').trim();
+    if (seo.length > 50) return clip(seo, 900);
+    return title;
   }
 
   async retryJob(jobId: string) {

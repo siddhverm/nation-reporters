@@ -4,6 +4,8 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, ChevronRight, Flame, Globe } from 'lucide-react';
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
+import { fetchJsonFromApi } from '@/lib/api-client';
+import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Article {
   id: string;
@@ -61,7 +63,7 @@ function ArticleCard({ a }: { a: Article }) {
       className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
       <div className="h-14 w-14 rounded-lg overflow-hidden shrink-0 relative">
         <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
-          alt={a.title} fill className="object-cover" unoptimized />
+          alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
       </div>
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
@@ -82,15 +84,12 @@ export default function HomePage() {
   const [dataNotice, setDataNotice] = useState<string | null>(null);
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
     const cacheKey = `nr-home-cache-${lang}`;
 
     const fetchArticles = async (): Promise<Article[]> => {
       try {
-        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200&language=${lang}`);
-        if (!r.ok) throw new Error(`Primary fetch failed: ${r.status}`);
-        const d = await r.json();
+        const d = await fetchJsonFromApi<{ data?: Article[] } | Article[]>(`/articles?status=PUBLISHED&limit=200&language=${lang}`);
         const raw: Article[] = Array.isArray(d) ? d : (d.data ?? []);
         const list = raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
         if (list.length > 0) {
@@ -104,13 +103,23 @@ export default function HomePage() {
           }
           return withFallbackArticles(list);
         }
+        // Industry-safe fallback: never render empty homepage when selected language has no inventory.
+        if (lang !== 'en') {
+          const enData = await fetchJsonFromApi<{ data?: Article[] } | Article[]>('/articles?status=PUBLISHED&limit=200&language=en');
+          const enRaw: Article[] = Array.isArray(enData) ? enData : (enData.data ?? []);
+          const enList = enRaw.filter((a) => (a.language ?? 'en').toLowerCase() === 'en');
+          if (enList.length > 0) {
+            setDataNotice(
+              `No published stories are currently available in ${lang.toUpperCase()}. Showing English feed until this language receives new ingestion.`,
+            );
+            return withFallbackArticles(enList);
+          }
+        }
       } catch { /* fall through */ }
 
       // Fallback: latest pool — same language only (no English top-up for non-English UI).
       try {
-        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=200`);
-        if (!r.ok) throw new Error(`Fallback fetch failed: ${r.status}`);
-        const d = await r.json();
+        const d = await fetchJsonFromApi<{ data?: Article[] } | Article[]>('/articles?status=PUBLISHED&limit=200');
         const raw: Article[] = Array.isArray(d) ? d : (d.data ?? []);
         const preferred = raw.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
         if (preferred.length > 0) {
@@ -152,7 +161,7 @@ export default function HomePage() {
 
     Promise.all([
       fetchArticles(),
-      fetch(`${base}/categories`).then((r) => r.json()).catch(() => []),
+      fetchJsonFromApi<Category[]>('/categories').catch(() => []),
     ]).then(([arts, cats]) => {
       const list = Array.isArray(arts) ? arts : [];
       setArticles(list);
@@ -190,7 +199,7 @@ export default function HomePage() {
                 {[...breaking, ...breaking].map((a, i) => (
                   <Link key={`${a.id}-${i}`} href={`/article/${a.slug}`}
                     className="text-sm text-blue-100 hover:text-white transition-colors shrink-0">
-                    {a.title}
+                    {safeArticleText(a.title)}
                   </Link>
                 ))}
               </div>
@@ -230,14 +239,16 @@ export default function HomePage() {
             <Link href={`/article/${articles[0].slug}`}
               className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
               <Image src={getArticleImage(articles[0].slug, undefined, 'hero', getPreferredArticleImage(articles[0]))}
-                alt={articles[0].title} fill className="object-cover" unoptimized priority />
+                alt={safeArticleText(articles[0].title, 'Article')} fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
                 <span className="bg-signal text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded mb-2 inline-block">Top Story</span>
                 <h2 className="text-white font-serif font-bold text-2xl leading-snug group-hover:text-signal transition-colors line-clamp-3">
-                  {articles[0].title}
+                  {safeArticleText(articles[0].title)}
                 </h2>
-                {articles[0].excerpt && <p className="text-blue-200 text-sm mt-1 line-clamp-2">{articles[0].excerpt}</p>}
+                {articles[0].excerpt && (
+                  <p className="text-blue-200 text-sm mt-1 line-clamp-2">{safeArticleText(articles[0].excerpt)}</p>
+                )}
                 {articles[0].publishedAt && (
                   <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">
                     <Clock className="h-3 w-3" />{timeAgo(articles[0].publishedAt)}
@@ -251,10 +262,10 @@ export default function HomePage() {
                   className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
                   <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
                     <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
-                      alt={a.title} fill className="object-cover" unoptimized />
+                      alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-semibold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-3">{a.title}</h3>
+                    <h3 className="font-semibold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-3">{safeArticleText(a.title)}</h3>
                     {a.publishedAt && (
                       <p className="text-xs text-gray-400 mt-1 flex items-center gap-1">
                         <Clock className="h-3 w-3" />{timeAgo(a.publishedAt)}
@@ -288,10 +299,10 @@ export default function HomePage() {
                   className="group bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-md transition-all overflow-hidden">
                   <div className="relative h-36 overflow-hidden">
                     <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a))}
-                      alt={a.title} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
+                      alt={safeArticleText(a.title, 'Article')} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
                   </div>
                   <div className="p-3">
-                    <h3 className="font-bold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
+                    <h3 className="font-bold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
                     {a.publishedAt && (
                       <p className="text-[10px] text-gray-400 mt-1.5 flex items-center gap-1">
                         <Clock className="h-2.5 w-2.5" />{timeAgo(a.publishedAt)}
@@ -333,12 +344,12 @@ export default function HomePage() {
                   <Link href={`/article/${hero.slug}`}
                     className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
                     <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero))}
-                      alt={hero.title} fill className="object-cover" unoptimized />
+                      alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 p-4">
                       <span className={`inline-block ${meta.color} text-white text-[10px] font-black uppercase px-2 py-0.5 rounded mb-1`}>Top</span>
                       <h3 className="text-white font-serif font-bold text-sm leading-snug group-hover:text-signal transition-colors line-clamp-3">
-                        {hero.title}
+                        {safeArticleText(hero.title)}
                       </h3>
                       {hero.publishedAt && (
                         <p className="text-blue-300/70 text-[10px] mt-1 flex items-center gap-1">
@@ -357,11 +368,13 @@ export default function HomePage() {
                   className="group flex gap-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-4">
                   <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                     <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero))}
-                      alt={hero.title} fill className="object-cover" unoptimized />
+                      alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">
-                    <h3 className="font-bold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{hero.title}</h3>
-                    {hero.excerpt && <p className="text-xs text-gray-500 mt-1 line-clamp-2">{hero.excerpt}</p>}
+                    <h3 className="font-bold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(hero.title)}</h3>
+                    {hero.excerpt && (
+                      <p className="text-xs text-gray-500 mt-1 line-clamp-2">{safeArticleText(hero.excerpt)}</p>
+                    )}
                     {hero.publishedAt && (
                       <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
                         <Clock className="h-3 w-3" />{timeAgo(hero.publishedAt)}

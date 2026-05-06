@@ -70,14 +70,27 @@ export class ArticlesService {
 
     const baseWhere = {
       status: ArticleStatus.PUBLISHED,
-      category: { slug: { in: ['india', 'world'] } },
     } as const;
+
+    const countryFeedSelect = {
+      id: true,
+      title: true,
+      slug: true,
+      excerpt: true,
+      publishedAt: true,
+      categoryId: true,
+      language: true,
+      mediaAssets: {
+        take: 3,
+        select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
+      },
+    } satisfies Prisma.ArticleSelect;
 
     const localRaw = await this.prisma.article.findMany({
       where: { ...baseWhere, language: localLang },
       orderBy: { publishedAt: 'desc' },
       take: localLimit * 3,
-      include: { tags: { include: { tag: true } }, riskAssessment: true },
+      select: countryFeedSelect,
     });
     const globalRaw = localLang === globalLang
       ? []
@@ -85,7 +98,7 @@ export class ArticlesService {
         where: { ...baseWhere, language: globalLang },
         orderBy: { publishedAt: 'desc' },
         take: globalLimit * 3,
-        include: { tags: { include: { tag: true } }, riskAssessment: true },
+        select: countryFeedSelect,
       });
 
     const seen = new Set<string>();
@@ -142,6 +155,30 @@ export class ArticlesService {
     return article;
   }
 
+  private buildPublicListSelect(hasVideo?: boolean): Prisma.ArticleSelect {
+    return {
+      id: true,
+      title: true,
+      slug: true,
+      excerpt: true,
+      publishedAt: true,
+      categoryId: true,
+      language: true,
+      status: true,
+      podcastScript: true,
+      mediaAssets: hasVideo
+        ? {
+          where: { type: MediaType.VIDEO },
+          take: 3,
+          select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
+        }
+        : {
+          take: 3,
+          select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
+        },
+    };
+  }
+
   async findAll(filters: {
     status?: ArticleStatus;
     categoryId?: string;
@@ -150,29 +187,45 @@ export class ArticlesService {
     hasVideo?: boolean;
     page?: number;
     limit?: number;
+    omitBody?: boolean;
   }) {
-    const p     = Math.max(1, parseInt(String(filters.page  ?? 1),  10) || 1);
-    const take  = Math.min(100, parseInt(String(filters.limit ?? 20), 10) || 20);
-    const { status, categoryId, authorId, language, hasVideo } = filters;
+    const p = Math.max(1, parseInt(String(filters.page ?? 1), 10) || 1);
+    const rawLimit = parseInt(String(filters.limit ?? 20), 10) || 20;
+    const maxTake = filters.omitBody ? 150 : 100;
+    const take = Math.min(maxTake, Math.max(1, rawLimit));
+    const { status, categoryId, authorId, language, hasVideo, omitBody } = filters;
     const where: Prisma.ArticleWhereInput = {
-      ...(status     && { status }),
+      ...(status && { status }),
       ...(categoryId && { categoryId }),
-      ...(authorId   && { authorId }),
-      ...(language   && { language }),
+      ...(authorId && { authorId }),
+      ...(language && { language }),
       ...(hasVideo && { mediaAssets: { some: { type: MediaType.VIDEO } } }),
     };
 
+    const orderBy: Prisma.ArticleOrderByWithRelationInput | Prisma.ArticleOrderByWithRelationInput[] = omitBody
+      ? [{ publishedAt: 'desc' }, { createdAt: 'desc' }]
+      : { createdAt: 'desc' };
+
     const [data, total] = await Promise.all([
-      this.prisma.article.findMany({
-        where,
-        skip: (p - 1) * take,
-        take,
-        orderBy: { createdAt: 'desc' },
-        include: { tags: { include: { tag: true } }, riskAssessment: true, mediaAssets: { take: 3 } },
-      }),
+      omitBody
+        ? this.prisma.article.findMany({
+          where,
+          skip: (p - 1) * take,
+          take,
+          orderBy,
+          select: this.buildPublicListSelect(hasVideo),
+        })
+        : this.prisma.article.findMany({
+          where,
+          skip: (p - 1) * take,
+          take,
+          orderBy: { createdAt: 'desc' },
+          include: { tags: { include: { tag: true } }, riskAssessment: true, mediaAssets: { take: 3 } },
+        }),
       this.prisma.article.count({ where }),
     ]);
-    const page = p; const limit = take;
+    const page = p;
+    const limit = take;
 
     return { data, total, page, limit };
   }
@@ -195,6 +248,14 @@ export class ArticlesService {
     if (!article && !isUuid) {
       article = await this.prisma.article.findFirst({
         where: { seoSlug: idOrSlug },
+        include,
+        orderBy: { createdAt: 'desc' },
+      });
+    }
+    // Extra fallback: support links that carry base slug while DB has suffix (e.g. "-<timestamp>").
+    if (!article && !isUuid) {
+      article = await this.prisma.article.findFirst({
+        where: { slug: { startsWith: `${idOrSlug}-` } },
         include,
         orderBy: { createdAt: 'desc' },
       });

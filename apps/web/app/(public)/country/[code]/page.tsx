@@ -12,6 +12,8 @@ import {
   resolveCountryDefaultLanguage,
 } from '@/lib/countries';
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
+import { fetchJsonFromApi } from '@/lib/api-client';
+import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Article {
   id: string; title: string; slug: string;
@@ -38,8 +40,6 @@ export default function CountryPage() {
   const [loading, setLoading] = useState(true);
 
   useEffect(() => {
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
-
     const mergeUnique = (items: Article[]) => {
       const seen = new Set<string>();
       return items.filter((item) => {
@@ -67,11 +67,10 @@ export default function CountryPage() {
       }
 
       try {
-        const countryFeedRes = await fetch(
-          `${base}/articles/country-feed?localLang=${encodeURIComponent(resolvedLang)}&globalLang=en&localLimit=20&globalLimit=20`,
+        const countryFeed = await fetchJsonFromApi<{ local?: Article[]; global?: Article[] }>(
+          `/articles/country-feed?localLang=${encodeURIComponent(resolvedLang)}&globalLang=en&localLimit=20&globalLimit=20`,
           { signal: controller.signal },
         );
-        const countryFeed = await countryFeedRes.json() as { local?: Article[]; global?: Article[] };
         const dedupedLocal = mergeUnique(countryFeed.local ?? []);
         const dedupedGlobal = mergeUnique(countryFeed.global ?? []);
 
@@ -83,14 +82,24 @@ export default function CountryPage() {
         }
 
         // Fallback: latest published articles
-        const r = await fetch(`${base}/articles?status=PUBLISHED&limit=30`, { signal: controller.signal });
-        const d = await r.json() as { data?: Article[] };
+        const d = await fetchJsonFromApi<{ data?: Article[] }>(
+          '/articles?status=PUBLISHED&limit=30',
+          { signal: controller.signal },
+        );
         const fallbackRaw = d.data ?? [];
         const fallback = fallbackRaw.filter(
           (a) => (a.language ?? 'en').toLowerCase() === resolvedLang.toLowerCase(),
         );
-        setLocalArticles(fallback);
-        setGlobalArticles([]);
+        if (fallback.length > 0) {
+          setLocalArticles(fallback);
+          setGlobalArticles([]);
+          return;
+        }
+
+        // Final safety net: show latest published stories (mixed languages)
+        // so country pages never render as fully empty due to sparse language inventory.
+        setLocalArticles([]);
+        setGlobalArticles(mergeUnique(fallbackRaw));
       } catch { /* empty */ }
       setLoading(false);
     };
@@ -165,7 +174,7 @@ export default function CountryPage() {
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
-                  <Image src={getArticleImage(hero.slug, code, 'hero', getPreferredArticleImage(hero))} alt={hero.title}
+                  <Image src={getArticleImage(hero.slug, code, 'hero', getPreferredArticleImage(hero))} alt={safeArticleText(hero.title, 'Article')}
                     fill className="object-cover" unoptimized />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
@@ -176,9 +185,11 @@ export default function CountryPage() {
                       {(hero.language ?? 'en').toUpperCase()}
                     </span>
                     <h2 className="text-white font-serif font-bold text-xl leading-snug group-hover:text-signal line-clamp-3">
-                      {hero.title}
+                      {safeArticleText(hero.title)}
                     </h2>
-                    {hero.excerpt && <p className="text-blue-200 text-sm mt-1 line-clamp-2">{hero.excerpt}</p>}
+                    {hero.excerpt && (
+                      <p className="text-blue-200 text-sm mt-1 line-clamp-2">{safeArticleText(hero.excerpt)}</p>
+                    )}
                     {hero.publishedAt && (
                       <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">
                         <Clock className="h-3 w-3" />{timeAgo(hero.publishedAt)}
@@ -192,14 +203,16 @@ export default function CountryPage() {
                   <Link key={a.id} href={`/article/${a.slug}`}
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                      <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={a.title} fill className="object-cover" unoptimized />
+                      <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
                     </div>
                     <div className="flex-1 min-w-0">
-                      <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
+                      <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
                       <p className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">
                         {(a.language ?? 'en')}
                       </p>
-                      {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                      {a.excerpt && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                      )}
                       {a.publishedAt && (
                         <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
                           <Clock className="h-3 w-3" />{timeAgo(a.publishedAt)}
@@ -220,11 +233,13 @@ export default function CountryPage() {
                       <Link key={`local-${a.id}`} href={`/article/${a.slug}`}
                         className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                         <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                          <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={a.title} fill className="object-cover" unoptimized />
+                          <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
-                          {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                          <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
+                          {a.excerpt && (
+                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                          )}
                         </div>
                       </Link>
                     ))}
@@ -242,11 +257,13 @@ export default function CountryPage() {
                       <Link key={`global-${a.id}`} href={`/article/${a.slug}`}
                         className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-blue-300 hover:shadow-sm transition-all">
                         <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                          <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={a.title} fill className="object-cover" unoptimized />
+                          <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
                         </div>
                         <div className="flex-1 min-w-0">
-                          <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 leading-snug line-clamp-2">{a.title}</h3>
-                          {a.excerpt && <p className="text-sm text-gray-500 mt-1 line-clamp-2">{a.excerpt}</p>}
+                          <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
+                          {a.excerpt && (
+                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                          )}
                         </div>
                       </Link>
                     ))}

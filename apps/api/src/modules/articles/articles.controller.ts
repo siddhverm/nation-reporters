@@ -27,6 +27,8 @@ export class ArticlesController {
     @Query('hasVideo') hasVideo?: string,
     @Query('page') page?: number,
     @Query('limit') limit?: number,
+    /** When true, omits heavy fields (e.g. TipTap body) for faster public feeds. */
+    @Query('omitBody') omitBody?: string,
   ) {
     return this.svc.findAll({
       status,
@@ -36,6 +38,7 @@ export class ArticlesController {
       hasVideo: hasVideo === 'true',
       page,
       limit,
+      omitBody: omitBody === 'true',
     });
   }
 
