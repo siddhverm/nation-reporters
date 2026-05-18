@@ -8,6 +8,7 @@ import { RedisCacheService } from '../../common/cache/redis-cache.service';
 import { AuditModule } from '../audit/audit.module';
 import { assertTransition } from './status.machine';
 import { CreateArticleDto } from './dto/create-article.dto';
+import { normalizeLanguageCode } from '../ai/language-resolution.util';
 
 type CountryFeedResult = {
   localLang: string;
@@ -41,8 +42,8 @@ export class ArticlesService {
     globalLimit?: number;
   }) {
     const startedAt = Date.now();
-    const localLang = (options.localLang || 'en').toLowerCase();
-    const globalLang = (options.globalLang || 'en').toLowerCase();
+    const localLang = normalizeLanguageCode(options.localLang || 'en');
+    const globalLang = normalizeLanguageCode(options.globalLang || 'en');
     const localLimit = Math.min(100, Math.max(1, Number(options.localLimit ?? 20)));
     const globalLimit = Math.min(100, Math.max(1, Number(options.globalLimit ?? 20)));
     const cacheKey = `${localLang}|${globalLang}|${localLimit}|${globalLimit}`;
@@ -194,11 +195,12 @@ export class ArticlesService {
     const maxTake = filters.omitBody ? 150 : 100;
     const take = Math.min(maxTake, Math.max(1, rawLimit));
     const { status, categoryId, authorId, language, hasVideo, omitBody } = filters;
+    const languageNorm = language ? normalizeLanguageCode(language) : undefined;
     const where: Prisma.ArticleWhereInput = {
       ...(status && { status }),
       ...(categoryId && { categoryId }),
       ...(authorId && { authorId }),
-      ...(language && { language }),
+      ...(languageNorm && { language: languageNorm }),
       ...(hasVideo && { mediaAssets: { some: { type: MediaType.VIDEO } } }),
     };
 
@@ -237,7 +239,7 @@ export class ArticlesService {
       versions: { orderBy: { changedAt: 'desc' } as const, take: 10 },
       riskAssessment: true,
       socialCaptions: true,
-      provenance: true,
+      // provenance is internal-only — never expose source URLs to end users
     };
     // Try UUID first, fall back to slug lookup
     const isUuid = /^[0-9a-f-]{36}$/.test(idOrSlug);

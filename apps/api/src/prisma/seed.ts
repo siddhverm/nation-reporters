@@ -132,86 +132,92 @@ async function main() {
   ];
 
   // RSS Feed Sources — Hindi
-  const hindiSources = [
-    { name: 'NDTV Hindi', feedUrl: 'https://feeds.feedburner.com/ndtvkhabar-home', isTrusted: true },
-    { name: 'Amar Ujala', feedUrl: 'https://www.amarujala.com/rss/breaking-news.xml', isTrusted: true },
-    { name: 'Dainik Jagran', feedUrl: 'https://www.jagran.com/rss/news.xml', isTrusted: true },
-    { name: 'NavBharat Times', feedUrl: 'https://navbharattimes.indiatimes.com/rssfeedstopstories.cms', isTrusted: true },
-    { name: 'Patrika Hindi', feedUrl: 'https://api.patrika.com/rss/india-news', isTrusted: false },
-    { name: 'Zee News Hindi', feedUrl: 'https://zeenews.india.com/hindi/india/feed', isTrusted: true },
-    { name: 'ABP Live Hindi', feedUrl: 'https://www.abplive.com/feed', isTrusted: true },
+  const hindiSources: SeedSourceRow[] = [
+    { name: 'BBC Hindi', feedUrl: 'https://feeds.bbci.co.uk/hindi/rss.xml', isTrusted: true, language: 'hi' },
+    { name: 'NDTV Hindi', feedUrl: 'https://feeds.feedburner.com/ndtvkhabar-home', isTrusted: true, language: 'hi' },
+    { name: 'Amar Ujala', feedUrl: 'https://www.amarujala.com/rss/breaking-news.xml', isTrusted: true, language: 'hi' },
+    { name: 'Dainik Jagran', feedUrl: 'https://www.jagran.com/rss/news.xml', isTrusted: true, language: 'hi' },
+    { name: 'NavBharat Times', feedUrl: 'https://navbharattimes.indiatimes.com/rssfeedstopstories.cms', isTrusted: true, language: 'hi' },
+    { name: 'Patrika Hindi', feedUrl: 'https://api.patrika.com/rss/india-news', isTrusted: false, language: 'hi' },
+    { name: 'Zee News Hindi', feedUrl: 'https://zeenews.india.com/hindi/india/feed', isTrusted: true, language: 'hi' },
+    { name: 'ABP Live Hindi', feedUrl: 'https://www.abplive.com/feed', isTrusted: true, language: 'hi' },
   ];
 
   // RSS Feed Sources — Marathi (Maharashtra)
-  const marathiSources = [
-    { name: 'Maharashtra Times', feedUrl: 'https://maharashtratimes.com/rssfeedstopstories.cms', isTrusted: true },
-    { name: 'Lokmat', feedUrl: 'https://www.lokmat.com/rss/top-news.xml', isTrusted: true },
-    { name: 'Sakal', feedUrl: 'https://www.sakal.com/rss/marathi-news.xml', isTrusted: true },
-    { name: 'TV9 Marathi', feedUrl: 'https://tv9marathi.com/feed', isTrusted: true },
+  const marathiSources: SeedSourceRow[] = [
+    { name: 'BBC Marathi', feedUrl: 'https://feeds.bbci.co.uk/marathi/rss.xml', isTrusted: true, language: 'mr' },
+    { name: 'Maharashtra Times', feedUrl: 'https://maharashtratimes.com/rssfeedstopstories.cms', isTrusted: true, language: 'mr' },
+    { name: 'Lokmat', feedUrl: 'https://www.lokmat.com/rss/top-news.xml', isTrusted: true, language: 'mr' },
+    { name: 'Sakal', feedUrl: 'https://www.sakal.com/rss/marathi-news.xml', isTrusted: true, language: 'mr' },
+    { name: 'TV9 Marathi', feedUrl: 'https://tv9marathi.com/feed', isTrusted: true, language: 'mr' },
   ];
 
   // RSS Feed Sources — Bengali (West Bengal)
-  const bengaliSources = [
-    { name: 'Anandabazar Patrika', feedUrl: 'https://www.anandabazar.com/rss/latest-news.xml', isTrusted: true },
-    { name: 'Ei Samay', feedUrl: 'https://eisamay.com/rssfeedstopstories.cms', isTrusted: true },
-    { name: 'ABP Ananda', feedUrl: 'https://www.abpananda.com/rss/latest.xml', isTrusted: true },
-    { name: 'Kolkata24x7 Bangla', feedUrl: 'https://www.kolkata24x7.in/feed/', isTrusted: false },
-    { name: 'All Newspaper Bangla Kolkata24x7', feedUrl: 'https://allnewspaperbangla.com/kolkata24x7/feed/', isTrusted: false },
+  const bengaliSources: SeedSourceRow[] = [
+    { name: 'Anandabazar Patrika', feedUrl: 'https://www.anandabazar.com/rss/latest-news.xml', isTrusted: true, language: 'bn' },
+    { name: 'Ei Samay', feedUrl: 'https://eisamay.com/rssfeedstopstories.cms', isTrusted: true, language: 'bn' },
+    { name: 'ABP Ananda', feedUrl: 'https://www.abpananda.com/rss/latest.xml', isTrusted: true, language: 'bn' },
+    { name: 'Kolkata24x7 Bangla', feedUrl: 'https://www.kolkata24x7.in/feed/', isTrusted: false, language: 'bn' },
+    { name: 'All Newspaper Bangla Kolkata24x7', feedUrl: 'https://allnewspaperbangla.com/kolkata24x7/feed/', isTrusted: false, language: 'bn' },
   ];
 
   // RSS Feed Sources — Tamil (Tamil Nadu)
-  const tamilSources = [
-    { name: 'Dinamalar', feedUrl: 'https://www.dinamalar.com/rss/feed.aspx', isTrusted: true },
-    { name: 'Dinamani', feedUrl: 'https://www.dinamani.com/rss/latest-news/', isTrusted: true },
-    { name: 'Vikatan', feedUrl: 'https://www.vikatan.com/rss', isTrusted: true },
+  const tamilSources: SeedSourceRow[] = [
+    { name: 'BBC Tamil', feedUrl: 'https://feeds.bbci.co.uk/tamil/rss.xml', isTrusted: true, language: 'ta' },
+    { name: 'Dinamalar', feedUrl: 'https://www.dinamalar.com/rss/feed.aspx', isTrusted: true, language: 'ta' },
+    { name: 'Dinamani', feedUrl: 'https://www.dinamani.com/rss/latest-news/', isTrusted: true, language: 'ta' },
+    { name: 'Vikatan', feedUrl: 'https://www.vikatan.com/rss', isTrusted: true, language: 'ta' },
   ];
 
   // RSS Feed Sources — Telugu (Andhra + Telangana)
-  const teluguSources = [
-    { name: 'Eenadu', feedUrl: 'https://www.eenadu.net/rss/rss.xml', isTrusted: true },
-    { name: 'Sakshi', feedUrl: 'https://www.sakshi.com/rss/latest.xml', isTrusted: true },
-    { name: 'TV9 Telugu', feedUrl: 'https://tv9telugu.com/feed', isTrusted: true },
+  const teluguSources: SeedSourceRow[] = [
+    { name: 'BBC Telugu', feedUrl: 'https://feeds.bbci.co.uk/telugu/rss.xml', isTrusted: true, language: 'te' },
+    { name: 'Eenadu', feedUrl: 'https://www.eenadu.net/rss/rss.xml', isTrusted: true, language: 'te' },
+    { name: 'Sakshi', feedUrl: 'https://www.sakshi.com/rss/latest.xml', isTrusted: true, language: 'te' },
+    { name: 'TV9 Telugu', feedUrl: 'https://tv9telugu.com/feed', isTrusted: true, language: 'te' },
   ];
 
   // RSS Feed Sources — Kannada (Karnataka)
-  const kannadaSources = [
-    { name: 'Vijaya Karnataka', feedUrl: 'https://vijaykarnataka.com/rssfeedstopstories.cms', isTrusted: true },
-    { name: 'Prajavani', feedUrl: 'https://www.prajavani.net/feed/', isTrusted: true },
-    { name: 'TV9 Kannada', feedUrl: 'https://tv9kannada.com/feed', isTrusted: true },
+  const kannadaSources: SeedSourceRow[] = [
+    { name: 'Vijaya Karnataka', feedUrl: 'https://vijaykarnataka.com/rssfeedstopstories.cms', isTrusted: true, language: 'kn' },
+    { name: 'Prajavani', feedUrl: 'https://www.prajavani.net/feed/', isTrusted: true, language: 'kn' },
+    { name: 'TV9 Kannada', feedUrl: 'https://tv9kannada.com/feed', isTrusted: true, language: 'kn' },
   ];
 
   // RSS Feed Sources — Gujarati (Gujarat)
-  const gujaratiSources = [
-    { name: 'Divya Bhaskar', feedUrl: 'https://www.divyabhaskar.co.in/rss/top-news.xml', isTrusted: true },
-    { name: 'Gujarat Samachar', feedUrl: 'https://www.gujaratsamachar.com/rss/top-news.xml', isTrusted: true },
-    { name: 'News18 Gujarati', feedUrl: 'https://gujarati.news18.com/rss/latest.xml', isTrusted: true },
-    { name: 'Sandesh', feedUrl: 'https://sandesh.com/feed/', isTrusted: true },
+  const gujaratiSources: SeedSourceRow[] = [
+    { name: 'BBC Gujarati', feedUrl: 'https://feeds.bbci.co.uk/gujarati/rss.xml', isTrusted: true, language: 'gu' },
+    { name: 'Divya Bhaskar', feedUrl: 'https://www.divyabhaskar.co.in/rss/top-news.xml', isTrusted: true, language: 'gu' },
+    { name: 'Gujarat Samachar', feedUrl: 'https://www.gujaratsamachar.com/rss/top-news.xml', isTrusted: true, language: 'gu' },
+    { name: 'News18 Gujarati', feedUrl: 'https://gujarati.news18.com/rss/latest.xml', isTrusted: true, language: 'gu' },
+    { name: 'Sandesh', feedUrl: 'https://sandesh.com/feed/', isTrusted: true, language: 'gu' },
   ];
 
   // RSS Feed Sources — Punjabi (Punjab)
   const punjabiSources: SeedSourceRow[] = [
-    { name: 'Jagbani', feedUrl: 'https://www.jagbani.com/rss/latest-news', isTrusted: true },
-    { name: 'Punjab Kesari', feedUrl: 'https://www.punjabkesari.in/rss/latest-news', isTrusted: true },
-    { name: 'Punjabi Tribune Online', feedUrl: 'https://www.punjabitribuneonline.com/feed/', isTrusted: true },
-    { name: 'News18 Punjabi', feedUrl: 'https://punjab.news18.com/rss/latest.xml', isTrusted: true },
-    { name: 'Punjabi Jagran', feedUrl: 'https://www.punjabijagran.com/rss', isTrusted: true },
-    { name: 'Ajit Punjabi', feedUrl: 'https://www.ajitjalandhar.com/rss.xml', isTrusted: false },
+    { name: 'BBC Punjabi', feedUrl: 'https://feeds.bbci.co.uk/punjabi/rss.xml', isTrusted: true, language: 'pa' },
+    { name: 'Jagbani', feedUrl: 'https://www.jagbani.com/rss/latest-news', isTrusted: true, language: 'pa' },
+    { name: 'Punjab Kesari', feedUrl: 'https://www.punjabkesari.in/rss/latest-news', isTrusted: true, language: 'pa' },
+    { name: 'Punjabi Tribune Online', feedUrl: 'https://www.punjabitribuneonline.com/feed/', isTrusted: true, language: 'pa' },
+    { name: 'News18 Punjabi', feedUrl: 'https://punjab.news18.com/rss/latest.xml', isTrusted: true, language: 'pa' },
+    { name: 'Punjabi Jagran', feedUrl: 'https://www.punjabijagran.com/rss', isTrusted: true, language: 'pa' },
+    { name: 'Ajit Punjabi', feedUrl: 'https://www.ajitjalandhar.com/rss.xml', isTrusted: false, language: 'pa' },
   ];
 
   // RSS — Urdu (stable international + Pakistan)
   const urduSources: SeedSourceRow[] = [
-    { name: 'BBC Urdu', feedUrl: 'https://feeds.bbci.co.uk/urdu/rss.xml', isTrusted: true },
-    { name: 'Deutsche Welle Urdu', feedUrl: 'https://rss.dw.com/rdf/rss-ur-all', isTrusted: true },
-    { name: 'Akhbar Urdu', feedUrl: 'https://akhbarurdu.com/feed/', isTrusted: false },
-    { name: 'Urdu News', feedUrl: 'https://www.urdunews.com/rss.xml', isTrusted: true },
-    { name: 'News18 Urdu', feedUrl: 'https://urdu.news18.com/rss/latest.xml', isTrusted: true },
-    { name: 'The Wire Urdu', feedUrl: 'https://thewireurdu.com/feed/', isTrusted: true },
+    { name: 'BBC Urdu', feedUrl: 'https://feeds.bbci.co.uk/urdu/rss.xml', isTrusted: true, language: 'ur' },
+    { name: 'Deutsche Welle Urdu', feedUrl: 'https://rss.dw.com/rdf/rss-ur-all', isTrusted: true, language: 'ur' },
+    { name: 'Akhbar Urdu', feedUrl: 'https://akhbarurdu.com/feed/', isTrusted: false, language: 'ur' },
+    { name: 'Urdu News', feedUrl: 'https://www.urdunews.com/rss.xml', isTrusted: true, language: 'ur' },
+    { name: 'News18 Urdu', feedUrl: 'https://urdu.news18.com/rss/latest.xml', isTrusted: true, language: 'ur' },
+    { name: 'The Wire Urdu', feedUrl: 'https://thewireurdu.com/feed/', isTrusted: true, language: 'ur' },
   ];
 
   // RSS — Extra Bengali (backup when regional sites throttle RSS)
   const extraBengaliSources: SeedSourceRow[] = [
-    { name: 'BBC Bangla', feedUrl: 'https://feeds.bbci.co.uk/bengali/rss.xml', isTrusted: true },
-    { name: 'Prothom Alo', feedUrl: 'https://www.prothomalo.com/feed/', isTrusted: true },
+    { name: 'BBC Bangla', feedUrl: 'https://feeds.bbci.co.uk/bengali/rss.xml', isTrusted: true, language: 'bn' },
+    { name: 'Prothom Alo', feedUrl: 'https://www.prothomalo.com/feed/', isTrusted: true, language: 'bn' },
   ];
 
   // RSS — Malayalam
@@ -474,6 +480,12 @@ async function main() {
       },
     });
   }
+
+  // Re-enable regional feeds that ingestion may have auto-disabled after transient RSS errors.
+  await prisma.ingestedSource.updateMany({
+    where: { language: { in: ['bn', 'ta', 'gu', 'pa', 'ur', 'te', 'kn', 'ml', 'hi', 'mr'] } },
+    data: { isActive: true },
+  });
 
   // Sample published articles — 5-6 per category for a rich homepage
   const admin = await prisma.user.findUnique({ where: { email: 'admin@nationreporters.com' } });

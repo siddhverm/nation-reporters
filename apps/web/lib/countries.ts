@@ -101,8 +101,13 @@ const COUNTRY_EXTRA_LANGS: Record<string, string[]> = {
   IT: ['it'],
 };
 
+/**
+ * Languages offered in the nav picker for this country.
+ * When no country is selected (“World”), expose every app language so Bengali/Punjabi/Urdu/etc.
+ * are still choosable — otherwise the UI only showed English and non-EN feeds looked “broken”.
+ */
 export function getCountryLanguageCodes(country: Country | null): string[] {
-  if (!country) return ['en'];
+  if (!country) return [...SUPPORTED_APP_LANGUAGES];
   const out = new Set<string>(['en']);
   if (SUPPORTED_LANGUAGE_SET.has(country.lang)) out.add(country.lang);
   for (const code of COUNTRY_EXTRA_LANGS[country.code] ?? []) {
@@ -111,13 +116,14 @@ export function getCountryLanguageCodes(country: Country | null): string[] {
   return [...out];
 }
 
-export function resolveCountryDefaultLanguage(country: Country | null, availability?: Record<string, boolean>): string {
+/**
+ * Default reader language for a country (e.g. India → Hindi). Does not fall back to English just
+ * because the API has not published many stories in that code yet — that was forcing everyone
+ * into English and hiding other language modes.
+ */
+export function resolveCountryDefaultLanguage(country: Country | null, _availability?: Record<string, boolean>): string {
   if (!country) return 'en';
-  const preferred = SUPPORTED_LANGUAGE_SET.has(country.lang) ? country.lang : 'en';
-  if (!availability) return preferred;
-  if (availability[preferred]) return preferred;
-  if (availability.en) return 'en';
-  return preferred;
+  return SUPPORTED_LANGUAGE_SET.has(country.lang) ? country.lang : 'en';
 }
 
 // Detect country from browser language

@@ -1,12 +1,15 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight } from 'lucide-react';
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
+import { fetchCategoryArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { articleMatchesLanguage, withUiLanguagePath } from '@/lib/ui-language';
+import { useUiLanguage } from '@/lib/use-ui-language';
 
 interface Article {
   id: string;
@@ -24,11 +27,6 @@ interface Category {
   id: string;
   name: string;
   slug: string;
-}
-
-function toArticleList(payload: { data?: Article[] } | Article[] | null | undefined): Article[] {
-  if (!payload) return [];
-  return Array.isArray(payload) ? payload : (payload.data ?? []);
 }
 
 function ensureCategoryVolume(_slug: string, list: Article[], min = 20): Article[] {
@@ -60,148 +58,68 @@ export default function CategoryPage() {
   const [articles, setArticles] = useState<Article[]>([]);
   const [loading, setLoading] = useState(true);
   const [dataNotice, setDataNotice] = useState<string | null>(null);
+  const uiLang = useUiLanguage();
   const label = SLUG_LABELS[slug] ?? slug.charAt(0).toUpperCase() + slug.slice(1);
   const accent = SLUG_COLORS[slug] ?? 'bg-brand';
 
-  useEffect(() => {
-    const lang = typeof window !== 'undefined' ? (localStorage.getItem('nr-lang') ?? 'en') : 'en';
+  const loadArticles = useCallback(async () => {
+    const lang = uiLang;
+    if (typeof window !== 'undefined') {
+      localStorage.setItem('nr-lang', lang);
+    }
+    setLoading(true);
     const cacheKey = `nr-category-cache-${slug}-${lang}`;
-    const fillFromLatestLive = async (baseList: Article[], min = 20, targetLang?: string) => {
-      if (baseList.length >= min) return baseList.slice(0, min);
-      try {
-        const latestData = await fetchJsonFromApi<{ data?: Article[] }>('/articles?status=PUBLISHED&limit=120');
-        const latestList = toArticleList(latestData).filter((a) => {
-          if (!targetLang) return true;
-          return (a.language ?? 'en').toLowerCase() === targetLang.toLowerCase();
-        });
-        const seen = new Set(baseList.map((a) => a.id));
-        const extras = latestList.filter((a) => !seen.has(a.id));
-        return [...baseList, ...extras].slice(0, min);
-      } catch {
-        return baseList;
+
+    try {
+      const cats = await fetchJsonFromApi<Category[]>('/categories');
+      const cat = Array.isArray(cats)
+        ? cats.find((c) => c.slug === slug || c.name.toLowerCase() === slug.toLowerCase())
+        : undefined;
+      const worldCat = Array.isArray(cats) ? cats.find((c) => c.slug === 'world') : undefined;
+
+      const { articles: fetched, notice } = await fetchCategoryArticlesForUiLanguage(lang, {
+        categoryId: cat?.id,
+        sectionLabel: label,
+        excludeCategoryId: slug === 'india' ? worldCat?.id : undefined,
+        strictLanguageOnly: lang !== 'en',
+      });
+
+      const list = (fetched as Article[]).filter((a) => articleMatchesLanguage(a.language, lang));
+      if (list.length > 0 && typeof window !== 'undefined') {
+        localStorage.setItem(cacheKey, JSON.stringify(list.slice(0, 120)));
       }
-    };
-    const loadLatestFallback = async () => {
-      try {
-        const latestData = await fetchJsonFromApi<{ data?: Article[] }>('/articles?status=PUBLISHED&limit=30');
-        const latestList = toArticleList(latestData);
-        const liveFilled = await fillFromLatestLive(latestList, 20, lang);
-        if (liveFilled.length > 0 && typeof window !== 'undefined') {
-          localStorage.setItem(cacheKey, JSON.stringify(liveFilled.slice(0, 120)));
-        }
-        setArticles(ensureCategoryVolume(slug, liveFilled));
-      } catch {
-        if (typeof window !== 'undefined') {
-          const cached = localStorage.getItem(cacheKey);
-          if (cached) {
-            try {
-              const parsed = JSON.parse(cached) as Article[];
-              if (Array.isArray(parsed) && parsed.length > 0) {
-                setDataNotice('Live feed temporarily unavailable; showing last successful update.');
-                setArticles(parsed.slice(0, 20));
-              } else {
-                setArticles([]);
-              }
-            } catch {
-              setArticles([]);
+      setDataNotice(notice);
+      setArticles(ensureCategoryVolume(slug, list));
+    } catch {
+      if (typeof window !== 'undefined') {
+        const cached = localStorage.getItem(cacheKey);
+        if (cached) {
+          try {
+            const parsed = JSON.parse(cached) as Article[];
+            if (Array.isArray(parsed) && parsed.length > 0) {
+              setDataNotice('Live feed temporarily unavailable; showing last successful update.');
+              setArticles(ensureCategoryVolume(slug, parsed));
+              setLoading(false);
+              return;
             }
-          } else {
-            setArticles([]);
-          }
-        } else {
-          setArticles([]);
+          } catch { /* ignore */ }
         }
-      } finally {
-        setLoading(false);
       }
-    };
+      setDataNotice(`Could not load ${label}. Check that the API is running.`);
+      setArticles([]);
+    } finally {
+      setLoading(false);
+    }
+  }, [slug, label, uiLang]);
 
-    // Category pages follow selected UI language (including India).
-    fetchJsonFromApi<Category[]>('/categories')
-      .then(async (cats: Category[]) => {
-        if (!Array.isArray(cats) || cats.length === 0) {
-          await loadLatestFallback();
-          return;
-        }
-        const cat = cats.find((c) => c.slug === slug || c.name.toLowerCase() === slug.toLowerCase());
-        const worldCat = cats.find((c) => c.slug === 'world');
-
-        const buildUrl = (withLang: boolean) => {
-          let url = `/articles?status=PUBLISHED&limit=120`;
-          if (cat) url += `&categoryId=${cat.id}`;
-          if (withLang) url += `&language=${lang}`;
-          return url;
-        };
-
-        const data = await fetchJsonFromApi<{ data?: Article[] } | Article[]>(buildUrl(true));
-        let articles = toArticleList(data);
-
-        if (lang !== 'en') {
-          articles = articles.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
-        }
-
-        // India section: exclude World-categorised articles
-        if (slug === 'india' && worldCat) {
-          articles = articles.filter((a) => a.categoryId !== worldCat.id);
-        }
-
-        // If language/category is sparse, fill from latest live pool first
-        articles = await fillFromLatestLive(articles, 20, lang);
-
-        // Final fallback for empty sections: show latest published mixed feed
-        if (articles.length === 0) {
-          const latestData = await fetchJsonFromApi<{ data?: Article[] }>('/articles?status=PUBLISHED&limit=30');
-          const latestList = toArticleList(latestData);
-          const preferred = latestList.filter((a) => (a.language ?? 'en').toLowerCase() === lang.toLowerCase());
-          if (preferred.length >= 20) {
-            articles = preferred;
-          } else {
-            articles = preferred;
-            if (articles.length > 0 && lang !== 'en') {
-              setDataNotice(
-                `Showing ${articles.length} stor${articles.length === 1 ? 'y' : 'ies'} in ${lang.toUpperCase()}. ` +
-                'We do not mix English into this category view.',
-              );
-            }
-          }
-          if (articles.length === 0 && lang !== 'en') {
-            const enData = await fetchJsonFromApi<{ data?: Article[] }>(
-              `/articles?status=PUBLISHED&limit=120${cat ? `&categoryId=${cat.id}` : ''}&language=en`,
-            );
-            const enArticles = toArticleList(enData);
-            if (enArticles.length > 0) {
-              articles = enArticles;
-              setDataNotice(
-                `No ${lang.toUpperCase()} stories available in ${label} right now. Showing English stories for continuity.`,
-              );
-            }
-          }
-        }
-
-        if (articles.length > 0) {
-          setDataNotice((prev) => prev ?? null);
-          if (typeof window !== 'undefined') {
-            localStorage.setItem(cacheKey, JSON.stringify(articles.slice(0, 120)));
-          }
-        } else if (lang !== 'en') {
-          setDataNotice(
-            `No ${lang.toUpperCase()} stories available in ${label} right now. ` +
-            'Change language from the top bar or run ingestion to populate this feed.',
-          );
-        } else {
-          setDataNotice(`No English stories available in ${label} right now.`);
-        }
-        setArticles(ensureCategoryVolume(slug, articles));
-        setLoading(false);
-      })
-      .catch(() => { void loadLatestFallback(); });
-  }, [slug]);
+  useEffect(() => {
+    void loadArticles();
+  }, [loadArticles]);
 
   const [hero, ...rest] = articles;
 
   return (
     <div className="bg-gray-50 min-h-screen">
-      {/* Category header band */}
       <div className={`${accent} text-white py-4 px-4`}>
         <div className="max-w-7xl mx-auto flex items-center gap-3">
           <nav className="text-sm text-white/70 flex items-center gap-1">
@@ -212,7 +130,10 @@ export default function CategoryPage() {
         </div>
         <div className="max-w-7xl mx-auto mt-1">
           <h1 className="text-2xl font-black tracking-tight">{label}</h1>
-          <p className="text-white/70 text-sm">Latest news from {label}</p>
+          <p className="text-white/70 text-sm">
+            Latest news from {label}
+            {uiLang !== 'en' ? ` · ${uiLang.toUpperCase()}` : ''}
+          </p>
         </div>
       </div>
 
@@ -228,19 +149,15 @@ export default function CategoryPage() {
             <div className="space-y-3">{[...Array(3)].map((_, i) => <div key={i} className="animate-pulse bg-gray-200 rounded-xl h-24" />)}</div>
           </div>
         )}
-
         {!loading && articles.length === 0 && (
           <div className="text-center py-20 text-gray-400">
             <p className="text-lg font-semibold">No articles in {label} yet.</p>
-            <p className="text-sm mt-1">Check back soon — the AI pipeline updates 3× daily.</p>
+            <p className="text-sm mt-1">Check back soon.</p>
           </div>
         )}
-
         {!loading && articles.length > 0 && (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            {/* Main column */}
             <div className="lg:col-span-2 space-y-5">
-              {/* Hero */}
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
@@ -265,20 +182,16 @@ export default function CategoryPage() {
                   </div>
                 </Link>
               )}
-              {/* Article list */}
               <div className="space-y-3">
                 {rest.map((a) => (
                   <Link key={a.id} href={`/article/${a.slug}`}
-                    className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all news-card">
+                    className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                       <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')}
                         fill className="object-cover" unoptimized />
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
-                      {a.excerpt && (
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
-                      )}
                       {a.publishedAt && (
                         <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
                           <Clock className="h-3 w-3" />{timeAgo(a.publishedAt)}
@@ -289,12 +202,10 @@ export default function CategoryPage() {
                 ))}
               </div>
             </div>
-
-            {/* Sidebar */}
             <div className="space-y-4">
               <h3 className="text-sm font-black text-navy uppercase tracking-widest border-b-2 border-brand pb-2">Other Sections</h3>
               {Object.entries(SLUG_LABELS).filter(([s]) => s !== slug).map(([s, l]) => (
-                <Link key={s} href={`/category/${s}`}
+                <Link key={s} href={withUiLanguagePath(`/category/${s}`, uiLang)}
                   className={`flex items-center gap-2 px-3 py-2 rounded-lg text-sm font-semibold text-white ${SLUG_COLORS[s]} hover:opacity-90 transition-opacity`}>
                   <ChevronRight className="h-3.5 w-3.5" />{l}
                 </Link>

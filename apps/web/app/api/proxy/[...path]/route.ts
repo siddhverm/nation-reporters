@@ -1,10 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 
-const TARGETS = (
-  process.env.API_PROXY_TARGETS
-  ?? process.env.API_PROXY_TARGET
-  ?? 'http://187.127.141.249/api/v1,https://nationreporters.com/api/v1'
-)
+const DEFAULT_TARGETS =
+  process.env.NODE_ENV === 'development'
+    ? 'http://localhost:3001/api/v1,http://187.127.141.249/api/v1,https://nationreporters.com/api/v1'
+    : 'http://187.127.141.249/api/v1,https://nationreporters.com/api/v1';
+
+const TARGETS = (process.env.API_PROXY_TARGETS ?? process.env.API_PROXY_TARGET ?? DEFAULT_TARGETS)
   .split(',')
   .map((s) => s.trim())
   .filter(Boolean);
@@ -27,6 +28,19 @@ const proxyCache: Map<string, ProxyCacheEntry> =
 
 function getCacheKey(path: string, query: string) {
   return `${path}${query}`;
+}
+
+/** Avoid caching empty language-filtered feeds (stale “no news” for hours). */
+function shouldCacheProxyResponse(path: string, query: string, bytes: ArrayBuffer): boolean {
+  if (!path.startsWith('articles')) return true;
+  if (!query.includes('language=')) return true;
+  try {
+    const json = JSON.parse(new TextDecoder().decode(bytes)) as { data?: unknown[] } | unknown[];
+    const list = Array.isArray(json) ? json : json?.data;
+    return Array.isArray(list) && list.length > 0;
+  } catch {
+    return true;
+  }
 }
 
 async function proxy(req: NextRequest, params: { path: string[] }) {

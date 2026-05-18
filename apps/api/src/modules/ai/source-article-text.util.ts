@@ -7,7 +7,8 @@ const DEFAULT_UA =
 export function extractReadableTextFromHtml(html: string, maxLen: number): string {
   try {
     const $ = cheerio.load(html);
-    $('script, style, noscript, svg, iframe, nav, footer, header, form').remove();
+    // Remove non-content elements; template elements may carry embedded JSON data
+    $('script, style, noscript, svg, iframe, nav, footer, header, form, template').remove();
     const selectors = [
       '[itemprop="articleBody"]',
       '[itemprop="articlebody"]',
@@ -51,10 +52,24 @@ export function extractReadableTextFromHtml(html: string, maxLen: number): strin
         .replace(/\s+/g, ' ')
         .trim();
     }
-    return text.slice(0, maxLen);
+    return stripInlineJson(text).slice(0, maxLen);
   } catch {
     return stripHtmlToPlain(html, maxLen);
   }
+}
+
+/**
+ * Remove JSON object literals that leak into extracted page text.
+ * Common sources: Next.js SSR data blobs, embedded API responses, LD+JSON rendered as text.
+ * Three passes to peel nested objects from the inside out.
+ */
+function stripInlineJson(text: string): string {
+  let t = text;
+  for (let i = 0; i < 3; i++) {
+    // Match {...} where the interior has no nested braces but contains a JSON-style "key": pattern
+    t = t.replace(/\{[^<>{}]*"[A-Za-z_]\w*"\s*:[^<>{}]*\}/g, ' ');
+  }
+  return t.replace(/\s{2,}/g, ' ').trim();
 }
 
 function stripHtmlToPlain(html: string, maxLen: number): string {
@@ -105,6 +120,44 @@ export function isAllowedArticleFetchUrl(urlStr: string): boolean {
     return true;
   } catch {
     return false;
+  }
+}
+
+export async function fetchArticleTitleAndText(
+  url: string,
+  opts: { timeoutMs: number; maxBytes: number },
+  fetchOpts?: { acceptLanguage?: string },
+): Promise<{ title: string; text: string } | null> {
+  if (!isAllowedArticleFetchUrl(url)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': DEFAULT_UA,
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
+      },
+    });
+    if (!res.ok) return null;
+    const buf = await res.arrayBuffer();
+    const slice = buf.byteLength > opts.maxBytes ? buf.slice(0, opts.maxBytes) : buf;
+    const html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+    const $ = cheerio.load(html);
+    const title =
+      $('meta[property="og:title"]').attr('content')?.trim() ||
+      $('meta[name="twitter:title"]').attr('content')?.trim() ||
+      $('h1').first().text().trim() ||
+      $('title').text().trim() ||
+      '';
+    const text = extractReadableTextFromHtml(html, 120_000);
+    return { title, text };
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
   }
 }
 

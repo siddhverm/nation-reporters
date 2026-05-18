@@ -2,7 +2,7 @@ name: Deploy to Hostinger
 
 on:
   push:
-    branches: [main]
+    branches: [master]
 
 env:
   REGISTRY: ghcr.io
@@ -65,7 +65,7 @@ jobs:
             cd /opt/nation-reporters
 
             # Pull latest compose file
-            git pull origin main
+            git pull origin master
 
             # Log in to registry
             echo "${{ secrets.GITHUB_TOKEN }}" | docker login ghcr.io -u ${{ github.actor }} --password-stdin

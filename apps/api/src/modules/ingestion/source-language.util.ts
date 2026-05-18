@@ -5,7 +5,15 @@
 export function detectFeedSourceLanguage(sourceName: string): string {
   const name = sourceName.toLowerCase();
   if (name.includes('hindi') || name.includes('हिंदी') || name.includes('jagran') || name.includes('amar ujala') || name.includes('abp live hindi')) return 'hi';
-  if (name.includes('marathi') || name.includes('maratha') || name.includes('maharashtra times') || name.includes('lokmat') || name.includes('sakal')) return 'mr';
+  if (
+    name.includes('marathi')
+    || name.includes('maratha')
+    || name.includes('bbc marathi')
+    || name.includes('maharashtra times')
+    || name.includes('lokmat')
+    || name.includes('sakal')
+    || name.includes('tv9 marathi')
+  ) return 'mr';
   if (
     name.includes('bengali')
     || name.includes('bangla')
@@ -18,12 +26,13 @@ export function detectFeedSourceLanguage(sourceName: string): string {
     || name.includes('all newspaper bangla')
     || name.includes('bbc bangla')
   ) return 'bn';
-  if (name.includes('tamil') || name.includes('dinamalar') || name.includes('dinamani') || name.includes('vikatan')) return 'ta';
+  if (name.includes('tamil') || name.includes('bbc tamil') || name.includes('dinamalar') || name.includes('dinamani') || name.includes('vikatan')) return 'ta';
   if (name.includes('telugu') || name.includes('eenadu') || name.includes('sakshi') || name.includes('tv9 telugu')) return 'te';
   if (name.includes('kannada') || name.includes('prajavani') || name.includes('vijaya karnataka') || name.includes('tv9 kannada')) return 'kn';
   if (name.includes('malayalam') || name.includes('manorama') || name.includes('mathrubhumi')) return 'ml';
   if (
     name.includes('punjabi')
+    || name.includes('bbc punjabi')
     || name.includes('jagbani')
     || name.includes('punjab kesari')
     || name.includes('ajit')
@@ -33,6 +42,7 @@ export function detectFeedSourceLanguage(sourceName: string): string {
   ) return 'pa';
   if (
     name.includes('gujarati')
+    || name.includes('bbc gujarati')
     || name.includes('divya bhaskar')
     || name.includes('gujarat samachar')
     || name.includes('sandesh')

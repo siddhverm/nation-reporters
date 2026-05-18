@@ -2,6 +2,9 @@
 import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Clock, ChevronRight, ChevronLeft, Archive, Search } from 'lucide-react';
+import { fetchJsonFromApi } from '@/lib/api-client';
+import { articleMatchesLanguage, normalizeUiLanguage } from '@/lib/ui-language';
+import { useUiLanguage } from '@/lib/use-ui-language';
 import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Article {
@@ -11,6 +14,7 @@ interface Article {
   excerpt: string | null;
   publishedAt: string | null;
   categoryId: string | null;
+  language?: string;
 }
 
 interface PaginatedResponse {
@@ -49,6 +53,7 @@ function groupByDate(articles: Article[]): Record<string, Article[]> {
 }
 
 export default function ArchivePage() {
+  const uiLang = useUiLanguage();
   const [articles, setArticles] = useState<Article[]>([]);
   const [total, setTotal] = useState(0);
   const [page, setPage] = useState(1);
@@ -56,29 +61,34 @@ export default function ArchivePage() {
   const [search, setSearch] = useState('');
   const [query, setQuery] = useState('');
 
-  const load = useCallback(async (p: number, q: string) => {
+  const load = useCallback(async (p: number, q: string, lang: string) => {
     setLoading(true);
-    const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
     const params = new URLSearchParams({
       status: 'PUBLISHED',
       limit: String(PAGE_SIZE),
       page: String(p),
+      language: normalizeUiLanguage(lang),
+      omitBody: 'true',
     });
     if (q) params.set('search', q);
 
     try {
-      const res = await fetch(`${base}/articles?${params}`);
-      const data: PaginatedResponse = await res.json();
-      setArticles(Array.isArray(data) ? data : (data.data ?? []));
-      setTotal(typeof data === 'object' && 'total' in data ? data.total : (data as unknown as Article[]).length);
+      const data = await fetchJsonFromApi<PaginatedResponse | Article[]>(`/articles?${params}`);
+      const raw = Array.isArray(data) ? data : (data.data ?? []);
+      const list = raw.filter((a) => articleMatchesLanguage(a.language, lang));
+      setArticles(list);
+      setTotal(typeof data === 'object' && !Array.isArray(data) && 'total' in data ? data.total : list.length);
     } catch {
       setArticles([]);
+      setTotal(0);
     } finally {
       setLoading(false);
     }
   }, []);
 
-  useEffect(() => { load(page, query); }, [page, query]);
+  useEffect(() => {
+    void load(page, query, uiLang);
+  }, [page, query, uiLang, load]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();

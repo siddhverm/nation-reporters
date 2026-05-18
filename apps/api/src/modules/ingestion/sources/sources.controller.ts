@@ -20,4 +20,5 @@ export class SourcesController {
   @Delete(':id') delete(@Param('id') id: string) { return this.svc.delete(id); }
   @Post(':id/fetch-now') fetchNow(@Param('id') id: string) { return this.svc.fetchNow(id); }
   @Post('fetch-all') fetchAll() { return this.svc.fetchAll(); }
+  @Post('ingest-url') ingestUrl(@Body() dto: { url: string; language?: string }) { return this.svc.ingestUrl(dto); }
 }

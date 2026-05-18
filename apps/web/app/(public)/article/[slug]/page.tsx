@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useState, type ReactNode } from 'react';
-import { useParams } from 'next/navigation';
+import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
@@ -9,8 +9,14 @@ import {
   htmlToPlainText,
   rssPlainLine,
   isFeedBodyPlaceholder,
-  sanitizeReaderSummaryForDisplay,
+  safeArticleText,
+  stripSyndicationLinkbacks,
+  stripWireHeadlinePrefix,
 } from '@/lib/rss-plain-text';
+import { fetchJsonFromApi } from '@/lib/api-client';
+import { formatListingExcerpt, resolveArticleReaderSummary } from '@/lib/reader-summary';
+import { articleMatchesLanguage, normalizeUiLanguage, withUiLanguagePath } from '@/lib/ui-language';
+import { useUiLanguage } from '@/lib/use-ui-language';
 
 interface Article {
   id: string;
@@ -222,9 +228,23 @@ function splitTextToParagraphs(text: string): string[] {
 
 function stripFeedBoilerplate(text: string): string {
   return text
+    .split(/\n+/)
+    .map((l) => l.trim())
+    .filter((line) => {
+      if (!line) return false;
+      const low = line.toLowerCase();
+      if (/^share:?\s*$/i.test(line) || /^fb\s*$/i.test(low) || /^x\s*$/i.test(low)) return false;
+      if (/^share:\s*(fb|x|twitter)/i.test(line)) return false;
+      if (/^(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d/i.test(low)) return false;
+      if (/प्रकाशित\s+\d+\s*(मिनट|घंटे|दिन)\s*पहले/u.test(line)) return false;
+      if (/^(video caption|वीडियो कैप्शन)/i.test(low)) return false;
+      return true;
+    })
+    .join('\n')
     .replace(/\s+continue reading\.?\.?\.*\s*$/i, '')
     .replace(/\s+read more\.?\.?\.*\s*$/i, '')
     .replace(/\s+\.\.\.\s*$/i, '')
+    .replace(/\n{3,}/g, '\n\n')
     .trim();
 }
 
@@ -267,7 +287,7 @@ function isNearDuplicate(a: string, b: string): boolean {
 
 const MIN_SUMMARY_CHARS = 28;
 /** Prefer a fuller Summary box when the API excerpt is only a one-line hook. */
-const MIN_SUBSTANTIVE_SUMMARY_CHARS = 170;
+const MIN_SUBSTANTIVE_SUMMARY_CHARS = 220;
 
 /** Headlines in body copy often repeat tokens from the title; only treat as title-echo when reasonably short. */
 function isTitleEcho(paragraph: string, titleText: string): boolean {
@@ -282,7 +302,7 @@ function isTitleEcho(paragraph: string, titleText: string): boolean {
   return isNearDuplicate(p, t);
 }
 
-function trimSummaryDisplay(text: string, maxLen = 520): string {
+function trimSummaryDisplay(text: string, maxLen = 1100): string {
   const t = stripFeedBoilerplate(text).trim();
   if (t.length <= maxLen) return t;
   const cut = t.slice(0, maxLen);
@@ -294,6 +314,22 @@ function trimSummaryDisplay(text: string, maxLen = 520): string {
   );
   if (last > 100) return cut.slice(0, last + 1).trim();
   return `${cut.trim()}…`;
+}
+
+function isTeaserStyleLead(text: string): boolean {
+  const t = text.trim();
+  if (!t) return true;
+  const low = t.toLowerCase();
+  if (
+    /जानिए|पढ़िए|देखिए|आइए जानते हैं|विस्तार से/.test(t) ||
+    /read more|read on|details inside|let'?s know|stay tuned/.test(low)
+  ) {
+    return true;
+  }
+  // Very short single-line hooks are usually incomplete in syndicated feeds.
+  const sentenceCount = t.split(/(?<=[.!?।])\s+/).filter(Boolean).length;
+  if (t.length < 190 && sentenceCount <= 1) return true;
+  return false;
 }
 
 /**
@@ -314,72 +350,17 @@ function ledeSnippetForDedupe(teaser: string, maxLen = 300): string {
   return cut.trim();
 }
 
-/**
- * Summary box: prefer excerpt, but if it is only a short hook, use a longer field or merge in sentences from bodyShort.
- */
-function pickDisplaySummary(article: Article, titleText: string): string {
-  const lang = (article.language || 'en').toLowerCase();
-  const finalize = (s: string) =>
-    trimSummaryDisplay(sanitizeReaderSummaryForDisplay(s, lang), 720);
-  const title = titleText.trim();
-  const tryCand = (raw: string | null | undefined): string | null => {
-    if (typeof raw !== 'string') return null;
-    const t = stripFeedBoilerplate(rssPlainLine(raw.trim()) || raw.trim());
-    if (t.length < MIN_SUMMARY_CHARS) return null;
-    if (isFeedBodyPlaceholder(t)) return null;
-    if (title && isTitleEcho(t, title)) return null;
-    return t;
-  };
-
-  const orderedFields = [article.excerpt, article.bodyShort, article.bodyMedium, article.seoDescription];
-  const fieldCands: string[] = [];
-  for (const c of orderedFields) {
-    const out = tryCand(c);
-    if (out) fieldCands.push(out);
-  }
-
-  for (const c of fieldCands) {
-    if (c.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS) return finalize(c);
-  }
-
-  let best =
-    fieldCands.length > 0
-      ? fieldCands.reduce((a, b) => (b.length > a.length ? b : a))
-      : '';
-
-  if (!best) {
-    for (const p of extractParagraphs(article.body)) {
-      const out = tryCand(p);
-      if (out) {
-        best = out;
-        break;
-      }
-    }
-  }
-  if (!best) {
-    const aiSum = tryCand(article.body?.aiVideo?.summary);
-    best = aiSum ?? '';
-  }
-  if (!best) return '';
-
-  if (best.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS) {
-    const out = finalize(best);
-    return isTitleEcho(out, title) ? '' : out;
-  }
-
-  const donor = tryCand(article.bodyShort) ?? tryCand(article.bodyMedium);
-  if (donor && donor.length > best.length + 24) {
-    const bLow = best.toLowerCase();
-    for (const sent of donor.split(/(?<=[.!?।])\s+/).map((s) => s.trim()).filter(Boolean)) {
-      if (sent.length < 16) continue;
-      if (bLow.includes(sent.slice(0, Math.min(48, sent.length)).toLowerCase())) continue;
-      best = `${best} ${sent}`.replace(/\s+/g, ' ').trim();
-      if (best.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS) break;
-    }
-  }
-
-  const out = finalize(best);
-  return isTitleEcho(out, title) ? '' : out;
+function pickDisplaySummary(
+  article: Article,
+  titleText: string,
+  bodyParagraphs: string[],
+  uiLang: string,
+): string {
+  const raw = resolveArticleReaderSummary(article, titleText, bodyParagraphs, {
+    minChars: MIN_SUBSTANTIVE_SUMMARY_CHARS,
+    lang: uiLang,
+  });
+  return raw ? trimSummaryDisplay(raw, 1200) : '';
 }
 
 /**
@@ -505,6 +486,7 @@ function pickFallbackBodyParagraph(article: Article, titleText: string, displayS
     .map((s) => stripFeedBoilerplate(s.trim()));
   for (const chunk of chunks) {
     if (isFeedBodyPlaceholder(chunk)) continue;
+    if (isTeaserStyleLead(chunk)) continue;
     if (titleText && isTitleEcho(chunk, titleText)) continue;
     if (
       displaySummary &&
@@ -518,11 +500,56 @@ function pickFallbackBodyParagraph(article: Article, titleText: string, displayS
   return '';
 }
 
+type RelatedArticle = Pick<Article, 'id' | 'title' | 'slug' | 'excerpt' | 'publishedAt' | 'language'>;
+
 export default function ArticlePage() {
   const { slug } = useParams<{ slug: string }>();
+  const router = useRouter();
+  const uiLang = useUiLanguage();
   const [article, setArticle] = useState<Article | null>(null);
   const [loading, setLoading]  = useState(true);
   const [error, setError]      = useState(false);
+  const [moreInLang, setMoreInLang] = useState<RelatedArticle[]>([]);
+
+  useEffect(() => {
+    const onLangChange = (e: Event) => {
+      const newLang = normalizeUiLanguage(
+        (e as CustomEvent<{ lang?: string }>).detail?.lang ?? uiLang,
+      );
+      if (article && !articleMatchesLanguage(article.language, newLang)) {
+        router.push(withUiLanguagePath('/', newLang));
+      }
+    };
+    window.addEventListener('nr-lang-change', onLangChange);
+    return () => window.removeEventListener('nr-lang-change', onLangChange);
+  }, [article, router, uiLang]);
+
+  useEffect(() => {
+    if (!article?.id) {
+      setMoreInLang([]);
+      return;
+    }
+    let cancelled = false;
+    const catQ = article.categoryId ? `&categoryId=${article.categoryId}` : '';
+    void fetchJsonFromApi<{ data?: RelatedArticle[] } | RelatedArticle[]>(
+      `/articles?status=PUBLISHED&limit=8&language=${uiLang}&omitBody=true${catQ}`,
+    )
+      .then((d) => {
+        if (cancelled) return;
+        const raw = Array.isArray(d) ? d : (d.data ?? []);
+        setMoreInLang(
+          raw.filter(
+            (a) => a.id !== article.id && articleMatchesLanguage(a.language, uiLang),
+          ),
+        );
+      })
+      .catch(() => {
+        if (!cancelled) setMoreInLang([]);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [article?.id, article?.categoryId, uiLang]);
 
   useEffect(() => {
     const bases = [
@@ -598,24 +625,37 @@ export default function ArticlePage() {
     </div>
   );
 
-  const structuredParas = extractParagraphs(article.body).filter((p) => !isFeedBodyPlaceholder(p));
+  const structuredParas = extractParagraphs(article.body)
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplate(p)))
+    .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   const bodyStructured =
     structuredParas.length > 0
       ? structuredParas
-      : extractPlainParagraphsFromBody(article.body).filter((p) => !isFeedBodyPlaceholder(p));
+      : extractPlainParagraphsFromBody(article.body)
+          .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplate(p)))
+          .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   // Do not merge excerpt into body text — it duplicates the teaser and breaks dedupe/filter.
-  const fallbackText = [article.bodyMedium, article.bodyShort]
-    .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-    .join('\n\n');
+  const fallbackText = stripSyndicationLinkbacks(
+    [article.bodyMedium, article.bodyShort]
+      .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      .join('\n\n'),
+  );
   const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
   const combinedForDedupe = [...bodyStructured, ...fallbackParagraphs];
   const deduped = dedupeParagraphs(
     combinedForDedupe.map(stripFeedBoilerplate).filter(Boolean),
   ).filter((p) => !isFeedBodyPlaceholder(p));
-  const excerptRaw = stripFeedBoilerplate(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim());
+  const excerptRaw = stripSyndicationLinkbacks(
+    stripFeedBoilerplate(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim()),
+  );
   const excerptText = isFeedBodyPlaceholder(excerptRaw) ? '' : excerptRaw;
-  const titleText = rssPlainLine(article.title) || (article.title ?? '').trim();
-  const displaySummary = pickDisplaySummary(article, titleText);
+  const titleText = stripWireHeadlinePrefix(
+    stripSyndicationLinkbacks(rssPlainLine(article.title) || (article.title ?? '').trim()),
+  );
+  const summarySourceParas = [...bodyStructured, ...fallbackParagraphs]
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplate(p)))
+    .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
+  const displaySummary = pickDisplaySummary(article, titleText, summarySourceParas, uiLang);
   const teaserFull = (displaySummary || excerptText).trim();
   const teaserForDedupe = teaserFull ? ledeSnippetForDedupe(teaserFull) : '';
 
@@ -657,77 +697,29 @@ export default function ArticlePage() {
   const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
+  const proseText = (text: string) => safeArticleText(text);
   const renderProseBlocks = (text: string, keyPrefix: string) => {
-    const parts = splitTextToParagraphs(text).filter(Boolean);
+    const parts = splitTextToParagraphs(proseText(text)).filter(Boolean);
     return parts.length > 0
       ? parts.map((p, i) => <p key={`${keyPrefix}-${i}`}>{p}</p>)
-      : <p>{text}</p>;
+      : <p>{proseText(text)}</p>;
   };
 
   let bodyContent: ReactNode = null;
   if (paragraphs.length > 0) {
-    bodyContent = paragraphs.map((p, i) => <p key={i}>{p}</p>);
+    bodyContent = paragraphs.map((p, i) => <p key={i}>{proseText(p)}</p>);
   } else if (lastResortMedium) {
     bodyContent = renderProseBlocks(lastResortMedium, 'lr-med');
   } else if (lastResortFullDoc) {
     bodyContent = renderProseBlocks(lastResortFullDoc, 'lr-doc');
   } else if (fallbackBodyText && !fallbackIsDuplicateOfSummary) {
-    bodyContent = <p>{fallbackBodyText}</p>;
+    bodyContent = <p>{proseText(fallbackBodyText)}</p>;
   } else if (seoExtra) {
-    bodyContent = (
-      <div className="space-y-4">
-        <p className="text-gray-800 leading-relaxed not-italic">{seoExtra}</p>
-        {article.provenance?.sourceUrl && (
-          <a
-            href={article.provenance.sourceUrl}
-            target="_blank"
-            rel="noopener noreferrer"
-            className="inline-flex items-center rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white hover:bg-brand transition-colors"
-          >
-            Read full report at source
-          </a>
-        )}
-      </div>
-    );
+    bodyContent = <p className="text-gray-800 leading-relaxed not-italic">{proseText(seoExtra)}</p>;
   } else if (displaySummary || excerptText) {
-    /** Summary-only publishing: no separate long body in the API — do not imply “syncing” or duplicate the teaser. */
-    if (showSummaryBlock) {
-      bodyContent = null;
-    } else {
-      bodyContent = (
-        <div className="space-y-3">
-          <p className="text-gray-500 italic">Only short source summary is available for this story.</p>
-          {article.provenance?.sourceUrl && (
-            <a
-              href={article.provenance.sourceUrl}
-              target="_blank"
-              rel="noopener noreferrer"
-              className="inline-flex items-center rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white hover:bg-brand transition-colors"
-            >
-              Read full report at source
-            </a>
-          )}
-        </div>
-      );
-    }
-  } else if (article.provenance?.sourceUrl) {
-    bodyContent = (
-      <div className="space-y-3">
-        <p className="text-gray-500 italic">
-          Full details are available on the original publisher page.
-        </p>
-        <a
-          href={article.provenance.sourceUrl}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="inline-flex items-center rounded-lg bg-navy px-3 py-2 text-xs font-semibold text-white hover:bg-brand transition-colors"
-        >
-          Read full report at source
-        </a>
-      </div>
-    );
+    // Summary-only: teaser is in the summary block.
+    bodyContent = null;
   } else {
-    // No usable body or source link: keep article clean and avoid showing a dead-end placeholder.
     bodyContent = null;
   }
 
@@ -774,6 +766,7 @@ export default function ArticlePage() {
           </div>
 
           <div className="p-6">
+
             <h1 className="text-2xl md:text-3xl font-bold font-serif text-navy leading-snug mb-3">
               {titleText}
             </h1>
@@ -781,7 +774,7 @@ export default function ArticlePage() {
             {showSummaryBlock && (
               <div className="mb-4 border-l-4 border-brand pl-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-brand mb-1">Summary</p>
-                <p className="text-gray-600 text-base leading-relaxed italic">{displaySummary}</p>
+                <p className="text-gray-600 text-base leading-relaxed italic">{proseText(displaySummary)}</p>
               </div>
             )}
 
@@ -834,22 +827,10 @@ export default function ArticlePage() {
               </div>
             )}
 
-            {/* Source attribution */}
-            {article.provenance && (
-              <div className="mt-8 p-3 bg-gray-50 rounded-lg text-xs text-gray-500 border border-gray-100">
-                <span className="font-semibold text-gray-700">Source:</span>{' '}
-                <a href={article.provenance.sourceUrl} target="_blank" rel="noopener noreferrer"
-                  className="text-brand hover:underline">{article.provenance.sourceName}</a>
-                {article.provenance.attributionNote
-                  ? ` — ${article.provenance.attributionNote}`
-                  : ' — Summary adapted by Nation Reporters. Original rights remain with the source publisher.'}
-              </div>
-            )}
-
             <div className="mt-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-900 border border-blue-200">
               Image notice: {sourceImageUrl
-                ? 'Article image is sourced from the original news feed/source when available and displayed with attribution.'
-                : 'Representative image is used when source image is unavailable.'}
+                ? 'Article image is shown when available for this story.'
+                : 'A representative image is used when no story image is available.'}
             </div>
 
             <div className="mt-3 p-3 bg-amber-50 rounded-lg text-xs text-amber-900 border border-amber-200">
@@ -860,9 +841,39 @@ export default function ArticlePage() {
           </div>
         </article>
 
+        {moreInLang.length > 0 && (
+          <section className="mt-8 bg-white rounded-2xl shadow-sm border border-gray-100 p-5">
+            <h2 className="text-sm font-black text-navy uppercase tracking-widest border-b-2 border-brand pb-2 mb-4">
+              More in {uiLang.toUpperCase()}
+            </h2>
+            <ul className="space-y-3">
+              {moreInLang.map((a) => (
+                <li key={a.id}>
+                  <Link
+                    href={withUiLanguagePath(`/article/${a.slug}`, uiLang)}
+                    className="block group"
+                  >
+                    <p className="font-semibold text-gray-800 group-hover:text-brand line-clamp-2">
+                      {safeArticleText(a.title)}
+                    </p>
+                    {a.excerpt && (
+                      <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
+                        {formatListingExcerpt(a.excerpt, a.title, uiLang)}
+                      </p>
+                    )}
+                  </Link>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         {/* Back to home */}
         <div className="mt-6 flex gap-3">
-          <Link href="/" className="flex items-center gap-2 text-sm text-navy font-semibold hover:text-brand transition-colors">
+          <Link
+            href={withUiLanguagePath('/', uiLang)}
+            className="flex items-center gap-2 text-sm text-navy font-semibold hover:text-brand transition-colors"
+          >
             <ArrowLeft className="h-4 w-4" /> Back to Home
           </Link>
         </div>

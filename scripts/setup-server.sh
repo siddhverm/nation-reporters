@@ -24,7 +24,7 @@ cd /opt/nation-reporters
 
 # Clone or pull repo
 if [ -d ".git" ]; then
-  git pull origin main
+  git pull origin master
 else
   git clone https://github.com/YOUR_ORG/nation-reporters.git .
 fi

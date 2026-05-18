@@ -6,6 +6,11 @@
     "build": "nest build",
     "dev": "nest start --watch",
     "start": "node dist/main",
+    "backfill:article-language": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-article-language.ts",
+    "backfill:reader-summary": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-reader-summary.ts",
+    "publish:stuck-approved": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/publish-stuck-approved.ts",
+    "ingest:regional": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/ingest-regional-feeds.ts",
+    "ingest:all": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/ingest-all-languages.ts",
     "lint": "eslint src --ext .ts",
     "test": "jest",
     "test:e2e": "jest --config ./test/jest-e2e.json"

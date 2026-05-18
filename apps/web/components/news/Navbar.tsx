@@ -13,6 +13,7 @@ import {
   type Country,
 } from '@/lib/countries';
 import { fetchJsonFromApi } from '@/lib/api-client';
+import { normalizeUiLanguage, withUiLanguagePath } from '@/lib/ui-language';
 
 const NAV_LINKS = [
   { label: 'India',         href: '/category/india', resetToIndia: true },
@@ -125,7 +126,7 @@ export function Navbar() {
         LANGUAGES.map(async (l) => {
           try {
             const d = await fetchJsonFromApi<{ data?: unknown[] } | unknown[]>(
-              `/articles?status=PUBLISHED&limit=1&language=${l.code}`,
+              `/articles?status=PUBLISHED&limit=1&language=${l.code}&omitBody=true`,
             );
             const arr = Array.isArray(d) ? d : (d.data ?? []);
             return [l.code, arr.length > 0] as const;
@@ -142,14 +143,33 @@ export function Navbar() {
   }, []);
 
   function chooseLang(code: string) {
-    setLang(code);
-    localStorage.setItem('nr-lang', code);
+    const next = normalizeUiLanguage(code);
+    setLang(next);
+    localStorage.setItem('nr-lang', next);
     setLangOpen(false);
     setShowLangPrompt(false);
-    // Dispatch event so components can react without full reload
-    window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang: code } }));
-    // Reload page to re-fetch content in selected language
-    window.location.reload();
+    if (typeof window !== 'undefined') {
+      const url = new URL(window.location.href);
+      if (next === 'en') {
+        url.searchParams.delete('lang');
+        url.searchParams.delete('language');
+      } else {
+        url.searchParams.set('lang', next);
+        url.searchParams.delete('language');
+      }
+      const target = `${url.pathname}${url.search}${url.hash}`;
+      window.history.replaceState(null, '', target);
+    }
+    window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang: next } }));
+  }
+
+  function navHref(path: string): string {
+    return withUiLanguagePath(path, lang);
+  }
+
+  function onNavSectionClick() {
+    window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang } }));
+    setMenuOpen(false);
   }
 
   // Languages filtered by selected country's relevant languages only
@@ -165,13 +185,13 @@ export function Navbar() {
     // Keep explicit user selection even when current inventory is low.
     // Only reset if selected language is outside the country's allowed set.
     if (langAllowed) return;
-    const defaultLang = resolveCountryDefaultLanguage(country, languageAvailability);
+    const defaultLang = resolveCountryDefaultLanguage(country);
     if (defaultLang !== lang) {
       setLang(defaultLang);
       localStorage.setItem('nr-lang', defaultLang);
       window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang: defaultLang } }));
     }
-  }, [country, lang, languageAvailability]);
+  }, [country, lang]);
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -233,15 +253,19 @@ export function Navbar() {
                             {label}
                           </div>
                           {regionCountries.map((c) => (
-                            <Link key={c.code} href={`/country/${c.slug}`}
+                            <Link key={c.code} href={navHref(`/country/${c.slug}`)}
                               onClick={() => {
                                 setWorldOpen(false);
                                 localStorage.setItem('nr-country', c.code);
-                                // Industry pattern: auto-switch to country default language with English fallback.
-                                const newLang = resolveCountryDefaultLanguage(c, languageAvailability);
+                                const allowed = new Set(getCountryLanguageCodes(c));
+                                const current = normalizeUiLanguage(localStorage.getItem('nr-lang') ?? lang);
+                                const newLang = allowed.has(current)
+                                  ? current
+                                  : resolveCountryDefaultLanguage(c);
                                 localStorage.setItem('nr-lang', newLang);
                                 setCountry(c);
                                 setLang(newLang);
+                                window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang: newLang } }));
                               }}
                               className={`flex items-center gap-2 px-3 py-1.5 text-sm hover:bg-navy/5 transition-colors ${country?.code === c.code ? 'font-bold text-brand' : ''}`}>
                               <span>{c.flag}</span>
@@ -312,7 +336,7 @@ export function Navbar() {
         {/* ── Brand bar ── */}
         <div className="bg-white border-b-2 border-brand">
           <div className="max-w-7xl mx-auto px-4 py-2.5 flex items-center gap-4">
-            <Link href="/" className="flex items-center gap-2.5 shrink-0">
+            <Link href={navHref('/')} className="flex items-center gap-2.5 shrink-0">
               <Image
                 src="/logo.png"
                 alt="Nation Reporters"
@@ -355,13 +379,15 @@ export function Navbar() {
         <nav className="bg-navy hidden sm:block">
           <div className="max-w-7xl mx-auto px-4 flex overflow-x-auto">
             {NAV_LINKS.map((l) => (
-              <Link key={l.href} href={l.href}
-                onClick={l.resetToIndia ? () => {
-                  localStorage.setItem('nr-country', 'IN');
-                  localStorage.setItem('nr-lang', 'en');
-                  setCountry(COUNTRIES.find((c) => c.code === 'IN') ?? null);
-                  setLang('en');
-                } : undefined}
+              <Link key={l.href} href={navHref(l.href)}
+                onClick={() => {
+                  onNavSectionClick();
+                  if (l.resetToIndia) {
+                    localStorage.setItem('nr-country', 'IN');
+                    const india = COUNTRIES.find((c) => c.code === 'IN') ?? null;
+                    setCountry(india);
+                  }
+                }}
                 className="px-4 py-2.5 text-[13px] font-semibold text-blue-200 hover:text-white hover:bg-navy-light transition-colors whitespace-nowrap border-r border-blue-900/40 last:border-0">
                 {l.label}
               </Link>
@@ -387,7 +413,7 @@ export function Navbar() {
             </form>
             <div className="grid grid-cols-3 gap-2">
               {NAV_LINKS.map((l) => (
-                <Link key={l.href} href={l.href} onClick={() => setMenuOpen(false)}
+                <Link key={l.href} href={navHref(l.href)} onClick={onNavSectionClick}
                   className="text-center text-[13px] font-semibold text-navy py-2 rounded-lg hover:bg-navy hover:text-white transition-colors">
                   {l.label}
                 </Link>

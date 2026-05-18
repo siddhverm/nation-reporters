@@ -48,4 +48,8 @@ export class SourcesService {
   async fetchAll() {
     return this.cron.runScheduledIngestion();
   }
+
+  async ingestUrl(dto: { url: string; language?: string }) {
+    return this.cron.ingestSingleUrl(dto.url, dto.language ?? 'en');
+  }
 }

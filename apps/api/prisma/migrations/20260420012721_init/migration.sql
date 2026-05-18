@@ -159,6 +159,7 @@ CREATE TABLE "ingested_sources" (
     "name" TEXT NOT NULL,
     "feedUrl" TEXT NOT NULL,
     "type" TEXT NOT NULL,
+    "language" TEXT NOT NULL DEFAULT 'en',
     "isActive" BOOLEAN NOT NULL DEFAULT true,
     "isTrusted" BOOLEAN NOT NULL DEFAULT false,
     "rightsMetadata" JSONB,

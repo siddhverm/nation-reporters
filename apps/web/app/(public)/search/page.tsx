@@ -2,6 +2,10 @@
 import { useState, useEffect, useCallback } from 'react';
 import Link from 'next/link';
 import { Search as SearchIcon } from 'lucide-react';
+import { fetchJsonFromApi } from '@/lib/api-client';
+import { formatListingExcerpt } from '@/lib/reader-summary';
+import { articleMatchesLanguage, normalizeUiLanguage } from '@/lib/ui-language';
+import { useUiLanguage } from '@/lib/use-ui-language';
 import { safeArticleText } from '@/lib/rss-plain-text';
 
 interface Hit {
@@ -14,27 +18,30 @@ interface Hit {
 }
 
 export default function SearchPage() {
+  const uiLang = useUiLanguage();
   const [q, setQ] = useState('');
   const [hits, setHits] = useState<Hit[]>([]);
   const [loading, setLoading] = useState(false);
 
-  const doSearch = useCallback(async (query: string) => {
+  const doSearch = useCallback(async (query: string, lang: string) => {
     if (!query.trim()) { setHits([]); return; }
     setLoading(true);
     try {
-      const base = process.env.NEXT_PUBLIC_API_URL ?? 'http://localhost:3001/api/v1';
-      const res = await fetch(`${base}/search?q=${encodeURIComponent(query)}`);
-      const data = await res.json() as { hits: Hit[] };
-      setHits(data.hits ?? []);
+      const langQ = normalizeUiLanguage(lang);
+      const data = await fetchJsonFromApi<{ hits: Hit[] }>(
+        `/search?q=${encodeURIComponent(query)}&lang=${langQ}`,
+      );
+      const list = (data.hits ?? []).filter((h) => articleMatchesLanguage(h.language, langQ));
+      setHits(list);
     } finally {
       setLoading(false);
     }
   }, []);
 
   useEffect(() => {
-    const timer = setTimeout(() => doSearch(q), 300);
+    const timer = setTimeout(() => doSearch(q, uiLang), 300);
     return () => clearTimeout(timer);
-  }, [q, doSearch]);
+  }, [q, uiLang, doSearch]);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-8">
@@ -61,7 +68,9 @@ export default function SearchPage() {
           <Link key={hit.id} href={`/article/${hit.slug}`} className="group block border-b pb-4">
             <h3 className="font-semibold text-gray-900 group-hover:text-brand transition-colors">{safeArticleText(hit.title)}</h3>
             {hit.excerpt && (
-              <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(hit.excerpt)}</p>
+              <p className="text-sm text-gray-500 mt-1 line-clamp-2">
+                {formatListingExcerpt(hit.excerpt, hit.title, uiLang) || safeArticleText(hit.excerpt)}
+              </p>
             )}
             {hit.publishedAt && (
               <p className="text-xs text-gray-400 mt-1">{new Date(hit.publishedAt).toLocaleDateString()}</p>

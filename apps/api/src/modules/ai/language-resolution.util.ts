@@ -33,8 +33,15 @@ const ACCEPT_LANG_BY_LOCALE: Record<string, string> = {
   it: 'it-IT,it;q=0.9,en;q=0.55',
 };
 
+/** BCP-47 primary subtag for DB + query matching (`hi-IN` → `hi`). */
+export function normalizeLanguageCode(code: string | undefined | null): string {
+  const c = (code ?? 'en').trim().toLowerCase();
+  if (!c) return 'en';
+  return c.split(/[-_]/)[0] || 'en';
+}
+
 export function acceptLanguageHeaderForLocale(locale: string): string {
-  const code = (locale || 'en').toLowerCase().split(/[-_]/)[0] ?? 'en';
+  const code = normalizeLanguageCode(locale);
   return ACCEPT_LANG_BY_LOCALE[code] ?? `${code},en;q=0.75,en-US;q=0.6`;
 }
 
@@ -90,7 +97,7 @@ export function resolveArticleLanguage(
   preferred: string,
   samples: { title?: string | null; body?: string | null },
 ): string {
-  const preferredNorm = (preferred || 'en').toLowerCase().split(/[-_]/)[0] ?? 'en';
+  const preferredNorm = normalizeLanguageCode(preferred);
   const probe = [samples.title, samples.body].filter(Boolean).join('\n');
   if (!probe.trim()) return preferredNorm;
 
@@ -98,10 +105,12 @@ export function resolveArticleLanguage(
   if (inferred) {
     if (preferredNorm === 'en') return inferred;
     if (inferred === 'hi' && DEVANAGARI_EXPLICIT.has(preferredNorm)) return preferredNorm;
+    // Arabic script: disambiguate Urdu / Shahmukhi Punjabi from generic "ar" using feed metadata.
+    if (inferred === 'ar' && (preferredNorm === 'ur' || preferredNorm === 'pa')) return preferredNorm;
     return preferredNorm;
   }
 
-  if (preferredNorm !== 'en' && isMostlyLatinLetterText(probe)) return 'en';
-
+  // RSS often ships Latin-only titles/snippets for Indic feeds; trust `preferred` from
+  // `ingested_sources.language` so bn/pa/ur (etc.) views are populated.
   return preferredNorm;
 }

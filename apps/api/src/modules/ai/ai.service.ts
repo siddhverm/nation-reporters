@@ -7,7 +7,11 @@ import {
   MIN_SOURCE_ARTICLE_PLAIN_CHARS,
   rssBodyLooksLikeTitleOnly,
 } from './source-article-text.util';
-import { acceptLanguageHeaderForLocale, resolveArticleLanguage } from './language-resolution.util';
+import {
+  acceptLanguageHeaderForLocale,
+  normalizeLanguageCode,
+  resolveArticleLanguage,
+} from './language-resolution.util';
 import { rewritePrompt } from './prompts/rewrite.prompt';
 import { tagPrompt } from './prompts/tag.prompt';
 import { captionsPrompt } from './prompts/captions.prompt';
@@ -16,6 +20,7 @@ import { riskPrompt } from './prompts/risk.prompt';
 import { translatePrompt } from './prompts/translate.prompt';
 import { Platform } from '@prisma/client';
 import { PublishingService } from '../publishing/publishing.service';
+import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../common/editorial-sanitize';
 
 type ProcessIngestedOptions = {
   language?: string;
@@ -60,7 +65,7 @@ export class AiService {
     const ingested = await this.prisma.ingestedArticle.findUniqueOrThrow({
       where: { id: ingestedArticleId },
     });
-    const feedLangHint = options.language ?? 'en';
+    const feedLangHint = normalizeLanguageCode(options.language ?? 'en');
     const langForFetch = resolveArticleLanguage(feedLangHint, {
       title: ingested.sourceTitle,
       body: ingested.body,
@@ -100,21 +105,27 @@ export class AiService {
         }
       }
 
-      const language = resolveArticleLanguage(feedLangHint, {
-        title: ingested.sourceTitle,
-        body: bodyForRewrite,
-      });
-      if (language !== langForFetch) {
-        this.logger.log(
-          `Resolved output language=${language} (fetch hint was ${langForFetch}) from body script/title`,
-        );
-      }
+      bodyForRewrite = stripSyndicationLinkbacks(bodyForRewrite);
+
+      // Always publish under the feed's language — never let AI or script detection override.
+      const language = feedLangHint;
 
       // 1. Rewrite (short / medium / long + multilingual reader summary)
-      const { data: rewrite, tokensUsed: rwTokens } = await this.gemini.generateJson<{
+      const { data: rewriteRaw, tokensUsed: rwTokens } = await this.gemini.generateJson<{
         title: string; short: string; medium: string; long: string;
         summary: string; podcastScript: string; language: string;
-      }>(rewritePrompt(ingested.sourceTitle, bodyForRewrite, language));
+      }>(rewritePrompt(titlePlain || ingested.sourceTitle, bodyForRewrite, language));
+
+      const rewrite = {
+        ...rewriteRaw,
+        title: stripWireHeadlinePrefix(stripSyndicationLinkbacks(rewriteRaw.title)),
+        short: stripSyndicationLinkbacks(rewriteRaw.short),
+        medium: stripSyndicationLinkbacks(rewriteRaw.medium),
+        long: stripSyndicationLinkbacks(rewriteRaw.long),
+        summary: stripSyndicationLinkbacks(rewriteRaw.summary),
+        podcastScript: stripSyndicationLinkbacks(rewriteRaw.podcastScript),
+        language: rewriteRaw.language,
+      };
 
       const readerSummary = this.ensureReaderSummary(
         rewrite.summary,
@@ -123,6 +134,7 @@ export class AiService {
         rewrite.long,
         bodyForRewrite.length,
         language,
+        rewrite.title,
       );
       const longForPrompts = this.clipForPrompt(rewrite.long, 14_000);
 
@@ -228,7 +240,7 @@ export class AiService {
           slug: `${seo.slug}-${Date.now()}`,
           bodyShort: rewrite.short,
           bodyMedium: rewrite.medium,
-          excerpt: this.clipExcerpt(readerSummary),
+          excerpt: this.clipExcerpt(readerSummary, 1200),
           language,
           categoryId: categoryRef?.id ?? null,
           seoTitle: seo.seoTitle,
@@ -319,11 +331,23 @@ export class AiService {
         data: { status: 'REWRITTEN', articleId: article.id },
       });
 
-      // Auto-publish immediately if approved
+      // Auto-publish: ingestion must leave articles PUBLISHED before returning (UI filters on status).
       if (autoApprove) {
-        this.publishing.publishArticle(article.id).catch((err) =>
-          this.logger.error(`Auto-publish failed for ${article.id}`, err),
-        );
+        if (options.forceAutoPublish) {
+          try {
+            await this.publishing.publishArticle(article.id);
+          } catch (err) {
+            this.logger.error(`Auto-publish failed for ${article.id}`, err);
+            await this.prisma.article.update({
+              where: { id: article.id },
+              data: { status: 'PUBLISHED', publishedAt: new Date() },
+            });
+          }
+        } else {
+          this.publishing.publishArticle(article.id).catch((err) =>
+            this.logger.error(`Auto-publish failed for ${article.id}`, err),
+          );
+        }
       }
 
       return article;
@@ -385,14 +409,16 @@ export class AiService {
     longBody?: string | undefined,
     sourceBodyLength?: number,
     targetLang = 'en',
+    headline?: string,
   ): string {
     const MIN_CHARS = this.targetSummaryChars(sourceBodyLength, longBody, mediumBody, shortBody);
-    const HARD_MAX = Math.min(1200, Math.max(420, Math.floor(MIN_CHARS * 1.9)));
+    const HARD_MAX = Math.min(1400, Math.max(520, Math.floor(MIN_CHARS * 2.2)));
     let s = this.stripLeadingLatinLabel(summary, targetLang);
     s = this.trimTrailingSummaryEllipsis(s);
     const short = (shortBody ?? '').trim();
     const medium = (mediumBody ?? '').trim();
     const long = (longBody ?? '').trim();
+    const head = (headline ?? '').trim();
 
     const splitSentences = (t: string): string[] =>
       t
@@ -404,20 +430,53 @@ export class AiService {
 
     const substantiveEnough = (text: string): boolean => {
       if (this.summaryLooksTeaserIncomplete(text)) return false;
-      return text.length >= MIN_CHARS || (text.length >= 110 && roughSentenceCount(text) >= 2);
+      if (head && this.isSummaryEchoOfHeadline(text, head)) return false;
+      const needTwoSentences = MIN_CHARS >= 260 || text.length < 360;
+      if (needTwoSentences && roughSentenceCount(text) < 2 && text.length < MIN_CHARS + 40) return false;
+      return text.length >= MIN_CHARS || (text.length >= 130 && roughSentenceCount(text) >= 2);
     };
 
     if (substantiveEnough(s)) return s.slice(0, HARD_MAX).trim();
 
-    const padded = this.padTeaserFromArticleBodies(s, short, medium, long, MIN_CHARS);
+    let padded = this.padTeaserFromArticleBodies(s, short, medium, long, MIN_CHARS, head);
     let out = padded.slice(0, HARD_MAX).trim();
     out = this.stripLeadingLatinLabel(out, targetLang);
     out = this.trimTrailingSummaryEllipsis(out);
-    if (this.summaryLooksTeaserIncomplete(out) && (short || medium || long)) {
-      out = this.padTeaserFromArticleBodies(out, short, medium, long, MIN_CHARS).slice(0, HARD_MAX).trim();
+    if (
+      (this.summaryLooksTeaserIncomplete(out) || (head && this.isSummaryEchoOfHeadline(out, head))) &&
+      (short || medium || long)
+    ) {
+      out = this.padTeaserFromArticleBodies(out, short, medium, long, MIN_CHARS, head).slice(0, HARD_MAX).trim();
+      out = this.stripLeadingLatinLabel(out, targetLang);
       out = this.trimTrailingSummaryEllipsis(out);
     }
     return out;
+  }
+
+  private normalizeEchoKey(text: string): string {
+    return text
+      .toLowerCase()
+      .replace(/\s+/g, ' ')
+      .replace(/[^\p{L}\p{N}\s]/gu, '')
+      .trim();
+  }
+
+  /** Model often returns the summary as a near-copy of the headline — treat as too thin to publish. */
+  private isSummaryEchoOfHeadline(summary: string, headline: string): boolean {
+    const s = summary.trim();
+    const h = headline.trim();
+    if (!s || !h) return false;
+    const ns = this.normalizeEchoKey(s);
+    const nh = this.normalizeEchoKey(h);
+    if (ns === nh) return true;
+    if (s.length <= h.length + 55 && (ns.startsWith(nh) || nh.startsWith(ns))) return true;
+    const hw = nh.split(/\s+/).filter((w) => w.length > 2);
+    if (hw.length === 0) return false;
+    const sw = new Set(ns.split(/\s+/).filter((w) => w.length > 2));
+    let hit = 0;
+    for (const w of hw) if (sw.has(w)) hit++;
+    if (hit / hw.length >= 0.88 && s.length < Math.max(320, h.length + 120)) return true;
+    return false;
   }
 
   /**
@@ -459,6 +518,9 @@ export class AiService {
     ) {
       return true;
     }
+    if (/read\s+more:?\s*https?:\/\//i.test(t) || (/read\s+more/i.test(low) && /https?:\/\//i.test(t))) {
+      return true;
+    }
     if (/[…⋯]\s*$/u.test(t)) return true;
     if (/\.{3,}\s*$/u.test(t)) return true;
     if (t.length >= 90 && !/[.!?।。！？\u0964\u0965]["')\]]?\s*$/u.test(t)) return true;
@@ -478,10 +540,10 @@ export class AiService {
       (shortBody ?? '').trim().length,
     );
     if (sourceLen >= 9000) return 520;
-    if (sourceLen >= 5000) return 430;
-    if (sourceLen >= 2600) return 320;
-    if (sourceLen >= 1200) return 250;
-    return 190;
+    if (sourceLen >= 5000) return 450;
+    if (sourceLen >= 2600) return 360;
+    if (sourceLen >= 1200) return 300;
+    return 280;
   }
 
   private splitSentencesForTeaser(t: string): string[] {
@@ -498,34 +560,52 @@ export class AiService {
     mediumBody: string,
     longBody: string,
     minChars: number,
+    headline?: string,
   ): string {
     let base = teaser.trim();
     const bodies = [shortBody, mediumBody, longBody].filter((b) => b.trim().length > 0);
     if (bodies.length === 0) return base;
 
-    const baseLow = base.toLowerCase();
+    const head = (headline ?? '').trim();
+    let baseLow = base.toLowerCase();
+
+    const appendIfNew = (sent: string): boolean => {
+      if (sent.length < 14) return false;
+      const prefix = sent.slice(0, Math.min(56, sent.length)).toLowerCase();
+      if (baseLow.includes(prefix)) return false;
+      base = `${base} ${sent}`.replace(/\s+/g, ' ').trim();
+      baseLow = base.toLowerCase();
+      return true;
+    };
 
     for (const body of bodies) {
-      const firstBlock = (body.split(/\n\n+/)[0] ?? body).trim();
-      for (const sent of this.splitSentencesForTeaser(firstBlock)) {
-        if (sent.length < 14) continue;
-        const prefix = sent.slice(0, Math.min(56, sent.length)).toLowerCase();
-        if (baseLow.includes(prefix)) continue;
-        base = `${base} ${sent}`.replace(/\s+/g, ' ').trim();
+      const blocks = body.split(/\n\n+/).map((p) => p.trim()).filter(Boolean);
+      for (let bi = 0; bi < blocks.length; bi++) {
+        const block = blocks[bi];
+        for (const sent of this.splitSentencesForTeaser(block)) {
+          if (head && this.isSummaryEchoOfHeadline(sent, head) && sent.length < head.length + 100) continue;
+          appendIfNew(sent);
+          if (base.length >= minChars && this.splitSentencesForTeaser(base).length >= 2) return base;
+        }
         if (base.length >= minChars && this.splitSentencesForTeaser(base).length >= 2) return base;
+        if (bi >= 1 && block.length > base.length + 100 && base.length < minChars) {
+          base = `${base} ${block}`.replace(/\s+/g, ' ').trim().slice(0, 920);
+          baseLow = base.toLowerCase();
+        }
       }
       if (base.length >= minChars) return base;
+      const firstBlock = (body.split(/\n\n+/)[0] ?? body).trim();
       if (!teaser && firstBlock.length > base.length) base = firstBlock.slice(0, 720).trim();
     }
 
     if (base.length < minChars && shortBody.trim()) {
       const fb = (shortBody.split(/\n\n+/)[0] ?? shortBody).trim();
       if (fb.length > base.length + 80) {
-        base = `${base} ${fb}`.replace(/\s+/g, ' ').trim().slice(0, 850);
+        base = `${base} ${fb}`.replace(/\s+/g, ' ').trim().slice(0, 920);
       }
     }
 
-    if (base.length < 80 && shortBody.trim()) return shortBody.trim().slice(0, 720);
+    if (base.length < 120 && shortBody.trim()) return shortBody.trim().slice(0, 850);
     return base;
   }
 
@@ -618,11 +698,19 @@ export class AiService {
       .slice(0, maxTotalChars);
   }
 
-  private clipExcerpt(text: string | null | undefined, max = 560): string | undefined {
+  private clipExcerpt(text: string | null | undefined, max = 1200): string | undefined {
     const t = (text ?? '').trim().replace(/\s+/g, ' ');
     if (!t) return undefined;
     if (t.length <= max) return t;
-    return `${t.slice(0, max - 1)}…`;
+    const cut = t.slice(0, max);
+    const last = Math.max(
+      cut.lastIndexOf('. '),
+      cut.lastIndexOf('? '),
+      cut.lastIndexOf('! '),
+      cut.lastIndexOf('।'),
+    );
+    if (last > 200) return cut.slice(0, last + 1).trim();
+    return `${cut.trim()}…`;
   }
 
   private async getAiBotId(): Promise<string> {

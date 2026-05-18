@@ -12,12 +12,24 @@ import { ArticleStatus } from '@prisma/client';
 import { PublishingService } from '../../publishing/publishing.service';
 import {
   fetchArticlePlainText,
+  fetchArticleTitleAndText,
   isAllowedArticleFetchUrl,
   MIN_SOURCE_ARTICLE_PLAIN_CHARS,
   rssBodyLooksLikeTitleOnly,
 } from '../../ai/source-article-text.util';
-import { acceptLanguageHeaderForLocale, resolveArticleLanguage } from '../../ai/language-resolution.util';
+import {
+  acceptLanguageHeaderForLocale,
+  normalizeLanguageCode,
+  resolveArticleLanguage,
+} from '../../ai/language-resolution.util';
 import { detectFeedSourceLanguage } from '../source-language.util';
+import { resolveSourceFeedLanguage } from '../ingestion-language.util';
+import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../../common/editorial-sanitize';
+import {
+  buildReaderSummaryFromPlainText,
+  splitStoryBodies,
+  stripPublisherFeedBoilerplate,
+} from '../../../common/reader-summary.util';
 
 type CategorySlug =
   | 'india'
@@ -57,6 +69,9 @@ export class IngestionCronService {
   private readonly fetchSourceArticle: boolean;
   private readonly fetchSourceTimeoutMs: number;
   private readonly fetchSourceMaxBytes: number;
+  private readonly skipAiIngestion: boolean;
+  /** Set when Gemini returns 429/quota — raw publish for the rest of this run. */
+  private aiQuotaExhausted = false;
 
   constructor(
     private readonly config: ConfigService,
@@ -74,6 +89,101 @@ export class IngestionCronService {
     this.fetchSourceArticle = !['0', 'false', 'no', 'off'].includes(fetchFlag);
     this.fetchSourceTimeoutMs = Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000);
     this.fetchSourceMaxBytes = Number(this.config.get('FETCH_SOURCE_MAX_BYTES') ?? 1_000_000);
+    const skipAi = (this.config.get<string>('INGESTION_SKIP_AI') ?? '').toLowerCase();
+    this.skipAiIngestion = ['1', 'true', 'yes', 'on'].includes(skipAi);
+  }
+
+  /**
+   * On-demand ingestion of a single article URL in any language.
+   * Fetches the page, deduplicates, runs AI rewrite + publish, and returns the article id.
+   */
+  async ingestSingleUrl(
+    url: string,
+    language: string,
+  ): Promise<{ articleId: string }> {
+    if (!isAllowedArticleFetchUrl(url)) {
+      throw new Error('URL not allowed');
+    }
+
+    const fetched = await fetchArticleTitleAndText(
+      url,
+      { timeoutMs: this.fetchSourceTimeoutMs, maxBytes: this.fetchSourceMaxBytes },
+      { acceptLanguage: acceptLanguageHeaderForLocale(language) },
+    );
+    if (!fetched || fetched.text.length < MIN_SOURCE_ARTICLE_PLAIN_CHARS) {
+      throw new Error('Could not fetch enough article content from that URL');
+    }
+
+    const lang = normalizeLanguageCode(language);
+    const hash = crypto.createHash('sha256').update(url).digest('hex');
+    const isDuplicate = await this.dedup.isDuplicate(hash, fetched.text, lang);
+    if (isDuplicate) {
+      throw new Error('Article from this URL has already been ingested');
+    }
+
+    // Find or lazily create the shared manual-ingest source (isActive:false keeps it out of cron)
+    let manualSource = await this.prisma.ingestedSource.findFirst({
+      where: { feedUrl: 'manual://ingest' },
+    });
+    if (!manualSource) {
+      manualSource = await this.prisma.ingestedSource.create({
+        data: {
+          name: 'Manual URL Ingest',
+          feedUrl: 'manual://ingest',
+          type: 'MANUAL',
+          language: undefined,
+          isActive: false,
+          isTrusted: true,
+        },
+      });
+    }
+
+    const ingestedArticle = await this.prisma.ingestedArticle.create({
+      data: {
+        sourceId: manualSource.id,
+        sourceUrl: url,
+        sourceTitle: fetched.title || 'Untitled',
+        body: fetched.text,
+        contentHash: hash,
+      },
+    });
+
+    await this.provenance.record({
+      ingestedArticleId: ingestedArticle.id,
+      sourceUrl: url,
+      sourceTitle: fetched.title || 'Untitled',
+      sourceName: 'Manual URL Ingest',
+      fetchedAt: new Date(),
+      attributionNote: 'Ingested on demand via admin API; internal record only.',
+    });
+
+    let articleId: string | undefined;
+    try {
+      const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
+        language: lang,
+        forceAutoPublish: true,
+        allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
+      });
+      if (article) articleId = article.id;
+    } catch (aiErr) {
+      this.logger.warn(
+        `AI failed for manual ingest ${url.slice(0, 64)}: ${(aiErr as Error).message?.slice(0, 120)} — falling back to raw publish`,
+      );
+    }
+
+    if (!articleId) {
+      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang });
+      if (!ok) throw new Error('Failed to publish article');
+      const published = await this.prisma.article.findFirst({
+        where: { ingestedArticleId: ingestedArticle.id },
+        orderBy: { createdAt: 'desc' },
+        select: { id: true },
+      });
+      if (!published) throw new Error('Published article not found');
+      articleId = published.id;
+    }
+
+    return { articleId };
   }
 
   /**
@@ -87,7 +197,7 @@ export class IngestionCronService {
     itemTitlePlain: string,
   ): Promise<string> {
     if (!this.fetchSourceArticle || !sourceUrl || !isAllowedArticleFetchUrl(sourceUrl)) {
-      return rssBody;
+      return stripSyndicationLinkbacks(rssBody);
     }
     const rssPlain = this.stripHtmlToPlain(rssBody, true);
     const rssIsThin = rssPlain.length < 700;
@@ -98,25 +208,29 @@ export class IngestionCronService {
         { timeoutMs: this.fetchSourceTimeoutMs, maxBytes: this.fetchSourceMaxBytes },
         { acceptLanguage: acceptLanguageHeaderForLocale(sourceLang) },
       );
-      if (!fetched || fetched.length < MIN_SOURCE_ARTICLE_PLAIN_CHARS) return rssBody;
+      if (!fetched || fetched.length < MIN_SOURCE_ARTICLE_PLAIN_CHARS) return stripSyndicationLinkbacks(rssBody);
       const materiallyLonger = fetched.length > rssPlain.length + 40;
       const muchLongerThanHeadline = fetched.length > (itemTitlePlain?.length ?? 0) + 120;
       if (materiallyLonger || rssIsThin || looksTitleOnly || muchLongerThanHeadline) {
         this.logger.log(
           `Ingestion: stored body from source page (${fetched.length}c) vs RSS (${rssPlain.length}c) titleOnly=${looksTitleOnly}`,
         );
-        return fetched;
+        return stripSyndicationLinkbacks(fetched);
       }
     } catch (e) {
       this.logger.warn(`Ingestion source fetch failed ${sourceUrl.slice(0, 64)}: ${(e as Error).message}`);
     }
-    return rssBody;
+    return stripSyndicationLinkbacks(rssBody);
   }
 
   // 08:00, 14:00, 20:00 IST (UTC+5:30 = 02:30, 08:30, 14:30 UTC)
   @Cron('30 2,8,14 * * *')
   async runScheduledIngestion() {
     this.logger.log('Scheduled ingestion started');
+    this.aiQuotaExhausted = this.skipAiIngestion;
+    if (this.skipAiIngestion) {
+      this.logger.log('INGESTION_SKIP_AI enabled — publishing fetched RSS/source text without Gemini');
+    }
     const sources = await this.prisma.ingestedSource.findMany({ where: { isActive: true } });
     const sorted = this.sortSourcesForIngestion(sources as IngestedSourceRow[]);
 
@@ -214,7 +328,7 @@ export class IngestionCronService {
   }
 
   async fetchSource(
-    source: { id: string; feedUrl: string; name: string; language?: string },
+    source: { id: string; feedUrl: string; name: string; language?: string | null },
     options?: { remainingByCategory?: RemainingQuota; maxItemsPerSource?: number },
   ) {
     const feed = await this.parseFeedWithRetry(source.feedUrl, source.name);
@@ -222,11 +336,7 @@ export class IngestionCronService {
 
     // Prefer explicit non-English source language; otherwise infer from source name.
     // This avoids accidental default "en" for multilingual feeds.
-    const inferredLang = detectFeedSourceLanguage(source.name);
-    const feedLangHint =
-      source.language && source.language !== 'en'
-        ? source.language
-        : inferredLang;
+    const feedLangHint = resolveSourceFeedLanguage(source);
 
     // Scan latest items and publish quota-eligible stories across sections
     const items = (feed.items ?? []).slice(0, this.maxFeedItemsScan);
@@ -248,12 +358,14 @@ export class IngestionCronService {
         langForEnrichFetch,
         titlePlain,
       );
-      const articleLang = resolveArticleLanguage(feedLangHint, { title: titlePlain, body });
+      const articleLang = normalizeLanguageCode(
+        resolveArticleLanguage(feedLangHint, { title: titlePlain, body }),
+      );
       const hash = crypto.createHash('sha256').update(item.link ?? item.title ?? '').digest('hex');
       const imageUrl = this.extractImage(item);
       const sourceVideoUrl = this.extractVideo(item);
 
-      const isDuplicate = await this.dedup.isDuplicate(hash, body);
+      const isDuplicate = await this.dedup.isDuplicate(hash, body, articleLang);
       if (isDuplicate) continue;
 
       try {
@@ -277,22 +389,32 @@ export class IngestionCronService {
         });
 
         let publishedOk = false;
-        try {
-          const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
-            language: articleLang,
-            imageUrl: imageUrl ?? undefined,
-            sourceVideoUrl: sourceVideoUrl ?? undefined,
-            forceAutoPublish: true,
-            allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
-          });
-          if (article) publishedOk = true;
-        } catch (aiErr) {
-          this.logger.warn(
-            `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — publishing raw RSS/source text`,
-          );
+        if (this.aiQuotaExhausted) {
           publishedOk = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
-          if (!publishedOk) {
-            this.logger.warn(`Raw publish failed after AI error: ${titlePlain.slice(0, 50)}`);
+        } else {
+          try {
+            const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
+              language: articleLang,
+              imageUrl: imageUrl ?? undefined,
+              sourceVideoUrl: sourceVideoUrl ?? undefined,
+              forceAutoPublish: true,
+              allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
+            });
+            if (article) publishedOk = true;
+          } catch (aiErr) {
+            if (this.isGeminiQuotaError(aiErr)) {
+              this.aiQuotaExhausted = true;
+              this.logger.warn(
+                'Gemini quota exhausted — raw RSS/source publish for remaining items this run',
+              );
+            }
+            this.logger.warn(
+              `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — publishing raw RSS/source text`,
+            );
+            publishedOk = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
+            if (!publishedOk) {
+              this.logger.warn(`Raw publish failed after AI error: ${titlePlain.slice(0, 50)}`);
+            }
           }
         }
         if (!publishedOk) continue;
@@ -316,6 +438,11 @@ export class IngestionCronService {
 
     this.logger.log(`${source.name}: ingested ${ingested} new articles`);
     return { ingested };
+  }
+
+  private isGeminiQuotaError(err: unknown): boolean {
+    const m = (err as Error)?.message ?? String(err);
+    return /429|quota exceeded|too many requests/i.test(m);
   }
 
   private async parseFeedWithRetry(feedUrl: string, sourceName: string) {
@@ -418,7 +545,12 @@ export class IngestionCronService {
 
   /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
   private rawHtmlToDocContent(htmlOrText: string, maxTotalChars = 80000) {
-    const text = this.stripHtmlToPlain(htmlOrText, true).slice(0, maxTotalChars);
+    const text = stripSyndicationLinkbacks(
+      stripPublisherFeedBoilerplate(
+        this.stripHtmlToPlain(htmlOrText, true).slice(0, maxTotalChars),
+        '',
+      ),
+    );
     if (!text) {
       return [{ type: 'paragraph', content: [{ type: 'text', text: '(No body text in feed item.)' }] }];
     }
@@ -450,15 +582,20 @@ export class IngestionCronService {
       body: string;
       publishedAt: Date | null;
     },
-    source: { name: string; language?: string },
+    source: { name: string; language?: string | null },
     imageUrl?: string,
   ): Promise<boolean> {
-    const adminUser = await this.prisma.user.findFirst({ where: { role: 'ADMIN' } });
+    const adminUser =
+      (await this.prisma.user.findFirst({ where: { role: 'ADMIN' } }))
+      ?? (await this.prisma.user.findFirst({ where: { role: 'AI_BOT' } }));
     if (!adminUser) return false;
 
-    const displayTitle =
-      this.rssPlainLine(ingestedArticle.sourceTitle) ||
-      ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+    const displayTitle = stripWireHeadlinePrefix(
+      stripSyndicationLinkbacks(
+        this.rssPlainLine(ingestedArticle.sourceTitle) ||
+          ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
+      ),
+    );
     const base = displayTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
     const existing = await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } });
     const slug = existing ? `${base}-${Date.now()}` : base;
@@ -466,7 +603,7 @@ export class IngestionCronService {
     let rawBodyForArticle = ingestedArticle.body;
     let plainLead = this.stripHtmlToPlain(rawBodyForArticle, true).trim();
     const feedPlaceholder = /\(No body text in feed item\.\)/i.test(plainLead);
-    const langHint = source.language ?? detectFeedSourceLanguage(source.name);
+    const langHint = resolveSourceFeedLanguage(source);
     const langForRawFetch = resolveArticleLanguage(langHint, {
       title: displayTitle,
       body: rawBodyForArticle,
@@ -495,25 +632,39 @@ export class IngestionCronService {
       }
     }
 
-    const lang = resolveArticleLanguage(langHint, {
-      title: displayTitle,
-      body: rawBodyForArticle,
-    });
+    const lang = normalizeLanguageCode(langHint);
 
-    const excerpt = (plainLead || displayTitle).slice(0, 400);
+    plainLead = stripPublisherFeedBoilerplate(plainLead, displayTitle);
+    rawBodyForArticle = stripPublisherFeedBoilerplate(rawBodyForArticle, displayTitle);
+    plainLead = stripSyndicationLinkbacks(plainLead);
+    rawBodyForArticle = stripSyndicationLinkbacks(rawBodyForArticle);
+
+    const readerSummary = buildReaderSummaryFromPlainText(rawBodyForArticle || plainLead, displayTitle);
+    const { bodyShort, bodyMedium, paragraphs } = splitStoryBodies(rawBodyForArticle || plainLead, displayTitle);
+    const excerpt = readerSummary || bodyShort.slice(0, 1200) || displayTitle;
     // Map source name to category
-    const category = await this.detectCategory(displayTitle);
+    const category =
+      (await this.detectCategory(displayTitle, source.name))
+      ?? (await this.prisma.category.findFirst({ where: { slug: 'india' } }));
     if (!category) return false;
 
     const article = await this.prisma.article.create({
       data: {
         title: displayTitle,
         slug,
+        bodyShort: bodyShort || undefined,
+        bodyMedium: bodyMedium || undefined,
         body: {
           type: 'doc',
-          // Store image + video URLs in body metadata for frontend use
-          ...(imageUrl && { imageUrl, imageCredit: 'Image sourced from original publisher. All rights belong to respective owners.' }),
-          content: this.rawHtmlToDocContent(rawBodyForArticle),
+          ...(imageUrl && { imageUrl, imageCredit: 'Story image' }),
+          ...(readerSummary && { aiVideo: { summary: readerSummary } }),
+          content:
+            paragraphs.length > 0
+              ? paragraphs.map((text) => ({
+                  type: 'paragraph' as const,
+                  content: [{ type: 'text' as const, text }],
+                }))
+              : this.rawHtmlToDocContent(rawBodyForArticle),
         },
         excerpt,
         status: ArticleStatus.PUBLISHED,
@@ -547,7 +698,7 @@ export class IngestionCronService {
           sourceTitle: displayTitle,
           sourceName: source.name,
           fetchedAt: new Date(),
-          attributionNote: 'Syndicated summary; original reporting at source.',
+          attributionNote: 'Ingested via RSS; internal record only.',
         })
         .catch((err) =>
           this.logger.warn(`Provenance for raw article ${article.id}: ${(err as Error).message}`),
@@ -630,8 +781,8 @@ export class IngestionCronService {
     });
   }
 
-  private async detectCategory(title: string): Promise<{ id: string } | null> {
-    const slug = this.detectCategorySlug(title);
+  private async detectCategory(title: string, sourceName = ''): Promise<{ id: string } | null> {
+    const slug = this.detectCategorySlug(title, sourceName);
     if (!slug) return null;
     return this.prisma.category.findFirst({ where: { slug }, select: { id: true } });
   }

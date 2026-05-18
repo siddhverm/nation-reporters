@@ -14,6 +14,7 @@ import {
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { articleMatchesLanguage, normalizeUiLanguage } from '@/lib/ui-language';
 
 interface Article {
   id: string; title: string; slug: string;
@@ -58,17 +59,23 @@ export default function CountryPage() {
       const requested = typeof window !== 'undefined'
         ? ((preferredLang || localStorage.getItem('nr-lang')) ?? resolveCountryDefaultLanguage(country ?? null))
         : ((preferredLang || resolveCountryDefaultLanguage(country ?? null)) ?? 'en');
-      const resolvedLang = allowedLanguages.has((requested ?? '').toLowerCase())
-        ? (requested ?? 'en').toLowerCase()
-        : resolveCountryDefaultLanguage(country ?? null);
-      setLocalLanguage(resolvedLang);
+      const requestedNorm = normalizeUiLanguage(requested ?? 'en');
+      let feedLang = [...allowedLanguages].some((c) => normalizeUiLanguage(c) === requestedNorm)
+        ? requestedNorm
+        : normalizeUiLanguage(resolveCountryDefaultLanguage(country ?? null));
       if (typeof window !== 'undefined') {
-        localStorage.setItem('nr-lang', resolvedLang);
+        const existing = normalizeUiLanguage(localStorage.getItem('nr-lang') ?? '');
+        if (existing && allowedLanguages.has(existing)) {
+          feedLang = existing;
+        } else {
+          localStorage.setItem('nr-lang', feedLang);
+        }
       }
+      setLocalLanguage(feedLang);
 
       try {
         const countryFeed = await fetchJsonFromApi<{ local?: Article[]; global?: Article[] }>(
-          `/articles/country-feed?localLang=${encodeURIComponent(resolvedLang)}&globalLang=en&localLimit=20&globalLimit=20`,
+          `/articles/country-feed?localLang=${encodeURIComponent(feedLang)}&globalLang=en&localLimit=20&globalLimit=20`,
           { signal: controller.signal },
         );
         const dedupedLocal = mergeUnique(countryFeed.local ?? []);
@@ -83,13 +90,11 @@ export default function CountryPage() {
 
         // Fallback: latest published articles
         const d = await fetchJsonFromApi<{ data?: Article[] }>(
-          '/articles?status=PUBLISHED&limit=30',
+          '/articles?status=PUBLISHED&limit=30&omitBody=true',
           { signal: controller.signal },
         );
         const fallbackRaw = d.data ?? [];
-        const fallback = fallbackRaw.filter(
-          (a) => (a.language ?? 'en').toLowerCase() === resolvedLang.toLowerCase(),
-        );
+        const fallback = fallbackRaw.filter((a) => articleMatchesLanguage(a.language, feedLang));
         if (fallback.length > 0) {
           setLocalArticles(fallback);
           setGlobalArticles([]);
