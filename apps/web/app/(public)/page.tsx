@@ -7,7 +7,7 @@ import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
-import { normalizeUiLanguage, withUiLanguagePath } from '@/lib/ui-language';
+import { withUiLanguagePath } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 import { fetchArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 
@@ -103,9 +103,7 @@ export default function HomePage() {
 
       const fetchArticles = async (): Promise<Article[]> => {
         try {
-          const { articles, notice } = await fetchArticlesForUiLanguage(lang, {
-            strictLanguageOnly: lang !== 'en',
-          });
+          const { articles, notice } = await fetchArticlesForUiLanguage(lang);
           if (notice) setDataNotice(notice);
           else setDataNotice(null);
           if (articles.length > 0) return withFallbackArticles(articles as Article[]);
@@ -161,18 +159,17 @@ export default function HomePage() {
   // Build per-category buckets — only show articles that actually belong to each category
   const catIdToSlug = new Map(categories.map((c) => [c.id, c.slug]));
 
-  const langArticles = articles.filter((a) =>
-    uiLang === 'en' ? true : normalizeUiLanguage(a.language) === uiLang,
-  );
+  // `fetchArticlesForUiLanguage` already applies language + fallback rules.
+  const displayArticles = articles;
 
   const sections = new Map<string, Article[]>();
   for (const slug of SECTIONS) {
-    const mapped = langArticles.filter((a) => catIdToSlug.get(a.categoryId ?? '') === slug);
-    const liveFilled = fillSectionFromLivePool(mapped, langArticles, MIN_SECTION);
+    const mapped = displayArticles.filter((a) => catIdToSlug.get(a.categoryId ?? '') === slug);
+    const liveFilled = fillSectionFromLivePool(mapped, displayArticles, MIN_SECTION);
     sections.set(slug, fillSectionWithFallback(slug, liveFilled, MIN_SECTION));
   }
 
-  const breaking = langArticles.slice(0, 8);
+  const breaking = displayArticles.slice(0, 8);
 
   return (
     <div className="bg-gray-50 min-h-screen">
@@ -223,30 +220,30 @@ export default function HomePage() {
             <div className="animate-pulse bg-gray-200 rounded-xl h-80 lg:col-span-2" />
             <div className="space-y-3">{[0,1,2].map((i) => <div key={i} className="animate-pulse bg-gray-200 rounded-xl h-24" />)}</div>
           </div>
-        ) : langArticles.length > 0 ? (
+        ) : displayArticles.length > 0 ? (
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
-            <Link href={`/article/${langArticles[0].slug}`}
+            <Link href={`/article/${displayArticles[0].slug}`}
               className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
-              <Image src={getArticleImage(langArticles[0].slug, undefined, 'hero', getPreferredArticleImage(langArticles[0]))}
-                alt={safeArticleText(langArticles[0].title, 'Article')} fill className="object-cover" unoptimized priority />
+              <Image src={getArticleImage(displayArticles[0].slug, undefined, 'hero', getPreferredArticleImage(displayArticles[0]))}
+                alt={safeArticleText(displayArticles[0].title, 'Article')} fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
                 <span className="bg-signal text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded mb-2 inline-block">Top Story</span>
                 <h2 className="text-white font-serif font-bold text-2xl leading-snug group-hover:text-signal transition-colors line-clamp-3">
-                  {safeArticleText(langArticles[0].title)}
+                  {safeArticleText(displayArticles[0].title)}
                 </h2>
-                {langArticles[0].excerpt && (
-                  <p className="text-blue-200 text-sm mt-1 line-clamp-2">{articleListingTeaser(langArticles[0])}</p>
+                {displayArticles[0].excerpt && (
+                  <p className="text-blue-200 text-sm mt-1 line-clamp-2">{articleListingTeaser(displayArticles[0])}</p>
                 )}
-                {langArticles[0].publishedAt && (
+                {displayArticles[0].publishedAt && (
                   <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">
-                    <Clock className="h-3 w-3" />{timeAgo(langArticles[0].publishedAt)}
+                    <Clock className="h-3 w-3" />{timeAgo(displayArticles[0].publishedAt)}
                   </p>
                 )}
               </div>
             </Link>
             <div className="flex flex-col gap-3">
-              {langArticles.slice(1, 4).map((a) => (
+              {displayArticles.slice(1, 4).map((a) => (
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
                   <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
@@ -274,7 +271,7 @@ export default function HomePage() {
         )}
 
         {/* Latest news grid */}
-        {!loading && langArticles.length > 4 && (
+        {!loading && displayArticles.length > 4 && (
           <section className="mb-10">
             <div className="flex items-center justify-between mb-3">
               <h2 className="text-base font-black text-navy uppercase tracking-widest border-l-4 border-brand pl-3">Latest News</h2>
@@ -283,7 +280,7 @@ export default function HomePage() {
               </Link>
             </div>
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-3">
-              {langArticles.slice(4, 24).map((a) => (
+              {displayArticles.slice(4, 24).map((a) => (
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-md transition-all overflow-hidden">
                   <div className="relative h-36 overflow-hidden">

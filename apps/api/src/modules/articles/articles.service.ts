@@ -8,7 +8,7 @@ import { RedisCacheService } from '../../common/cache/redis-cache.service';
 import { AuditModule } from '../audit/audit.module';
 import { assertTransition } from './status.machine';
 import { CreateArticleDto } from './dto/create-article.dto';
-import { normalizeLanguageCode } from '../ai/language-resolution.util';
+import { inferLangFromText, normalizeLanguageCode } from '../ai/language-resolution.util';
 
 type CountryFeedResult = {
   localLang: string;
@@ -208,24 +208,57 @@ export class ArticlesService {
       ? [{ publishedAt: 'desc' }, { createdAt: 'desc' }]
       : { createdAt: 'desc' };
 
-    const [data, total] = await Promise.all([
-      omitBody
-        ? this.prisma.article.findMany({
-          where,
-          skip: (p - 1) * take,
-          take,
+    const select = omitBody ? this.buildPublicListSelect(hasVideo) : undefined;
+    const include = omitBody
+      ? undefined
+      : { tags: { include: { tag: true } }, riskAssessment: true, mediaAssets: { take: 3 } };
+
+    let data = omitBody
+      ? await this.prisma.article.findMany({
+        where,
+        skip: (p - 1) * take,
+        take,
+        orderBy,
+        select: select!,
+      })
+      : await this.prisma.article.findMany({
+        where,
+        skip: (p - 1) * take,
+        take,
+        orderBy: { createdAt: 'desc' },
+        include: include!,
+      });
+
+    if (languageNorm && data.length < take) {
+      const { language: _lang, ...whereWithoutLang } = where;
+      const poolWhere: Prisma.ArticleWhereInput = { ...whereWithoutLang };
+      const pool = omitBody
+        ? await this.prisma.article.findMany({
+          where: poolWhere,
+          take: Math.min(take * 3, 200),
           orderBy,
-          select: this.buildPublicListSelect(hasVideo),
+          select: select!,
         })
-        : this.prisma.article.findMany({
-          where,
-          skip: (p - 1) * take,
-          take,
+        : await this.prisma.article.findMany({
+          where: poolWhere,
+          take: Math.min(take * 3, 200),
           orderBy: { createdAt: 'desc' },
-          include: { tags: { include: { tag: true } }, riskAssessment: true, mediaAssets: { take: 3 } },
-        }),
-      this.prisma.article.count({ where }),
-    ]);
+          include: include!,
+        });
+      const seen = new Set(data.map((a) => a.id));
+      for (const row of pool) {
+        if (seen.has(row.id)) continue;
+        const tagged = normalizeLanguageCode((row as { language?: string }).language);
+        const inferred = inferLangFromText(`${(row as { title?: string }).title ?? ''}`);
+        if (tagged === languageNorm || inferred === languageNorm) {
+          seen.add(row.id);
+          data.push(row);
+          if (data.length >= take) break;
+        }
+      }
+    }
+
+    const total = await this.prisma.article.count({ where });
     const page = p;
     const limit = take;
 

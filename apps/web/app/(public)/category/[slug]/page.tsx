@@ -8,7 +8,7 @@ import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { fetchCategoryArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 import { safeArticleText } from '@/lib/rss-plain-text';
-import { articleMatchesLanguage, withUiLanguagePath } from '@/lib/ui-language';
+import { withUiLanguagePath } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 
 interface Article {
@@ -81,10 +81,9 @@ export default function CategoryPage() {
         categoryId: cat?.id,
         sectionLabel: label,
         excludeCategoryId: slug === 'india' ? worldCat?.id : undefined,
-        strictLanguageOnly: lang !== 'en',
       });
 
-      const list = (fetched as Article[]).filter((a) => articleMatchesLanguage(a.language, lang));
+      const list = fetched as Article[];
       if (list.length > 0 && typeof window !== 'undefined') {
         localStorage.setItem(cacheKey, JSON.stringify(list.slice(0, 120)));
       }

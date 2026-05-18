@@ -58,14 +58,8 @@ export async function fetchArticlesForUiLanguage(
       return { articles: primary, notice: null };
     }
 
-    if (strict) {
-      if (primary.length > 0) {
-        return { articles: primary, notice: null };
-      }
-      return {
-        articles: [],
-        notice: `No published stories in ${lang.toUpperCase()} yet. Run ingestion or pick another language.`,
-      };
+    if (strict && primary.length > 0) {
+      return { articles: primary, notice: null };
     }
 
     if (primary.length > 0 && lang !== 'en') {
@@ -179,16 +173,10 @@ export async function fetchCategoryArticlesForUiLanguage(
       return { articles: primary.slice(0, 150), notice: null };
     }
 
-    if (strict) {
-      if (primary.length > 0) {
-        return {
-          articles: primary.slice(0, 150),
-          notice: `Showing ${primary.length} ${lang.toUpperCase()} stories in ${label}.`,
-        };
-      }
+    if (strict && primary.length > 0) {
       return {
-        articles: [],
-        notice: `No ${lang.toUpperCase()} stories in ${label} yet. Try Home or another section.`,
+        articles: primary.slice(0, 150),
+        notice: `Showing ${primary.length} ${lang.toUpperCase()} stories in ${label}.`,
       };
     }
 

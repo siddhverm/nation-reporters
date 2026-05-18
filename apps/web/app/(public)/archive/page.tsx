@@ -3,7 +3,7 @@ import { useEffect, useState, useCallback } from 'react';
 import Link from 'next/link';
 import { Clock, ChevronRight, ChevronLeft, Archive, Search } from 'lucide-react';
 import { fetchJsonFromApi } from '@/lib/api-client';
-import { articleMatchesLanguage, normalizeUiLanguage } from '@/lib/ui-language';
+import { normalizeUiLanguage } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 import { safeArticleText } from '@/lib/rss-plain-text';
 
@@ -75,9 +75,8 @@ export default function ArchivePage() {
     try {
       const data = await fetchJsonFromApi<PaginatedResponse | Article[]>(`/articles?${params}`);
       const raw = Array.isArray(data) ? data : (data.data ?? []);
-      const list = raw.filter((a) => articleMatchesLanguage(a.language, lang));
-      setArticles(list);
-      setTotal(typeof data === 'object' && !Array.isArray(data) && 'total' in data ? data.total : list.length);
+      setArticles(raw);
+      setTotal(typeof data === 'object' && !Array.isArray(data) && 'total' in data ? data.total : raw.length);
     } catch {
       setArticles([]);
       setTotal(0);
