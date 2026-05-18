@@ -87,7 +87,7 @@ async function proxy(req: NextRequest, params: { path: string[] }) {
 
       const bytes = await upstream.arrayBuffer();
 
-      if (method === 'GET') {
+      if (method === 'GET' && shouldCacheProxyResponse(path, query, bytes)) {
         proxyCache.set(cacheKey, {
           status: upstream.status,
           headers: Array.from(responseHeaders.entries()),

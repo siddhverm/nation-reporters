@@ -14,7 +14,7 @@ import {
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
-import { articleMatchesLanguage, normalizeUiLanguage } from '@/lib/ui-language';
+import { articleMatchesLanguageOrScript, normalizeUiLanguage } from '@/lib/ui-language';
 
 interface Article {
   id: string; title: string; slug: string;
@@ -94,7 +94,9 @@ export default function CountryPage() {
           { signal: controller.signal },
         );
         const fallbackRaw = d.data ?? [];
-        const fallback = fallbackRaw.filter((a) => articleMatchesLanguage(a.language, feedLang));
+        const fallback = fallbackRaw.filter((a) =>
+          articleMatchesLanguageOrScript(a.language, a.title, feedLang),
+        );
         if (fallback.length > 0) {
           setLocalArticles(fallback);
           setGlobalArticles([]);

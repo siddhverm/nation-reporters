@@ -14,6 +14,37 @@ export function articleMatchesLanguage(
   return normalizeUiLanguage(articleLang) === normalizeUiLanguage(uiLang);
 }
 
+/** Mirrors API `inferLangFromText` — script detection for mis-tagged RSS rows. */
+export function inferLangFromText(text: string): string | null {
+  const t = text ?? '';
+  if (/[\u0980-\u09FF]/.test(t)) return 'bn';
+  if (/[\u0A80-\u0AFF]/.test(t)) return 'gu';
+  if (/[\u0A00-\u0A7F]/.test(t)) return 'pa';
+  if (/[\u0B80-\u0BFF]/.test(t)) return 'ta';
+  if (/[\u0C00-\u0C7F]/.test(t)) return 'te';
+  if (/[\u0C80-\u0CFF]/.test(t)) return 'kn';
+  if (/[\u0D00-\u0D7F]/.test(t)) return 'ml';
+  if (/[ٹڈڑںےپچژگ]/.test(t)) return 'ur';
+  if (/[\u0600-\u06FF]/.test(t)) return 'ar';
+  if (/[\u0900-\u097F]/.test(t)) return 'hi';
+  if (/[\u3040-\u30FF]/.test(t)) return 'ja';
+  if (/[\uAC00-\uD7AF]/.test(t)) return 'ko';
+  if (/[\u0400-\u04FF]/.test(t)) return 'ru';
+  if (/[\u4E00-\u9FFF]/.test(t)) return 'zh';
+  return null;
+}
+
+/** Match DB language tag OR headline script (feeds often stored as `en`). */
+export function articleMatchesLanguageOrScript(
+  articleLang: string | null | undefined,
+  title: string | null | undefined,
+  uiLang: string | null | undefined,
+): boolean {
+  const target = normalizeUiLanguage(uiLang);
+  if (articleMatchesLanguage(articleLang, target)) return true;
+  return inferLangFromText(title ?? '') === target;
+}
+
 /** Reader language from localStorage (client only). */
 export function getStoredUiLanguage(): string {
   if (typeof window === 'undefined') return 'en';

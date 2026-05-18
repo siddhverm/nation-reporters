@@ -87,12 +87,25 @@ export class ArticlesService {
       },
     } satisfies Prisma.ArticleSelect;
 
-    const localRaw = await this.prisma.article.findMany({
+    const localTagged = await this.prisma.article.findMany({
       where: { ...baseWhere, language: localLang },
       orderBy: { publishedAt: 'desc' },
       take: localLimit * 3,
       select: countryFeedSelect,
     });
+    const localSeen = new Set(localTagged.map((a) => a.id));
+    const localPool = localTagged.length >= localLimit
+      ? []
+      : await this.prisma.article.findMany({
+        where: baseWhere,
+        orderBy: { publishedAt: 'desc' },
+        take: localLimit * 6,
+        select: countryFeedSelect,
+      });
+    const localScript = localPool.filter(
+      (a) => !localSeen.has(a.id) && inferLangFromText(a.title ?? '') === localLang,
+    );
+    const localRaw = [...localTagged, ...localScript];
     const globalRaw = localLang === globalLang
       ? []
       : await this.prisma.article.findMany({
@@ -196,11 +209,10 @@ export class ArticlesService {
     const take = Math.min(maxTake, Math.max(1, rawLimit));
     const { status, categoryId, authorId, language, hasVideo, omitBody } = filters;
     const languageNorm = language ? normalizeLanguageCode(language) : undefined;
-    const where: Prisma.ArticleWhereInput = {
+    const baseWhere: Prisma.ArticleWhereInput = {
       ...(status && { status }),
       ...(categoryId && { categoryId }),
       ...(authorId && { authorId }),
-      ...(languageNorm && { language: languageNorm }),
       ...(hasVideo && { mediaAssets: { some: { type: MediaType.VIDEO } } }),
     };
 
@@ -213,52 +225,66 @@ export class ArticlesService {
       ? undefined
       : { tags: { include: { tag: true } }, riskAssessment: true, mediaAssets: { take: 3 } };
 
-    let data = omitBody
-      ? await this.prisma.article.findMany({
-        where,
+    const matchesLanguageFilter = (row: { language?: string | null; title?: string | null }) => {
+      if (!languageNorm) return true;
+      const tagged = normalizeLanguageCode(row.language);
+      if (tagged === languageNorm) return true;
+      return inferLangFromText(row.title ?? '') === languageNorm;
+    };
+
+    let data: Array<{ id: string; language?: string | null; title?: string | null; publishedAt?: Date | null }>;
+    let total: number;
+
+    if (languageNorm && omitBody) {
+      const taggedWhere: Prisma.ArticleWhereInput = { ...baseWhere, language: languageNorm };
+      const tagged = await this.prisma.article.findMany({
+        where: taggedWhere,
         skip: (p - 1) * take,
         take,
         orderBy,
         select: select!,
-      })
-      : await this.prisma.article.findMany({
-        where,
-        skip: (p - 1) * take,
-        take,
-        orderBy: { createdAt: 'desc' },
-        include: include!,
       });
-
-    if (languageNorm && data.length < take) {
-      const { language: _lang, ...whereWithoutLang } = where;
-      const poolWhere: Prisma.ArticleWhereInput = { ...whereWithoutLang };
-      const pool = omitBody
+      if (tagged.length >= take) {
+        data = tagged;
+        total = await this.prisma.article.count({ where: taggedWhere });
+      } else {
+        const seen = new Set(tagged.map((r) => r.id));
+        const poolTake = Math.min(Math.max(take * 4, 200), 400);
+        const pool = await this.prisma.article.findMany({
+          where: baseWhere,
+          take: poolTake,
+          orderBy,
+          select: select!,
+        });
+        const scriptOnly = pool.filter(
+          (r) => !seen.has(r.id) && matchesLanguageFilter(r)
+            && normalizeLanguageCode(r.language) !== languageNorm,
+        );
+        data = [...tagged, ...scriptOnly].slice(0, take);
+        total = tagged.length + scriptOnly.length;
+      }
+    } else {
+      const where: Prisma.ArticleWhereInput = {
+        ...baseWhere,
+        ...(languageNorm && { language: languageNorm }),
+      };
+      data = omitBody
         ? await this.prisma.article.findMany({
-          where: poolWhere,
-          take: Math.min(take * 3, 200),
+          where,
+          skip: (p - 1) * take,
+          take,
           orderBy,
           select: select!,
         })
         : await this.prisma.article.findMany({
-          where: poolWhere,
-          take: Math.min(take * 3, 200),
+          where,
+          skip: (p - 1) * take,
+          take,
           orderBy: { createdAt: 'desc' },
           include: include!,
         });
-      const seen = new Set(data.map((a) => a.id));
-      for (const row of pool) {
-        if (seen.has(row.id)) continue;
-        const tagged = normalizeLanguageCode((row as { language?: string }).language);
-        const inferred = inferLangFromText(`${(row as { title?: string }).title ?? ''}`);
-        if (tagged === languageNorm || inferred === languageNorm) {
-          seen.add(row.id);
-          data.push(row);
-          if (data.length >= take) break;
-        }
-      }
+      total = await this.prisma.article.count({ where });
     }
-
-    const total = await this.prisma.article.count({ where });
     const page = p;
     const limit = take;
 

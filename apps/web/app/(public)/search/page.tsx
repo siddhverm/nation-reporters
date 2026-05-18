@@ -4,7 +4,7 @@ import Link from 'next/link';
 import { Search as SearchIcon } from 'lucide-react';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { formatListingExcerpt } from '@/lib/reader-summary';
-import { articleMatchesLanguage, normalizeUiLanguage } from '@/lib/ui-language';
+import { articleMatchesLanguageOrScript, normalizeUiLanguage } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 import { safeArticleText } from '@/lib/rss-plain-text';
 
@@ -31,7 +31,9 @@ export default function SearchPage() {
       const data = await fetchJsonFromApi<{ hits: Hit[] }>(
         `/search?q=${encodeURIComponent(query)}&lang=${langQ}`,
       );
-      const list = (data.hits ?? []).filter((h) => articleMatchesLanguage(h.language, langQ));
+      const list = (data.hits ?? []).filter((h) =>
+        articleMatchesLanguageOrScript(h.language, h.title, langQ),
+      );
       setHits(list);
     } finally {
       setLoading(false);

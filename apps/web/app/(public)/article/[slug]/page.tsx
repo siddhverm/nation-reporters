@@ -15,7 +15,11 @@ import {
 } from '@/lib/rss-plain-text';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { formatListingExcerpt, resolveArticleReaderSummary } from '@/lib/reader-summary';
-import { articleMatchesLanguage, normalizeUiLanguage, withUiLanguagePath } from '@/lib/ui-language';
+import {
+  articleMatchesLanguageOrScript,
+  normalizeUiLanguage,
+  withUiLanguagePath,
+} from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 
 interface Article {
@@ -516,7 +520,7 @@ export default function ArticlePage() {
       const newLang = normalizeUiLanguage(
         (e as CustomEvent<{ lang?: string }>).detail?.lang ?? uiLang,
       );
-      if (article && !articleMatchesLanguage(article.language, newLang)) {
+      if (article && !articleMatchesLanguageOrScript(article.language, article.title, newLang)) {
         router.push(withUiLanguagePath('/', newLang));
       }
     };
@@ -539,7 +543,7 @@ export default function ArticlePage() {
         const raw = Array.isArray(d) ? d : (d.data ?? []);
         setMoreInLang(
           raw.filter(
-            (a) => a.id !== article.id && articleMatchesLanguage(a.language, uiLang),
+            (a) => a.id !== article.id && articleMatchesLanguageOrScript(a.language, a.title, uiLang),
           ),
         );
       })
