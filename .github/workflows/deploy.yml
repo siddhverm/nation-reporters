@@ -80,5 +80,9 @@ jobs:
             DOCKER_REGISTRY=ghcr.io/${{ github.repository_owner }} \
             docker compose -f docker-compose.prod.yml up -d --no-build
 
+            # Wait for API, then show regional inventory (bootstrap runs ~15s after start)
+            sleep 25
+            docker compose -f docker-compose.prod.yml exec -T api wget -qO- http://127.0.0.1:3001/api/v1/health || true
+
             # Clean up old images
             docker image prune -f

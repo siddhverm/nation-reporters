@@ -7,14 +7,31 @@
 import { NestFactory } from '@nestjs/core';
 import { AppModule } from '../app.module';
 import { IngestionCronService } from '../modules/ingestion/cron/ingestion-cron.service';
+import { REGIONAL_FEED_SOURCES, REGIONAL_TARGET_LANGS } from '../modules/ingestion/regional-feed-sources';
 import { PrismaService } from '../prisma/prisma.service';
 
-const TARGET_LANGS = ['bn', 'ta', 'gu', 'pa', 'ur'] as const;
+const TARGET_LANGS = [...REGIONAL_TARGET_LANGS, 'gu'] as const;
 
 async function main() {
   const app = await NestFactory.createApplicationContext(AppModule, { logger: ['error', 'warn', 'log'] });
   const prisma = app.get(PrismaService);
   const cron = app.get(IngestionCronService);
+
+  for (const src of REGIONAL_FEED_SOURCES) {
+    await prisma.ingestedSource.upsert({
+      where: { feedUrl: src.feedUrl },
+      update: { isActive: true, language: src.language, isTrusted: src.isTrusted },
+      create: {
+        name: src.name,
+        feedUrl: src.feedUrl,
+        type: 'rss',
+        language: src.language,
+        isActive: true,
+        isTrusted: src.isTrusted,
+        rightsMetadata: { note: 'AI-rewritten summaries only. Original content credited to source.' },
+      },
+    });
+  }
 
   await prisma.ingestedSource.updateMany({
     where: { language: { in: [...TARGET_LANGS] } },
