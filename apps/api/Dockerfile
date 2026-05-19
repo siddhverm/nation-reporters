@@ -17,5 +17,7 @@ COPY --from=builder /app/apps/api/dist ./dist
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/api/prisma ./prisma
 COPY --from=builder /app/apps/api/package.json ./
+# Regenerate client on Alpine so query engine matches linux-musl-openssl-3.0.x at runtime
+RUN npx prisma generate --schema=prisma/schema.prisma
 EXPOSE 3001
 CMD ["node", "dist/main"]
