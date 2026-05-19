@@ -18,24 +18,28 @@ export class RegionalIngestionBootstrapService implements OnModuleInit {
   ) {}
 
   onModuleInit() {
-    setTimeout(() => void this.bootstrapIfNeeded(), 15_000);
+    setTimeout(() => void this.bootstrapIfNeeded(), 8_000);
   }
 
   private async bootstrapIfNeeded() {
     try {
-      const regionalCount = await this.prisma.article.count({
+      const counts = await this.prisma.article.groupBy({
+        by: ['language'],
         where: {
           status: ArticleStatus.PUBLISHED,
           language: { in: [...REGIONAL_TARGET_LANGS] },
         },
+        _count: { _all: true },
       });
-      if (regionalCount >= 8) {
-        this.logger.log(`Regional inventory OK (${regionalCount} published articles)`);
+      const byLang = Object.fromEntries(counts.map((c) => [c.language, c._count._all]));
+      const needsBootstrap = REGIONAL_TARGET_LANGS.some((l) => (byLang[l] ?? 0) < 3);
+      if (!needsBootstrap) {
+        this.logger.log(`Regional inventory OK: ${JSON.stringify(byLang)}`);
         return;
       }
 
       this.logger.warn(
-        `Regional inventory low (${regionalCount}) — upserting feeds and ingesting ${REGIONAL_TARGET_LANGS.join(', ')}`,
+        `Regional inventory low ${JSON.stringify(byLang)} — upserting feeds and ingesting ${REGIONAL_TARGET_LANGS.join(', ')}`,
       );
 
       for (const src of REGIONAL_FEED_SOURCES) {
@@ -67,7 +71,7 @@ export class RegionalIngestionBootstrapService implements OnModuleInit {
       let totalIngested = 0;
       for (const source of sources) {
         try {
-          const { ingested } = await this.ingestion.fetchSource(source, { maxItemsPerSource: 15 });
+          const { ingested } = await this.ingestion.fetchSource(source, { maxItemsPerSource: 20 });
           totalIngested += ingested;
           this.logger.log(`Regional bootstrap: ${source.name} (${source.language}) +${ingested}`);
         } catch (err) {

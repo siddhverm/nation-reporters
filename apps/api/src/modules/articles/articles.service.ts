@@ -225,13 +225,6 @@ export class ArticlesService {
       ? undefined
       : { tags: { include: { tag: true } }, riskAssessment: true, mediaAssets: { take: 3 } };
 
-    const matchesLanguageFilter = (row: { language?: string | null; title?: string | null }) => {
-      if (!languageNorm) return true;
-      const tagged = normalizeLanguageCode(row.language);
-      if (tagged === languageNorm) return true;
-      return inferLangFromText(row.title ?? '') === languageNorm;
-    };
-
     let data: Array<{ id: string; language?: string | null; title?: string | null; publishedAt?: Date | null }>;
     let total: number;
 
@@ -244,24 +237,26 @@ export class ArticlesService {
         orderBy,
         select: select!,
       });
-      if (tagged.length >= take) {
-        data = tagged;
-        total = await this.prisma.article.count({ where: taggedWhere });
-      } else {
-        const seen = new Set(tagged.map((r) => r.id));
-        const poolTake = Math.min(Math.max(take * 4, 200), 400);
+      data = tagged;
+      total = await this.prisma.article.count({ where: taggedWhere });
+
+      if (data.length < take) {
+        const seen = new Set(data.map((r) => r.id));
+        const poolTake = Math.min(Math.max(take * 6, 300), 600);
         const pool = await this.prisma.article.findMany({
           where: baseWhere,
           take: poolTake,
           orderBy,
           select: select!,
         });
-        const scriptOnly = pool.filter(
-          (r) => !seen.has(r.id) && matchesLanguageFilter(r)
-            && normalizeLanguageCode(r.language) !== languageNorm,
-        );
-        data = [...tagged, ...scriptOnly].slice(0, take);
-        total = tagged.length + scriptOnly.length;
+        for (const row of pool) {
+          if (seen.has(row.id)) continue;
+          if (inferLangFromText(row.title ?? '') !== languageNorm) continue;
+          seen.add(row.id);
+          data.push(row);
+          if (data.length >= take) break;
+        }
+        total = Math.max(total, data.length);
       }
     } else {
       const where: Prisma.ArticleWhereInput = {

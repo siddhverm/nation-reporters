@@ -33,25 +33,17 @@ function mergeUnique(primary: FeedArticle[], extra: FeedArticle[]): FeedArticle[
   return out;
 }
 
-function matchesLang(article: FeedArticle, lang: string): boolean {
-  return articleMatchesLanguageOrScript(article.language, article.title, lang);
-}
-
-function sortRegionalFirst(list: FeedArticle[], lang: string): FeedArticle[] {
-  const target = normalizeUiLanguage(lang);
-  return [...list].sort((a, b) => {
-    const aExact = normalizeUiLanguage(a.language) === target ? 0 : 1;
-    const bExact = normalizeUiLanguage(b.language) === target ? 0 : 1;
-    if (aExact !== bExact) return aExact - bExact;
-    const at = a.publishedAt ? new Date(a.publishedAt).getTime() : 0;
-    const bt = b.publishedAt ? new Date(b.publishedAt).getTime() : 0;
-    return bt - at;
-  });
+/** Same API path Hindi / Marathi / English use — trust server language + script matching. */
+async function fetchPublishedByLanguage(lang: string): Promise<FeedArticle[]> {
+  return parseList(
+    await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
+      `/articles?status=PUBLISHED&limit=150&language=${lang}&omitBody=true`,
+    ),
+  );
 }
 
 /**
- * Load published articles for the UI language.
- * Regional stories first; English fills gaps when inventory is thin.
+ * Load published articles for the UI language (same flow as Hindi/Marathi/English).
  */
 export async function fetchArticlesForUiLanguage(
   langInput: string,
@@ -60,85 +52,46 @@ export async function fetchArticlesForUiLanguage(
   const lang = normalizeUiLanguage(langInput);
 
   try {
-    const primary = sortRegionalFirst(
-      parseList(
-        await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
-          `/articles?status=PUBLISHED&limit=150&language=${lang}&omitBody=true`,
-        ),
-      ).filter((a) => matchesLang(a, lang)),
-      lang,
-    );
-
-    if (primary.length >= 12) {
-      return { articles: primary, notice: null };
-    }
-
-    if (primary.length > 0 && lang !== 'en') {
-      const en = parseList(
-        await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
-          '/articles?status=PUBLISHED&limit=150&language=en&omitBody=true',
-        ),
-      ).filter((a) => matchesLang(a, 'en'));
-      return {
-        articles: mergeUnique(primary, en).slice(0, 150),
-        notice: `Showing ${primary.length} in ${lang.toUpperCase()} plus English until more ${lang.toUpperCase()} feeds are ingested.`,
-      };
-    }
-
-    if (primary.length === 0 && lang !== 'en') {
-      const enOnly = parseList(
-        await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
-          '/articles?status=PUBLISHED&limit=150&language=en&omitBody=true',
-        ),
-      ).filter((a) => matchesLang(a, 'en'));
-      if (enOnly.length > 0) {
-        return {
-          articles: enOnly,
-          notice: `No ${lang.toUpperCase()} stories found yet. Showing English until regional feeds catch up.`,
-        };
-      }
-    }
-
+    const primary = await fetchPublishedByLanguage(lang);
     if (primary.length > 0) {
       return { articles: primary, notice: null };
     }
-  } catch {
-    /* try unfiltered pool */
-  }
 
-  try {
-    const pool = parseList(
-      await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
-        '/articles?status=PUBLISHED&limit=200&omitBody=true',
-      ),
-    );
-    const matched = sortRegionalFirst(pool.filter((a) => matchesLang(a, lang)), lang);
-    if (matched.length > 0) {
-      return { articles: matched.slice(0, 150), notice: null };
+    if (lang !== 'en') {
+      const en = await fetchPublishedByLanguage('en');
+      if (en.length > 0) {
+        return {
+          articles: en,
+          notice: `No ${lang.toUpperCase()} stories in the feed yet. Showing English until regional ingestion completes.`,
+        };
+      }
+
+      const pool = parseList(
+        await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
+          '/articles?status=PUBLISHED&limit=200&omitBody=true',
+        ),
+      );
+      const scriptMatched = pool.filter((a) =>
+        articleMatchesLanguageOrScript(a.language, a.title, lang),
+      );
+      if (scriptMatched.length > 0) {
+        return { articles: scriptMatched.slice(0, 150), notice: null };
+      }
     }
+
+    return {
+      articles: [],
+      notice:
+        lang === 'en'
+          ? 'No published stories available. Run ingestion from Admin → Sources.'
+          : `No ${lang.toUpperCase()} stories yet. Restart the API to trigger regional feed ingestion.`,
+    };
   } catch {
-    /* ignore */
+    return {
+      articles: [],
+      notice: 'Live feed temporarily unavailable. Check that the API is running.',
+    };
   }
-
-  return {
-    articles: [],
-    notice:
-      lang === 'en'
-        ? 'No published stories available. Run ingestion from Admin → Sources.'
-        : `No ${lang.toUpperCase()} stories found. Run ingestion or try another language.`,
-  };
-}
-
-async function fetchLanguagePool(lang: string, categoryId?: string): Promise<FeedArticle[]> {
-  const catQ = categoryId ? `&categoryId=${categoryId}` : '';
-  return sortRegionalFirst(
-    parseList(
-      await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
-        `/articles?status=PUBLISHED&limit=150&language=${lang}&omitBody=true${catQ}`,
-      ),
-    ).filter((a) => matchesLang(a, lang)),
-    lang,
-  );
 }
 
 export async function fetchCategoryArticlesForUiLanguage(
@@ -152,47 +105,43 @@ export async function fetchCategoryArticlesForUiLanguage(
 ): Promise<{ articles: FeedArticle[]; notice: string | null }> {
   const lang = normalizeUiLanguage(langInput);
   const label = options.sectionLabel ?? 'this section';
-  const min = 12;
+  const catQ = options.categoryId ? `&categoryId=${options.categoryId}` : '';
 
   const applyExclusions = (list: FeedArticle[]) => {
     if (!options.excludeCategoryId) return list;
     return list.filter((a) => a.categoryId !== options.excludeCategoryId);
   };
 
+  const fetchForLang = async (code: string) =>
+    applyExclusions(
+      parseList(
+        await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
+          `/articles?status=PUBLISHED&limit=150&language=${code}&omitBody=true${catQ}`,
+        ),
+      ),
+    );
+
   try {
-    let primary = applyExclusions(await fetchLanguagePool(lang, options.categoryId));
+    let primary = await fetchForLang(lang);
 
-    if (primary.length < min && options.categoryId) {
-      const broad = applyExclusions(await fetchLanguagePool(lang));
-      primary = mergeUnique(primary, broad);
-      if (primary.length >= min) {
-        return {
-          articles: primary.slice(0, 150),
-          notice: `Showing ${lang.toUpperCase()} stories from across sections while ${label} fills up.`,
-        };
-      }
-    }
-
-    if (primary.length >= min) {
+    if (primary.length >= 12) {
       return { articles: primary.slice(0, 150), notice: null };
     }
 
     if (primary.length > 0 && lang !== 'en') {
-      const enInSection = applyExclusions(await fetchLanguagePool('en', options.categoryId));
+      const en = await fetchForLang('en');
       return {
-        articles: mergeUnique(primary, enInSection).slice(0, 150),
+        articles: mergeUnique(primary, en).slice(0, 150),
         notice: `Showing ${primary.length} in ${lang.toUpperCase()} plus English in ${label}.`,
       };
     }
 
     if (primary.length === 0 && lang !== 'en') {
-      const enInSection = applyExclusions(await fetchLanguagePool('en', options.categoryId));
-      const enBroad = applyExclusions(await fetchLanguagePool('en'));
-      const enMerged = mergeUnique(enInSection, enBroad);
-      if (enMerged.length > 0) {
+      const en = await fetchForLang('en');
+      if (en.length > 0) {
         return {
-          articles: enMerged.slice(0, 150),
-          notice: `No ${lang.toUpperCase()} stories in ${label} yet. Showing English until more are ingested.`,
+          articles: en,
+          notice: `No ${lang.toUpperCase()} stories in ${label} yet. Showing English.`,
         };
       }
     }
@@ -206,6 +155,20 @@ export async function fetchCategoryArticlesForUiLanguage(
 
   return {
     articles: [],
-    notice: `No stories in ${lang.toUpperCase()} for ${label}. Try another section or language.`,
+    notice: `No stories in ${lang.toUpperCase()} for ${label}.`,
   };
+}
+
+/** Clear stale per-language caches when the reader switches language. */
+export function clearLanguageFeedCaches(lang?: string): void {
+  if (typeof window === 'undefined') return;
+  const keys: string[] = [];
+  for (let i = 0; i < localStorage.length; i++) {
+    const k = localStorage.key(i);
+    if (!k) continue;
+    if (k.startsWith('nr-home-cache-') || k.startsWith('nr-category-cache-')) {
+      if (!lang || k.endsWith(`-${lang}`)) keys.push(k);
+    }
+  }
+  for (const k of keys) localStorage.removeItem(k);
 }

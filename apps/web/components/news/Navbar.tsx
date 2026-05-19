@@ -13,6 +13,7 @@ import {
   type Country,
 } from '@/lib/countries';
 import { fetchJsonFromApi } from '@/lib/api-client';
+import { clearLanguageFeedCaches } from '@/lib/fetch-articles-for-lang';
 import { normalizeUiLanguage, withUiLanguagePath } from '@/lib/ui-language';
 
 const NAV_LINKS = [
@@ -144,6 +145,7 @@ export function Navbar() {
 
   function chooseLang(code: string) {
     const next = normalizeUiLanguage(code);
+    clearLanguageFeedCaches();
     setLang(next);
     localStorage.setItem('nr-lang', next);
     setLangOpen(false);
