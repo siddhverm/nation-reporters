@@ -9,10 +9,10 @@ export type RegionalFeedSource = {
 export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
   // Hindi (hi)
   { name: 'BBC Hindi', feedUrl: 'https://feeds.bbci.co.uk/hindi/rss.xml', isTrusted: true, language: 'hi' },
-  { name: 'Amar Ujala', feedUrl: 'https://www.amarujala.com/rss/breaking-news.xml', isTrusted: true, language: 'hi' },
+  { name: 'Deutsche Welle Hindi', feedUrl: 'https://rss.dw.com/rdf/rss-hi-all', isTrusted: true, language: 'hi' },
   { name: 'Navbharat Times', feedUrl: 'https://navbharattimes.indiatimes.com/rssfeedsdefault.cms', isTrusted: true, language: 'hi' },
   { name: 'ABP Live Hindi', feedUrl: 'https://www.abplive.com/rss/news', isTrusted: true, language: 'hi' },
-  { name: 'Dainik Bhaskar', feedUrl: 'https://www.bhaskar.com/rss-feed/1061/', isTrusted: true, language: 'hi' },
+  { name: 'NDTV Hindi', feedUrl: 'https://feeds.feedburner.com/ndtvkhabar-home', isTrusted: true, language: 'hi' },
 
   // Marathi (mr)
   { name: 'BBC Marathi', feedUrl: 'https://feeds.bbci.co.uk/marathi/rss.xml', isTrusted: true, language: 'mr' },
@@ -31,14 +31,14 @@ export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
   // Tamil (ta)
   { name: 'BBC Tamil', feedUrl: 'https://feeds.bbci.co.uk/tamil/rss.xml', isTrusted: true, language: 'ta' },
   { name: 'Dinamalar', feedUrl: 'https://www.dinamalar.com/rss/feed.aspx', isTrusted: true, language: 'ta' },
-  { name: 'One India Tamil', feedUrl: 'https://www.oneindia.com/rss/tamil-news.xml', isTrusted: true, language: 'ta' },
-  { name: 'Dinamani', feedUrl: 'https://www.dinamani.com/rss/top-news', isTrusted: true, language: 'ta' },
+  { name: 'Deutsche Welle Tamil', feedUrl: 'https://rss.dw.com/rdf/rss-ta-all', isTrusted: true, language: 'ta' },
+  { name: 'Vikatan', feedUrl: 'https://www.vikatan.com/rss', isTrusted: true, language: 'ta' },
 
   // Punjabi (pa)
   { name: 'BBC Punjabi', feedUrl: 'https://feeds.bbci.co.uk/punjabi/rss.xml', isTrusted: true, language: 'pa' },
   { name: 'Jagbani', feedUrl: 'https://www.jagbani.com/rss/latest-news', isTrusted: true, language: 'pa' },
-  { name: 'Punjabi Tribune', feedUrl: 'https://www.punjabitribuneonline.com/feed/', isTrusted: true, language: 'pa' },
-  { name: 'Punjab Kesari Punjabi', feedUrl: 'https://www.punjabkesari.in/punjabi/news/rss', isTrusted: true, language: 'pa' },
+  { name: 'Deutsche Welle Punjabi', feedUrl: 'https://rss.dw.com/rdf/rss-pa-all', isTrusted: true, language: 'pa' },
+  { name: 'Punjab Kesari', feedUrl: 'https://www.punjabkesari.in/rss/latest-news', isTrusted: true, language: 'pa' },
 
   // Urdu (ur)
   { name: 'BBC Urdu', feedUrl: 'https://feeds.bbci.co.uk/urdu/rss.xml', isTrusted: true, language: 'ur' },
@@ -76,6 +76,7 @@ export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
   // Portuguese (pt)
   { name: 'BBC Brasil', feedUrl: 'https://feeds.bbci.co.uk/portuguese/rss.xml', isTrusted: true, language: 'pt' },
   { name: 'Deutsche Welle Portuguese', feedUrl: 'https://rss.dw.com/rdf/rss-pt-all', isTrusted: true, language: 'pt' },
+  { name: 'RFI Portuguese', feedUrl: 'https://www.rfi.fr/pt/rss', isTrusted: true, language: 'pt' },
 
   // Arabic (ar)
   { name: 'BBC Arabic', feedUrl: 'https://feeds.bbci.co.uk/arabic/rss.xml', isTrusted: true, language: 'ar' },
@@ -101,6 +102,7 @@ export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
   // Indonesian (id)
   { name: 'BBC Indonesian', feedUrl: 'https://feeds.bbci.co.uk/indonesia/rss.xml', isTrusted: true, language: 'id' },
   { name: 'Deutsche Welle Indonesian', feedUrl: 'https://rss.dw.com/rdf/rss-id-all', isTrusted: true, language: 'id' },
+  { name: 'Kompas Indonesian', feedUrl: 'https://rss.kompas.com/index.xml', isTrusted: true, language: 'id' },
 
   // Turkish (tr)
   { name: 'BBC Turkish', feedUrl: 'https://feeds.bbci.co.uk/turkish/rss.xml', isTrusted: true, language: 'tr' },
