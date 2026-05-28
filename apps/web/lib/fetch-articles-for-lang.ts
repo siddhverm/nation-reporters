@@ -16,9 +16,17 @@ export interface FeedArticle {
   mediaAssets?: { type?: string; url?: string | null }[];
 }
 
+function usableSlug(slug: string | null | undefined, id: string): string {
+  const s = (slug ?? '').trim();
+  if (s.length >= 2 && /[a-z0-9]/i.test(s)) return s;
+  return `article-${id.replace(/[^a-z0-9]/gi, '').slice(0, 12) || 'story'}`;
+}
+
 function parseList(d: { data?: FeedArticle[] } | FeedArticle[]): FeedArticle[] {
   const raw = Array.isArray(d) ? d : (d.data ?? []);
-  return raw.filter((a): a is FeedArticle => Boolean(a?.id && a?.slug));
+  return raw
+    .filter((a) => Boolean(a?.id))
+    .map((a) => ({ ...a, slug: usableSlug(a.slug, a.id) })) as FeedArticle[];
 }
 
 function mergeUnique(primary: FeedArticle[], extra: FeedArticle[]): FeedArticle[] {

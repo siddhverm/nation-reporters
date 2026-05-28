@@ -9,3 +9,6 @@ coverage
 !.env.template
 *.jks
 *.keystore
+
+# one-time OAuth helper scripts
+get-youtube-token.js

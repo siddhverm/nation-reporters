@@ -10,6 +10,7 @@ export interface PublishPayload {
   caption?: string;
   hashtags?: string[];
   platform: Platform;
+  language?: string;
 }
 
 export interface PublishResult {

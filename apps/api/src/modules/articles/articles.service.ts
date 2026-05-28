@@ -9,6 +9,7 @@ import { AuditModule } from '../audit/audit.module';
 import { assertTransition } from './status.machine';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { inferLangFromText, normalizeLanguageCode } from '../ai/language-resolution.util';
+import { resolveUniqueArticleSlug } from '../../common/slug.util';
 
 type CountryFeedResult = {
   localLang: string;
@@ -392,8 +393,9 @@ export class ArticlesService {
   }
 
   private async generateSlug(title: string): Promise<string> {
-    const base = title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
-    const exists = await this.prisma.article.findUnique({ where: { slug: base } });
-    return exists ? `${base}-${Date.now()}` : base;
+    return resolveUniqueArticleSlug(
+      async (base) => Boolean(await this.prisma.article.findUnique({ where: { slug: base } })),
+      title,
+    );
   }
 }

@@ -25,7 +25,10 @@ export class GeminiClient {
     await this.throttle();
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const result = await this.model.generateContent(prompt);
+        const result = await this.model.generateContent({
+          contents: [{ role: 'user', parts: [{ text: prompt }] }],
+          generationConfig: { maxOutputTokens: 8192, temperature: 0.4 },
+        });
         const text = result.response.text();
         const tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
         return { text, tokensUsed };

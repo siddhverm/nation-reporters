@@ -2,8 +2,8 @@ import { NextRequest, NextResponse } from 'next/server';
 
 const DEFAULT_TARGETS =
   process.env.NODE_ENV === 'development'
-    ? 'http://localhost:3001/api/v1,http://187.127.141.249/api/v1,https://nationreporters.com/api/v1'
-    : 'http://187.127.141.249/api/v1,https://nationreporters.com/api/v1';
+    ? 'http://localhost:3001/api/v1,https://nationreporters.com/api/v1'
+    : 'https://nationreporters.com/api/v1,http://127.0.0.1:3001/api/v1';
 
 const TARGETS = (process.env.API_PROXY_TARGETS ?? process.env.API_PROXY_TARGET ?? DEFAULT_TARGETS)
   .split(',')
@@ -30,17 +30,31 @@ function getCacheKey(path: string, query: string) {
   return `${path}${query}`;
 }
 
-/** Avoid caching empty language-filtered feeds (stale “no news” for hours). */
-function shouldCacheProxyResponse(path: string, query: string, bytes: ArrayBuffer): boolean {
-  if (!path.startsWith('articles')) return true;
-  if (!query.includes('language=')) return true;
+function parseArticlesPayload(bytes: ArrayBuffer): unknown[] | null {
   try {
     const json = JSON.parse(new TextDecoder().decode(bytes)) as { data?: unknown[] } | unknown[];
     const list = Array.isArray(json) ? json : json?.data;
-    return Array.isArray(list) && list.length > 0;
+    return Array.isArray(list) ? list : null;
   } catch {
-    return true;
+    return null;
   }
+}
+
+function isLanguageArticlesRequest(path: string, query: string): boolean {
+  return path.startsWith('articles') && query.includes('language=');
+}
+
+/** Avoid caching empty language-filtered feeds (stale “no news” for hours). */
+function shouldCacheProxyResponse(path: string, query: string, bytes: ArrayBuffer): boolean {
+  if (!isLanguageArticlesRequest(path, query)) return true;
+  const list = parseArticlesPayload(bytes);
+  return list !== null && list.length > 0;
+}
+
+function isEmptyLanguageArticlesResponse(path: string, query: string, bytes: ArrayBuffer): boolean {
+  if (!isLanguageArticlesRequest(path, query)) return false;
+  const list = parseArticlesPayload(bytes);
+  return list !== null && list.length === 0;
 }
 
 async function proxy(req: NextRequest, params: { path: string[] }) {
@@ -87,6 +101,12 @@ async function proxy(req: NextRequest, params: { path: string[] }) {
 
       const bytes = await upstream.arrayBuffer();
 
+      if (isEmptyLanguageArticlesResponse(path, query, bytes)) {
+        proxyCache.delete(cacheKey);
+        lastError = 'empty language feed from upstream';
+        continue;
+      }
+
       if (method === 'GET' && shouldCacheProxyResponse(path, query, bytes)) {
         proxyCache.set(cacheKey, {
           status: upstream.status,
@@ -112,13 +132,16 @@ async function proxy(req: NextRequest, params: { path: string[] }) {
   if (method === 'GET') {
     const cached = proxyCache.get(cacheKey);
     if (cached && Date.now() - cached.storedAt <= STALE_TTL_MS) {
-      const staleHeaders = new Headers(cached.headers);
-      staleHeaders.set('x-proxy-cache', 'stale');
-      staleHeaders.set('x-proxy-stale-age-ms', String(Date.now() - cached.storedAt));
-      return new NextResponse(cached.body, {
-        status: cached.status,
-        headers: staleHeaders,
-      });
+      if (!isEmptyLanguageArticlesResponse(path, query, cached.body)) {
+        const staleHeaders = new Headers(cached.headers);
+        staleHeaders.set('x-proxy-cache', 'stale');
+        staleHeaders.set('x-proxy-stale-age-ms', String(Date.now() - cached.storedAt));
+        return new NextResponse(cached.body, {
+          status: cached.status,
+          headers: staleHeaders,
+        });
+      }
+      proxyCache.delete(cacheKey);
     }
   }
 

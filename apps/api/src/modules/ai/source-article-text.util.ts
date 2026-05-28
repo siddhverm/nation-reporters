@@ -1,8 +1,17 @@
 import * as cheerio from 'cheerio';
 import { acceptLanguageHeaderForLocale } from './language-resolution.util';
 
-const DEFAULT_UA =
-  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36';
+const USER_AGENTS = [
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64; rv:125.0) Gecko/20100101 Firefox/125.0',
+  'Mozilla/5.0 (Macintosh; Intel Mac OS X 14_4_1) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/17.4.1 Safari/605.1.15',
+  'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+  'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36 Edg/124.0.0.0',
+];
+
+function randomUserAgent(): string {
+  return USER_AGENTS[Math.floor(Math.random() * USER_AGENTS.length)] ?? USER_AGENTS[0];
+}
 
 export function extractReadableTextFromHtml(html: string, maxLen: number): string {
   try {
@@ -15,26 +24,54 @@ export function extractReadableTextFromHtml(html: string, maxLen: number): strin
       'article',
       '[role="main"]',
       'main',
+      // BBC & large Indian publishers
       '[data-component="text-block"]',
+      '[data-testid="article"]',
+      '.story-body__inner',
+      // Common article body classes
       '.article-body',
       '.article__body',
       '.article__content',
+      '.article__text',
+      '.article-content',
+      '.article-details',
+      '.article_content',
+      '.articleBody',
+      '.articletext',
+      '#article-body',
+      // Story patterns
       '.story-body',
       '.story__body',
       '.story-content',
       '.story_details',
+      '.story-detail',
+      '.story-element-text',
+      // Times of India / Ei Samay / Bennett Coleman group
       '.ins_storybody',
-      '.articleBody',
+      '.Normal',
+      '#storydiv',
+      // Anandabazar / ABP group
+      '.artbody',
+      '.arttxtdiv',
+      // Dinamalar / Tamil sites
+      '.news_body',
+      '.newsText',
+      '.news-detail',
+      // Urdu / RTL sites
+      '.art-content',
+      '.news-content',
+      // WordPress / generic
       '.entry-content',
       '.post-content',
-      '#article-body',
       '.content-body',
       '.field--name-body',
       '.field-body',
-      '.Normal',
-      '.article-content',
-      '.news-content',
       'section.article-content',
+      // Styled-components / Next.js sites
+      '[class*="StoryBody"]',
+      '[class*="ArticleBody"]',
+      '[class*="article-body"]',
+      '[class*="story-body"]',
     ];
     let root = $('body');
     for (const sel of selectors) {
@@ -136,9 +173,12 @@ export async function fetchArticleTitleAndText(
       signal: ctrl.signal,
       redirect: 'follow',
       headers: {
-        'User-Agent': DEFAULT_UA,
+        'User-Agent': randomUserAgent(),
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         'Accept-Language': fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
       },
     });
     if (!res.ok) return null;
@@ -174,9 +214,12 @@ export async function fetchArticlePlainText(
       signal: ctrl.signal,
       redirect: 'follow',
       headers: {
-        'User-Agent': DEFAULT_UA,
+        'User-Agent': randomUserAgent(),
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         'Accept-Language': fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
+        'Accept-Encoding': 'gzip, deflate, br',
+        'Cache-Control': 'no-cache',
+        'Pragma': 'no-cache',
       },
     });
     if (!res.ok) return null;

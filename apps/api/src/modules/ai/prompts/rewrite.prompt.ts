@@ -22,15 +22,15 @@ Body: ${body}
 
 Produce a JSON response with these keys:
 - "title": rewritten headline (punchy, under 70 chars)
-- "short": complete article in ~250 words
-- "medium": complete article in ~550 words
-- "long": complete article in ~1100 words (substantive detail). Separate paragraphs with a blank line (two newline characters).
-- "summary": reader-facing digest in ${langName} for the article page "Summary" box and social previews. MUST NOT repeat or lightly rephrase the headline alone — add new information in every sentence (context about the show, project, people, place, timing, or why readers care). MUST be substantive: at least four full sentences (or five bullet lines with "• "), minimum ~450 characters for normal stories (up to ~900 characters when the source is long) unless the source body is under 350 characters total. Cover who / what / when / where / why / so what with concrete detail from the source — not a teaser. Either prose or bullets as above. No hype; facts only from the source.
-  When ${code} is not "en", do NOT start the summary with English scene-setters (e.g. "Interview:", "Exclusive:", "Watch:", "Breaking:", "Aamir Khan Interview:")—write the whole summary in ${langName}, including any such context inside the first sentence. End with a finished sentence (period or appropriate ${langName} closing punctuation). Do not end with an ellipsis, "...", or a "read on" teaser; state the concrete facts through to a natural close.
-- "podcastScript": podcast script with intro, body, and outro (conversational tone)
+- "short": complete self-contained article covering all key facts in ~250 words
+- "medium": complete article with context and background in ~550 words
+- "long": FULL comprehensive article in ~1400 words. Cover every important fact, quote, context, implication, and background detail from the source. Separate paragraphs with a blank line. Do not truncate or skip facts — this is the authoritative version.
+- "summary": reader-facing digest in ${langName}. MUST NOT repeat the headline — provide NEW information in every sentence. MUST cover: who, what, when, where, why, and significance. At least 5 full sentences. Minimum 500 characters; aim for 700–1000 characters when the source article is substantive. Use concrete specifics (names, numbers, dates, places) from the source. Write as finished prose — no teasers, no ellipsis, no "read more". End with a completed sentence. When ${code} is not "en", write entirely in ${langName} — no English scene-setters or labels at the start.
+- "podcastScript": engaging podcast narration in ${langName} with intro, body covering all key facts, and outro (conversational broadcast tone, 150–200 words)
 - "language": "${targetLang}"
 
-All content (title, short, medium, long, summary, podcastScript) must be written in ${langName} only. The summary must not mix English labels with ${langName} body text.
-Never fabricate quotes, statistics, or facts not in the source.
+IMPORTANT: Use ALL facts and details from the source body — do not discard information. If the source is long, the "long" and "medium" fields should reflect that depth.
+All fields (title, short, medium, long, summary, podcastScript) must be written entirely in ${langName}.
+Never fabricate quotes, statistics, or facts not present in the source.
 `.trim();
 }

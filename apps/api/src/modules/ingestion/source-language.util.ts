@@ -4,7 +4,7 @@
  */
 export function detectFeedSourceLanguage(sourceName: string): string {
   const name = sourceName.toLowerCase();
-  if (name.includes('hindi') || name.includes('हिंदी') || name.includes('jagran') || name.includes('amar ujala') || name.includes('abp live hindi')) return 'hi';
+  if (name.includes('hindi') || name.includes('हिंदी') || name.includes('jagran') || name.includes('amar ujala') || name.includes('abp live hindi') || name.includes('navbharat times') || name.includes('dainik bhaskar') || name.includes('bbc hindi')) return 'hi';
   if (
     name.includes('marathi')
     || name.includes('maratha')
@@ -22,11 +22,12 @@ export function detectFeedSourceLanguage(sourceName: string): string {
     || name.includes('ei samay')
     || name.includes('abp ananda')
     || name.includes('prothom alo')
+    || name.includes('sangbad pratidin')
     || name.includes('kolkata24x7')
     || name.includes('all newspaper bangla')
     || name.includes('bbc bangla')
   ) return 'bn';
-  if (name.includes('tamil') || name.includes('bbc tamil') || name.includes('dinamalar') || name.includes('dinamani') || name.includes('vikatan')) return 'ta';
+  if (name.includes('tamil') || name.includes('bbc tamil') || name.includes('dinamalar') || name.includes('dinamani') || name.includes('vikatan') || name.includes('one india tamil')) return 'ta';
   if (name.includes('telugu') || name.includes('eenadu') || name.includes('sakshi') || name.includes('tv9 telugu')) return 'te';
   if (name.includes('kannada') || name.includes('prajavani') || name.includes('vijaya karnataka') || name.includes('tv9 kannada')) return 'kn';
   if (name.includes('malayalam') || name.includes('manorama') || name.includes('mathrubhumi')) return 'ml';
@@ -34,7 +35,7 @@ export function detectFeedSourceLanguage(sourceName: string): string {
     name.includes('punjabi')
     || name.includes('bbc punjabi')
     || name.includes('jagbani')
-    || name.includes('punjab kesari')
+    || name.includes('punjab kesari punjabi')
     || name.includes('ajit')
     || name.includes('punjabi tribune')
     || name.includes('news18 punjab')
@@ -55,6 +56,7 @@ export function detectFeedSourceLanguage(sourceName: string): string {
     || name.includes('geo urdu')
     || name.includes('bbc urdu')
     || name.includes('dw urdu')
+    || name.includes('deutsche welle urdu')
     || name.includes('voice of america urdu')
     || name.includes('akhbar urdu')
     || name.includes('urdu news')

@@ -82,7 +82,8 @@ export class AiService {
       const titlePlain = this.stripIngestedToPlain(ingested.sourceTitle).split('\n')[0].trim();
       const looksTitleOnly = rssBodyLooksLikeTitleOnly(rssPlain, titlePlain);
       /** Ingestion may already have merged source-page HTML — still re-fetch if body is only the headline. */
-      const skipFetchBecauseIngestionEnriched = rssPlain.length >= 1100 && !looksTitleOnly;
+      // Only skip source-page re-fetch when ingestion already captured a substantive full article.
+      const skipFetchBecauseIngestionEnriched = rssPlain.length >= 3000 && !looksTitleOnly;
       if (this.fetchSourceArticle && ingested.sourceUrl && !skipFetchBecauseIngestionEnriched) {
         const fetched = await fetchArticlePlainText(
           ingested.sourceUrl,
@@ -136,7 +137,7 @@ export class AiService {
         language,
         rewrite.title,
       );
-      const longForPrompts = this.clipForPrompt(rewrite.long, 14_000);
+      const longForPrompts = this.clipForPrompt(rewrite.long, 24_000);
 
       // 2. Tag
       const { data: tags } = await this.gemini.generateJson<{

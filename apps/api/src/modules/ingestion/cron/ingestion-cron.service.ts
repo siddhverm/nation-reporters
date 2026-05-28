@@ -30,6 +30,7 @@ import {
   splitStoryBodies,
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
+import { resolveUniqueArticleSlug } from '../../../common/slug.util';
 
 type CategorySlug =
   | 'india'
@@ -588,7 +589,10 @@ export class IngestionCronService {
     const adminUser =
       (await this.prisma.user.findFirst({ where: { role: 'ADMIN' } }))
       ?? (await this.prisma.user.findFirst({ where: { role: 'AI_BOT' } }));
-    if (!adminUser) return false;
+    if (!adminUser) {
+      this.logger.error('publishRaw: no ADMIN or AI_BOT user — run prisma db seed on the server');
+      return false;
+    }
 
     const displayTitle = stripWireHeadlinePrefix(
       stripSyndicationLinkbacks(
@@ -596,9 +600,13 @@ export class IngestionCronService {
           ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       ),
     );
-    const base = displayTitle.toLowerCase().replace(/[^a-z0-9]+/g, '-').slice(0, 60);
-    const existing = await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } });
-    const slug = existing ? `${base}-${Date.now()}` : base;
+    const slug = await resolveUniqueArticleSlug(
+      async (base) => Boolean(
+        await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } }),
+      ),
+      displayTitle,
+      ingestedArticle.id,
+    );
 
     let rawBodyForArticle = ingestedArticle.body;
     let plainLead = this.stripHtmlToPlain(rawBodyForArticle, true).trim();
@@ -657,7 +665,12 @@ export class IngestionCronService {
         body: {
           type: 'doc',
           ...(imageUrl && { imageUrl, imageCredit: 'Story image' }),
-          ...(readerSummary && { aiVideo: { summary: readerSummary } }),
+          aiVideo: {
+            title: displayTitle,
+            summary: readerSummary || '',
+            language: lang,
+            status: 'ready_for_tts_video_generation',
+          },
           content:
             paragraphs.length > 0
               ? paragraphs.map((text) => ({
@@ -739,8 +752,8 @@ export class IngestionCronService {
   private detectCategorySlug(title: string, sourceName = ''): CategorySlug | null {
     const t = `${title} ${sourceName}`.toLowerCase();
     const src = sourceName.toLowerCase();
-    // Sports
-    if (t.match(/sport|cricket|football|ipl|tennis|olympics|ম্যাচ|ক্রিকেট|ਖੇਡ|ફૂટબોલ|मैच|क्रिकेट|ఫుట్‌బాల్|క్రికెట್|ಫುಟ್ಬಾಲ್|ಕ್ರೀಡೆ/)) return 'sports';
+    // Sports — covers English + all major Indian script keywords
+    if (t.match(/sport|cricket|football|ipl|tennis|olympics|hockey|kabaddi|badminton|boxing|wrestling|ম্যাচ|ক্রিকেট|ਖੇਡ|ફૂટબોલ|मैच|क्रिकेट|ఫుట్‌బాల్|క్రికెట್|ಫುಟ್ಬಾಲ್|ಕ್ರೀಡೆ/)) return 'sports';
     // Tech
     if (t.match(/tech|ai|digital|startup|cyber|software|app|तकनीक|प्रौद्योगिकी|టెక్|ಸാങ്കേതിക/)) return 'tech';
     // Business
@@ -752,9 +765,15 @@ export class IngestionCronService {
     // World + current affairs + conflict
     if (t.match(/world|us |usa|uk |china|europe|russia|pakistan|international|global|breaking|war|ceasefire|diplomacy|geopolitics|বিশ্ব|ਵਿਸ਼ਵ|વિશ્વ|विदेश|दुनिया|अंतरराष्ट्रीय|ವಿಶ್ವ|ప్రపంచం|العالم|monde|mundo/)) return 'world';
     if (
-      /anandabazar|eisamay|ei samay|abp ananda|divya bhaskar|gujarat samachar|sandesh|jagbani|punjab kesari|ajit|lokmat|sakal|maharashtra times|eenadu|sakshi|dinamalar|dinamani|vikatan|prajavani|vijaykarnataka|tv9|amarujala|jagran|patrika|navbharat|zeenews|abp live|ndtvkhabar|indiatoday/i.test(
-        src,
-      )
+      /anandabazar|eisamay|ei samay|abp ananda|sangbad pratidin|prothom alo/i.test(src)            // Bengali
+      || /dinamalar|dinamani|one india tamil|vikatan/i.test(src)                                   // Tamil
+      || /jagbani|punjab kesari|punjabi tribune/i.test(src)                                        // Punjabi
+      || /news18 urdu|jang|geo urdu/i.test(src)                                                    // Urdu
+      || /divya bhaskar|gujarat samachar|sandesh/i.test(src)                                       // Gujarati
+      || /eenadu|sakshi|news18 telugu/i.test(src)                                                  // Telugu
+      || /prajavani|vijaykarnataka|tv9/i.test(src)                                                 // Kannada
+      || /lokmat|sakal|maharashtra times|ajit/i.test(src)                                          // Marathi
+      || /amarujala|jagran|patrika|navbharat|zeenews|abp live|ndtvkhabar|indiatoday/i.test(src)    // Hindi
     ) {
       if (!t.match(/world|international|foreign|washington|beijing|moscow|ukraine|gaza|israel|united nations|संयुक्त राष्ट्र/)) return 'india';
     }

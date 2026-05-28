@@ -133,6 +133,7 @@ export class PublishingService {
       caption: caption?.caption,
       hashtags: article.hashtags,
       platform: job.platform,
+      language: article.language ?? 'en',
     };
 
     await this.prisma.publishJob.update({ where: { id: jobId }, data: { status: JobStatus.RUNNING } });

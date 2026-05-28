@@ -23,7 +23,8 @@ export function getApiCandidates(): string[] {
     return uniq([configured, ...local, proxy, fallback]);
   }
 
-  return uniq([configured, proxy, ...local, fallback]);
+  // Prefer same-origin proxy (always hits production DB) before direct URL.
+  return uniq([proxy, configured, ...local, fallback]);
 }
 
 async function parseJsonResponse<T>(response: Response): Promise<T> {

@@ -106,7 +106,15 @@ export default function HomePage() {
           const { articles, notice } = await fetchArticlesForUiLanguage(lang);
           if (notice) setDataNotice(notice);
           else setDataNotice(null);
-          if (articles.length > 0) return withFallbackArticles(articles as Article[]);
+          if (articles.length > 0) {
+            if (typeof window !== 'undefined') {
+              localStorage.setItem(cacheKey, JSON.stringify(articles.slice(0, 120)));
+            }
+            return withFallbackArticles(articles as Article[]);
+          }
+          if (typeof window !== 'undefined') {
+            localStorage.removeItem(cacheKey);
+          }
         } catch { /* fall through */ }
 
         if (typeof window !== 'undefined') {
@@ -119,6 +127,7 @@ export default function HomePage() {
                 return withFallbackArticles(parsed);
               }
             } catch { /* ignore */ }
+            localStorage.removeItem(cacheKey);
           }
         }
         setDataNotice(

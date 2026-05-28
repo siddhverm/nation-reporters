@@ -4,6 +4,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from '../ai/gemini.client';
 import { PublishingService } from '../publishing/publishing.service';
+import { Platform } from '@prisma/client';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { promises as fs } from 'fs';
 import * as os from 'os';
@@ -134,7 +135,10 @@ export class VideoWorkerService {
       },
     });
 
-    await this.publishing.publishToSocialOnly(article.id).catch(() => null);
+    // Only publish to YouTube — other social platforms were already posted at article publish time.
+    await this.publishing.publishArticle(article.id, [Platform.YOUTUBE]).catch((err) =>
+      this.logger.warn(`YouTube publish after video generation failed for ${article.id}: ${(err as Error).message}`),
+    );
     await fs.rm(workDir, { recursive: true, force: true }).catch(() => null);
   }
 
