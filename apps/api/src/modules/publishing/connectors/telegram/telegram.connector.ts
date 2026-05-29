@@ -38,15 +38,43 @@ export class TelegramConnector extends SocialConnector {
     super();
   }
 
+  /**
+   * Resolve the channel for this article's language.
+   * Checks TELEGRAM_CHANNEL_ID_{LANG} (e.g. TELEGRAM_CHANNEL_ID_HI for Hindi).
+   * Falls back to TELEGRAM_CHANNEL_ID for English or if no language channel configured.
+   * Returns null if no channel is available — article is skipped silently.
+   */
+  private resolveChannelId(lang: string): string | null {
+    const langKey = lang.toUpperCase();
+    const langChannel = this.config.get<string>(`TELEGRAM_CHANNEL_ID_${langKey}`);
+    if (langChannel?.trim()) return langChannel.trim();
+    // Only publish to main channel if language is English or main channel is the only one
+    const mainChannel = this.config.get<string>('TELEGRAM_CHANNEL_ID');
+    if (!mainChannel?.trim()) return null;
+    // For non-English: only post to main channel if no language-specific channel is set
+    // and there are no other language channels configured at all (single-channel mode).
+    if (lang !== 'en') {
+      // Check if ANY language-specific channel exists — if so, this article has no channel.
+      const anyLangChannel = ['hi','mr','bn','ta','te','kn','ml','gu','pa','ur',
+        'ar','fr','de','es','pt','ru','zh','ja','ko','id','tr','it']
+        .some((l) => !!this.config.get<string>(`TELEGRAM_CHANNEL_ID_${l.toUpperCase()}`)?.trim());
+      if (anyLangChannel) return null;
+    }
+    return mainChannel.trim();
+  }
+
   async publish(payload: PublishPayload): Promise<PublishResult> {
     try {
       const botToken = this.config.get<string>('TELEGRAM_BOT_TOKEN');
-      const channelId = this.config.get<string>('TELEGRAM_CHANNEL_ID');
-      if (!botToken || !channelId) {
-        return { success: false, errorMsg: 'Missing TELEGRAM_BOT_TOKEN or TELEGRAM_CHANNEL_ID' };
+      if (!botToken) {
+        return { success: false, errorMsg: 'Missing TELEGRAM_BOT_TOKEN' };
+      }
+      const lang = payload.language ?? 'en';
+      const channelId = this.resolveChannelId(lang);
+      if (!channelId) {
+        return { success: false, errorMsg: `No Telegram channel configured for language: ${lang}` };
       }
 
-      const lang = payload.language ?? 'en';
       const readMoreText = READ_MORE_TEXT[lang] ?? READ_MORE_TEXT['en'];
 
       const escapeHtml = (value: string) =>
