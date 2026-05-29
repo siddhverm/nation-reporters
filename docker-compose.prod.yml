@@ -36,11 +36,6 @@ services:
     ports:
       - '127.0.0.1:3001:3001'
     env_file: .env
-    environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/nationreporters
-      REDIS_URL: redis://redis:6379
-      MEILISEARCH_URL: http://meilisearch:7700
-      MEILISEARCH_KEY: ${MEILISEARCH_KEY}
     depends_on:
       postgres:
         condition: service_healthy
