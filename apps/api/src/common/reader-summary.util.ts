@@ -47,6 +47,14 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(وكالات|بقلم)\s*/gu, '\n$1 ');
   // Strip "Advertisement" / ad labels in common languages
   t = t.replace(/\b(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\b/gi, '');
+  // English date/time stamps mashed inline: "May 29, 2026 10:03 am"
+  t = t.replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:am|pm)/gi, '\n$&\n');
+  // Photo / image credits: "Photo: Patrick Odey." or "Image: ..."
+  t = t.replace(/\b(Photo\s*:|Photos\s*:|Image\s*:|Pic\s*:|Picture\s*:|Caption\s*:)\s*[^\n]+/gi, '\n$&\n');
+  // "By [Name]" byline without pipe separator
+  t = t.replace(/\bBy\s+([A-Z][a-zA-Z]+(?:\s+[A-Z][a-zA-Z]+){0,3})\b(?!\s+\w{4,}.*\bsaid\b)/g, '\nBy $1\n');
+  // Share prompts
+  t = t.replace(/\b(Kindly\s+share\s+this\s+story|Share\s+this\s+(?:story|article|news)|Spread\s+the\s+word)[:\s]*/gi, '\n$&\n');
   // Strip social media share chrome mashed inline
   t = t.replace(/\b(Follow us on|Subscribe|Newsletter)\b[^\n]*/gi, '');
   // Hindi/regional desk attribution lines mashed inline
@@ -129,6 +137,12 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/published\s+\d+\s*(minute|hour|day)s?\s+ago/i.test(low)) return true;
   if (/^(video caption|वीडियो कैप्शन)/i.test(low)) return true;
   if (/^image credit:/i.test(low)) return true;
+  // Photo/image caption credits: "Photo: Name", "Image: Name"
+  if (/^(Photo|Photos|Image|Pic|Picture|Caption)\s*:/i.test(t) && t.length < 150) return true;
+  // English date/time stamp lines: "May 29, 2026 10:03 am"
+  if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}/i.test(t) && t.length < 80) return true;
+  // Share prompts
+  if (/^(Kindly\s+share\s+this\s+story|Share\s+this\s+(story|article|news)|Spread\s+the\s+word)/i.test(t)) return true;
   if (/^read more:?\s*https?:\/\//i.test(t)) return true;
   if (/^read full report at source\.?$/i.test(low)) return true;
   if (/^full details are available on the original publisher page\.?$/i.test(low)) return true;
