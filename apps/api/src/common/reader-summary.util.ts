@@ -49,6 +49,22 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/\b(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\b/gi, '');
   // Strip social media share chrome mashed inline
   t = t.replace(/\b(Follow us on|Subscribe|Newsletter)\b[^\n]*/gi, '');
+  // Hindi/regional desk attribution lines mashed inline
+  t = t.replace(/([ऀ-ॿ\w\s]*डेस्क\s*,[^\n।]{0,80}[।\n])/gu, '\n$1\n');
+  // Known publisher name attribution lines (Hindi + regional)
+  t = t.replace(/\b(अमर\s*उजाला|दैनिक\s*जागरण|नवभारत\s*टाइम्स|राजस्थान\s*पत्रिका|लाइव\s*हिंदुस्तान|आजतक|इंडिया\s*टुडे)\b/gu, '\n$&\n');
+  // Bengali desk/reporter patterns
+  t = t.replace(/(প্রতিনিধি|সংবাদদাতা|নিজস্ব\s*সংবাদদাতা)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
+  // Tamil reporter patterns
+  t = t.replace(/(நமது\s*நிருபர்|சிறப்பு\s*நிருபர்|செய்தி\s*மேசை)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
+  // Marathi desk patterns
+  t = t.replace(/(वार्ताहर|प्रतिनिधी|बातमीदार)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
+  // Urdu/Arabic by-line patterns
+  t = t.replace(/(نامہ\s*نگار|رپورٹر|نمائندہ)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
+  // French/Spanish/Portuguese byline
+  t = t.replace(/\b(Par\s+[A-ZÀÁÂÃÄÅÆÇ][^\n]{2,40})\s*[\|\-—]/g, '\n$1\n');
+  // German "Von [Name]"
+  t = t.replace(/\bVon\s+[A-ZÄÖÜ][a-zäöüß\s]{2,30}[\|\-—\n]/g, '\n$&\n');
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -143,6 +159,26 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan|विज्ञापन|Reklam)$/i.test(t)) return true;
   // Universal: "Follow us on [platform]" / subscription nudges
   if (/^(Follow us on|Subscribe to|Subscribe for|Newsletter|Get our|Sign up for)/i.test(t) && t.length < 120) return true;
+  // Hindi desk attribution: "न्यूज डेस्क, अमर उजाला नई दिल्ली।" / "स्पोर्ट्स डेस्क, ..."
+  if (/डेस्क\s*,/.test(t) && t.length < 140) return true;
+  // Lines containing known Hindi publisher names with no sentence content
+  if (/\b(अमर\s*उजाला|दैनिक\s*जागरण|नवभारत\s*टाइम्स|हिंदुस्तान\s*टाइम्स|राजस्थान\s*पत्रिका|पत्रिका|जनसत्ता|लाइव\s*हिंदुस्तान|न्यूज़?\s*18|ज़ी\s*न्यूज़?|इंडिया\s*टीवी|आजतक|इंडिया\s*टुडे)\b/u.test(t) && t.length < 120 && !/[।.!?]{1}[^।.!?]{20}/.test(t)) return true;
+  // Bengali reporter attribution
+  if (/^(প্রতিনিধি|সংবাদদাতা|নিজস্ব\s*সংবাদদাতা|ব্যুরো\s*চিফ)/.test(t) && t.length < 100) return true;
+  // Tamil reporter attribution
+  if (/^(நமது\s*நிருபர்|சிறப்பு\s*நிருபர்|செய்தி\s*மேசை|நிருபர்)/.test(t) && t.length < 100) return true;
+  // Marathi reporter attribution
+  if (/^(वार्ताहर|प्रतिनिधी|बातमीदार|विशेष\s*प्रतिनिधी)/.test(t) && t.length < 100) return true;
+  // Urdu reporter attribution
+  if (/^(نامہ\s*نگار|رپورٹر|نمائندہ|خصوصی\s*نمائندہ)/.test(t) && t.length < 100) return true;
+  // Arabic reporter attribution
+  if (/^(مراسل|مراسلنا|بقلم|كتب)/.test(t) && t.length < 100) return true;
+  // French "Par [Name]" / German "Von [Name]" / Spanish "Por [Name]" bylines
+  if (/^(Par|Von|Por|By|Di|Da)\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖÙÚÛÜ]/i.test(t) && t.length < 80) return true;
+  // Gujarati reporter attribution
+  if (/^(પ્રતિનિધિ|સંવાદદાતા|અહેવાલ)/.test(t) && t.length < 100) return true;
+  // Punjabi reporter attribution
+  if (/^(ਨਾਮਾਨਿਗਾਰ|ਪ੍ਰਤੀਨਿਧੀ|ਸੰਵਾਦਦਾਤਾ)/.test(t) && t.length < 100) return true;
   // Universal: lines that are just a timestamp with timezone (IST, GMT, EST, UTC, CET, JST etc.)
   if (/\d{1,2}:\d{2}\s*(AM|PM)?\s*(IST|GMT|UTC|EST|PST|CET|JST|KST|CST)\b/i.test(t) && t.length < 80) return true;
   // "Reporter: Name" / "By Name" short attribution lines
