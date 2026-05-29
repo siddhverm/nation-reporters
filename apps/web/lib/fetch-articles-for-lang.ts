@@ -66,14 +66,7 @@ export async function fetchArticlesForUiLanguage(
     }
 
     if (lang !== 'en') {
-      const en = await fetchPublishedByLanguage('en');
-      if (en.length > 0) {
-        return {
-          articles: en,
-          notice: `No ${lang.toUpperCase()} stories in the feed yet. Showing English until regional ingestion completes.`,
-        };
-      }
-
+      // Try script-matching from full pool before giving up
       const pool = parseList(
         await fetchJsonFromApi<{ data?: FeedArticle[] } | FeedArticle[]>(
           '/articles?status=PUBLISHED&limit=200&omitBody=true',
@@ -85,14 +78,15 @@ export async function fetchArticlesForUiLanguage(
       if (scriptMatched.length > 0) {
         return { articles: scriptMatched.slice(0, 150), notice: null };
       }
+      return {
+        articles: [],
+        notice: `No ${lang.toUpperCase()} stories yet. Regional ingestion is running — check back soon.`,
+      };
     }
 
     return {
       articles: [],
-      notice:
-        lang === 'en'
-          ? 'No published stories available. Run ingestion from Admin → Sources.'
-          : `No ${lang.toUpperCase()} stories yet. Restart the API to trigger regional feed ingestion.`,
+      notice: 'No published stories available. Run ingestion from Admin → Sources.',
     };
   } catch {
     return {
@@ -136,22 +130,19 @@ export async function fetchCategoryArticlesForUiLanguage(
       return { articles: primary.slice(0, 150), notice: null };
     }
 
-    if (primary.length > 0 && lang !== 'en') {
-      const en = await fetchForLang('en');
-      return {
-        articles: mergeUnique(primary, en).slice(0, 150),
-        notice: `Showing ${primary.length} in ${lang.toUpperCase()} plus English in ${label}.`,
-      };
-    }
-
-    if (primary.length === 0 && lang !== 'en') {
-      const en = await fetchForLang('en');
-      if (en.length > 0) {
+    // For non-English: show whatever articles exist without mixing in English.
+    // Mixing English into a Hindi/regional feed confuses the language selection.
+    if (lang !== 'en') {
+      if (primary.length > 0) {
         return {
-          articles: en,
-          notice: `No ${lang.toUpperCase()} stories in ${label} yet. Showing English.`,
+          articles: primary.slice(0, 150),
+          notice: `Showing ${primary.length} ${lang.toUpperCase()} stor${primary.length === 1 ? 'y' : 'ies'} in ${label}. More regional content coming soon.`,
         };
       }
+      return {
+        articles: [],
+        notice: `No ${lang.toUpperCase()} stories in ${label} yet. Check back soon or switch to English for full coverage.`,
+      };
     }
 
     if (primary.length > 0) {

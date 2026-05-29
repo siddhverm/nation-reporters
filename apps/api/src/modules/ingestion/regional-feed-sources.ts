@@ -3,7 +3,7 @@ export type RegionalFeedSource = {
   name: string;
   feedUrl: string;
   isTrusted: boolean;
-  language: 'hi' | 'mr' | 'bn' | 'ta' | 'pa' | 'ur' | 'te' | 'gu' | 'fr' | 'de' | 'es' | 'pt' | 'ar' | 'zh' | 'ja' | 'ko' | 'ru' | 'id' | 'tr';
+  language: 'hi' | 'mr' | 'bn' | 'ta' | 'pa' | 'ur' | 'te' | 'gu' | 'ml' | 'fr' | 'de' | 'es' | 'pt' | 'ar' | 'zh' | 'ja' | 'ko' | 'ru' | 'id' | 'tr';
 };
 
 export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
@@ -56,6 +56,12 @@ export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
   { name: 'Divya Bhaskar', feedUrl: 'https://www.divyabhaskar.co.in/rss-feed/1061.xml', isTrusted: true, language: 'gu' },
   { name: 'Gujarat Samachar', feedUrl: 'https://www.gujaratsamachar.com/rss/top-stories', isTrusted: true, language: 'gu' },
   { name: 'Sandesh', feedUrl: 'https://sandesh.com/feed/', isTrusted: true, language: 'gu' },
+
+  // Malayalam (ml)
+  { name: 'BBC Malayalam', feedUrl: 'https://feeds.bbci.co.uk/malayalam/rss.xml', isTrusted: true, language: 'ml' },
+  { name: 'Mathrubhumi', feedUrl: 'https://www.mathrubhumi.com/rss/news.xml', isTrusted: true, language: 'ml' },
+  { name: 'Manorama Online', feedUrl: 'https://www.manoramaonline.com/rss/home.xml', isTrusted: true, language: 'ml' },
+  { name: 'Asianet News Malayalam', feedUrl: 'https://asianetnews.com/feed/', isTrusted: true, language: 'ml' },
 
   // French (fr)
   { name: 'BBC French', feedUrl: 'https://feeds.bbci.co.uk/french/rss.xml', isTrusted: true, language: 'fr' },
@@ -111,7 +117,7 @@ export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
 
 export const REGIONAL_TARGET_LANGS = [
   // Indian languages
-  'hi', 'mr', 'bn', 'ta', 'pa', 'ur', 'te', 'gu',
+  'hi', 'mr', 'bn', 'ta', 'pa', 'ur', 'te', 'gu', 'ml',
   // International languages
   'fr', 'de', 'es', 'pt', 'ar', 'zh', 'ja', 'ko', 'ru', 'id', 'tr',
 ] as const;

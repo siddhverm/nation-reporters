@@ -16,6 +16,20 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   );
   t = t.replace(/प्रकाशित\s+\d+\s*(मिनट|घंटे|दिन)\s*पहले/gu, '\n$&\n');
   t = t.replace(/वीडियो कैप्शन/gu, '\n$&\n');
+  // Dainik Bhaskar / Hindi publisher patterns
+  t = t.replace(/(Hindi\s*News)(Bhaskar\s*[Kk]haas?)/gi, '\n$1\n$2\n');
+  t = t.replace(/(Khabar\s*[Hh]atke|खबर\s*हटके)/gu, '\n$1\n');
+  t = t.replace(/(\d+\s*(?:मिनट|घंटे?|दिन|सेकंड)\s*पहले)/gu, '\n$1\n');
+  t = t.replace(/(लेखक\s*:\s*[^\n]+)/gu, '\n$1\n');
+  t = t.replace(/(कॉपी\s*लिंक)/gu, '\n$1\n');
+  // Strip Bhaskar app promo text before splitting into lines
+  t = t.replace(/अधूरा\s*नहीं[!।]?\s*पढ़िए\s*पूरा[!।]?[^\n]*/gu, '');
+  t = t.replace(/पूरी\s*खबर\s*पढ़ें\s*ऐप\s*पर[^\n]*/gu, '');
+  t = t.replace(/पूरा\s*पढ़ें\s*ऐप\s*पर[^\n]*/gu, '');
+  t = t.replace(/(?:एप|ऐप)\s*डाउनलोड[^\n]*/gu, '');
+  t = t.replace(/QR\s*(?:स्कैन|scan)[^\n]*/gui, '');
+  t = t.replace(/प्रीमियम\s*मेंबरशिप[^\n]*/gu, '');
+  t = t.replace(/भास्कर\s*अपडेट्स\s*:/gu, '');
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -83,6 +97,16 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^read more:?\s*https?:\/\//i.test(t)) return true;
   if (/^read full report at source\.?$/i.test(low)) return true;
   if (/^full details are available on the original publisher page\.?$/i.test(low)) return true;
+  // Hindi timestamp lines (e.g. "27 मिनट पहले")
+  if (/^\d+\s*(मिनट|घंटे?|दिन|सेकंड)\s*पहले$/.test(t)) return true;
+  // Author byline (लेखक: name)
+  if (/^लेखक\s*:/.test(t)) return true;
+  // Copy-link button text scraped into body
+  if (/^कॉपी\s*लिंक$/.test(t)) return true;
+  // Bhaskar / Hindi publisher section navigation breadcrumbs
+  if (/^(Hindi\s*News|Bhaskar\s*Khaas?|Khabar\s*Hatke|खबर\s*हटके|भास्कर\s*खास)$/i.test(t)) return true;
+  // App promo lines
+  if (/पूरी\s*खबर\s*पढ़ें\s*ऐप|ऐप\s*पर\s*पढ़ें|QR\s*स्कैन|प्रीमियम\s*मेंबरशिप|अधूरा\s*नहीं|पढ़िए\s*पूरा/u.test(t)) return true;
   if (
     /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d{1,2}\s+\w+[,]?\s+\d{4}\s+at\s+/i.test(
       low,
