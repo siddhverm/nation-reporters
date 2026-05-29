@@ -77,14 +77,17 @@ export class TelegramConnector extends SocialConnector {
 
       const readMoreText = READ_MORE_TEXT[lang] ?? READ_MORE_TEXT['en'];
 
+      const stripHtml = (s: string) =>
+        s.replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+
       const escapeHtml = (value: string) =>
         value
           .replace(/&/g, '&amp;')
           .replace(/</g, '&lt;')
           .replace(/>/g, '&gt;');
 
-      const title = escapeHtml(payload.title ?? '');
-      const excerpt = escapeHtml((payload.excerpt ?? '').slice(0, 900));
+      const title = escapeHtml(stripHtml(payload.title ?? ''));
+      const excerpt = escapeHtml(stripHtml((payload.excerpt ?? '').slice(0, 900)));
       const url = encodeURI(payload.url ?? '');
       const captionText = `<b>${title}</b>\n\n${excerpt}\n\n<a href="${url}">${readMoreText}</a>`;
 
