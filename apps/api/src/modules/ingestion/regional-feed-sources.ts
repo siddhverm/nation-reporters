@@ -111,8 +111,10 @@ export const REGIONAL_FEED_SOURCES: RegionalFeedSource[] = [
   { name: 'Kompas Indonesian', feedUrl: 'https://rss.kompas.com/index.xml', isTrusted: true, language: 'id' },
 
   // Turkish (tr)
-  { name: 'BBC Turkish', feedUrl: 'https://feeds.bbci.co.uk/turkish/rss.xml', isTrusted: true, language: 'tr' },
+  { name: 'BBC Turkish', feedUrl: 'https://feeds.bbci.co.uk/turkce/rss.xml', isTrusted: true, language: 'tr' },
   { name: 'Deutsche Welle Turkish', feedUrl: 'https://rss.dw.com/rdf/rss-tr-all', isTrusted: true, language: 'tr' },
+  { name: 'TRT Haber', feedUrl: 'https://www.trthaber.com/sondakika.rss', isTrusted: true, language: 'tr' },
+  { name: 'Hurriyet', feedUrl: 'https://www.hurriyet.com.tr/rss/anasayfa', isTrusted: true, language: 'tr' },
 ];
 
 export const REGIONAL_TARGET_LANGS = [
