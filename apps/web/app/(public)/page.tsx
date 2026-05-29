@@ -233,7 +233,7 @@ export default function HomePage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
             <Link href={`/article/${displayArticles[0].slug}`}
               className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
-              <Image src={getArticleImage(displayArticles[0].slug, undefined, 'hero', getPreferredArticleImage(displayArticles[0]))}
+              <Image src={getArticleImage(displayArticles[0].slug, undefined, 'hero', getPreferredArticleImage(displayArticles[0]) ?? getBodyImageUrl(displayArticles[0].body))}
                 alt={safeArticleText(displayArticles[0].title, 'Article')} fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
@@ -256,7 +256,7 @@ export default function HomePage() {
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
                   <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
-                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
+                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))}
                       alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">
@@ -293,7 +293,7 @@ export default function HomePage() {
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-md transition-all overflow-hidden">
                   <div className="relative h-36 overflow-hidden">
-                    <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a))}
+                    <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))}
                       alt={safeArticleText(a.title, 'Article')} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
                   </div>
                   <div className="p-3">
@@ -338,7 +338,7 @@ export default function HomePage() {
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
                   <Link href={`/article/${hero.slug}`}
                     className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
-                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero))}
+                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero) ?? getBodyImageUrl(hero.body))}
                       alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 p-4">
@@ -362,7 +362,7 @@ export default function HomePage() {
                 <Link href={`/article/${hero.slug}`}
                   className="group flex gap-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-4">
                   <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero))}
+                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero) ?? getBodyImageUrl(hero.body))}
                       alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
                   </div>
                   <div className="flex-1 min-w-0">

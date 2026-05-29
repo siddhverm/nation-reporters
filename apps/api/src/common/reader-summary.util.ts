@@ -38,6 +38,17 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   // Dainik Bhaskar footer breadcrumb that appears as inline suffix
   t = t.replace(/Hindi\s*News.*?Dainik\s*Bhaskar[^\n]*/gi, '');
   t = t.replace(/National.*?Breaking\s*News.*?Headlines.*?Dainik\s*Bhaskar[^\n]*/gi, '');
+  // Multi-language "by author" / attribution separators
+  t = t.replace(/(By\s+[A-Z][a-zA-Z\s]{2,30}(?:,\s*[A-Z][a-zA-Z\s]{2,20})?)\s*\|/g, '\n$1\n');
+  t = t.replace(/(Reporter\s*:?\s*[A-Z][^\n]{2,40})/gi, '\n$1\n');
+  // Bengali: প্রতিবেদক, আপডেট; Tamil: நிருபர்; Marathi: वार्ताहर; Gujarati: રિપોર્ટર
+  t = t.replace(/(প্রতিবেদক\s*:\s*[^\n]+)/gu, '\n$1\n');
+  t = t.replace(/(வெளியிட்டது|புதுப்பிக்கப்பட்டது)\s*:/gu, '\n$&\n');
+  t = t.replace(/(وكالات|بقلم)\s*/gu, '\n$1 ');
+  // Strip "Advertisement" / ad labels in common languages
+  t = t.replace(/\b(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\b/gi, '');
+  // Strip social media share chrome mashed inline
+  t = t.replace(/\b(Follow us on|Subscribe|Newsletter)\b[^\n]*/gi, '');
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -128,6 +139,18 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^(Hindi\s*News|Bhaskar\s*Khaas?|Khabar\s*Hatke|खबर\s*हटके|भास्कर\s*खास)$/i.test(t)) return true;
   // App promo lines
   if (/पूरी\s*खबर\s*पढ़ें\s*ऐप|ऐप\s*पर\s*पढ़ें|QR\s*स्कैन|प्रीमियम\s*मेंबरशिप|अधूरा\s*नहीं|पढ़िए\s*पूरा/u.test(t)) return true;
+  // Universal: advertisement labels in all languages
+  if (/^(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan|विज्ञापन|Reklam)$/i.test(t)) return true;
+  // Universal: "Follow us on [platform]" / subscription nudges
+  if (/^(Follow us on|Subscribe to|Subscribe for|Newsletter|Get our|Sign up for)/i.test(t) && t.length < 120) return true;
+  // Universal: lines that are just a timestamp with timezone (IST, GMT, EST, UTC, CET, JST etc.)
+  if (/\d{1,2}:\d{2}\s*(AM|PM)?\s*(IST|GMT|UTC|EST|PST|CET|JST|KST|CST)\b/i.test(t) && t.length < 80) return true;
+  // "Reporter: Name" / "By Name" short attribution lines
+  if (/^(Reporter|Correspondent|Staff Reporter|Special Correspondent|ANI|PTI|AFP|AP|Reuters)\s*[:|,]/i.test(t)) return true;
+  // Short numeric-only lines (ad counts, page numbers)
+  if (/^\d{1,3}$/.test(t)) return true;
+  // Source breadcrumb footer lines like "National > Breaking News > Hindi > Dainik Bhaskar"
+  if (/\bDainik\s*Bhaskar\b|\bNDTV\b|\bTimes\s*of\s*India\b|\bHindustan\s*Times\b/i.test(t) && t.length < 120 && !/[।.!?]/.test(t)) return true;
   if (
     /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d{1,2}\s+\w+[,]?\s+\d{4}\s+at\s+/i.test(
       low,

@@ -4,7 +4,7 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight } from 'lucide-react';
-import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage, getBodyImageUrl } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { fetchCategoryArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 import { safeArticleText } from '@/lib/rss-plain-text';
@@ -160,7 +160,7 @@ export default function CategoryPage() {
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
-                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero))} alt={safeArticleText(hero.title, 'Article')}
+                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero) ?? getBodyImageUrl(hero.body))} alt={safeArticleText(hero.title, 'Article')}
                     fill className="object-cover" unoptimized />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
@@ -186,7 +186,7 @@ export default function CategoryPage() {
                   <Link key={a.id} href={`/article/${a.slug}`}
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')}
+                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))} alt={safeArticleText(a.title, 'Article')}
                         fill className="object-cover" unoptimized />
                     </div>
                     <div className="flex-1 min-w-0">
