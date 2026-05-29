@@ -81,10 +81,9 @@ export function Footer() {
             <ul className="space-y-2">
               {[
                 { label: 'Facebook',    href: 'https://www.facebook.com/profile.php?id=61583995246876', external: true },
-                { label: 'Twitter / X', href: '#', external: false },
-                { label: 'Instagram',   href: '#', external: false },
+                { label: 'Instagram',   href: 'https://www.instagram.com/nation.reporters/', external: true },
                 { label: 'YouTube',     href: 'https://www.youtube.com/@NationReporters', external: true },
-                { label: 'Telegram',    href: '#', external: false },
+                { label: 'Telegram',    href: 'https://t.me/NationReporters', external: true },
                 { label: 'WhatsApp',    href: '#', external: false },
               ].map((s) => (
                 <li key={s.label}>
