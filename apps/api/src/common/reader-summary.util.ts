@@ -30,6 +30,14 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/QR\s*(?:स्कैन|scan)[^\n]*/gui, '');
   t = t.replace(/प्रीमियम\s*मेंबरशिप[^\n]*/gu, '');
   t = t.replace(/भास्कर\s*अपडेट्स\s*:/gu, '');
+  // "Published by: Name" and "Updated Day, Date IST" separators
+  t = t.replace(/(Published\s+by\s*:\s*[^\n]+)/gi, '\n$1\n');
+  t = t.replace(/(Updated\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\n]+IST)/gi, '\n$1\n');
+  // विज्ञापन (Advertisement) labels
+  t = t.replace(/(विज्ञापन\d*)/gu, '\n$1\n');
+  // Dainik Bhaskar footer breadcrumb that appears as inline suffix
+  t = t.replace(/Hindi\s*News.*?Dainik\s*Bhaskar[^\n]*/gi, '');
+  t = t.replace(/National.*?Breaking\s*News.*?Headlines.*?Dainik\s*Bhaskar[^\n]*/gi, '');
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -99,8 +107,21 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^full details are available on the original publisher page\.?$/i.test(low)) return true;
   // Hindi timestamp lines (e.g. "27 मिनट पहले")
   if (/^\d+\s*(मिनट|घंटे?|दिन|सेकंड)\s*पहले$/.test(t)) return true;
-  // Author byline (लेखक: name)
+  // "Updated Fri, 29 May 2026 06:30 AM IST" style timestamps
+  if (/^Updated\s+(Mon|Tue|Wed|Thu|Fri|Sat|Sun)/i.test(t)) return true;
+  if (/\b\d{1,2}:\d{2}\s*(AM|PM)\s*IST\b/i.test(t) && t.length < 60) return true;
+  // "Published by: Name" editorial attribution
+  if (/^Published\s+by\s*:/i.test(t)) return true;
+  // Author byline patterns: "लेखक: name", "By name", "Reporter, City"
   if (/^लेखक\s*:/.test(t)) return true;
+  if (/^By\s+[A-Z][\w\s]+$/.test(t) && t.length < 60) return true;
+  // Reporter + city e.g. "सचिन कुमार, नई दिल्ली"
+  if (/^[ऀ-ॿ\w][ऀ-ॿ\w\s]+,\s*(नई\s*दिल्ली|मुंबई|दिल्ली|कोलकाता|चेन्नई|बेंगलुरु|हैदराबाद|पुणे|जयपुर|लखनऊ|पटना|भोपाल|अहमदाबाद|सूरत|नागपुर)$/.test(t)) return true;
+  // Advertisement label (विज्ञापन)
+  if (/^विज्ञापन\d*$/.test(t)) return true;
+  // Dainik Bhaskar footer breadcrumb
+  if (/Hindi\s*News.*Dainik\s*Bhaskar/i.test(t)) return true;
+  if (/National.*Breaking\s*News.*Headlines.*Dainik\s*Bhaskar/i.test(t)) return true;
   // Copy-link button text scraped into body
   if (/^कॉपी\s*लिंक$/.test(t)) return true;
   // Bhaskar / Hindi publisher section navigation breadcrumbs
