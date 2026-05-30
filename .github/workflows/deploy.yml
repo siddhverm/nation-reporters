@@ -56,12 +56,17 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
+      - name: Prepare SSH key
+        run: |
+          echo "${{ secrets.HOSTINGER_SSH_KEY_B64 }}" | base64 -d > /tmp/deploy_key
+          chmod 600 /tmp/deploy_key
+
       - name: Deploy to Hostinger VPS
         uses: appleboy/ssh-action@v1
         with:
           host: ${{ secrets.HOSTINGER_HOST }}
           username: ${{ secrets.HOSTINGER_USER }}
-          key: ${{ secrets.HOSTINGER_SSH_KEY }}
+          key_path: /tmp/deploy_key
           script: |
             set -e
             cd /opt/nation-reporters
