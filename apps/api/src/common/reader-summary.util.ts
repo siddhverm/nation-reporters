@@ -45,22 +45,25 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(প্রতিবেদক\s*:\s*[^\n]+)/gu, '\n$1\n');
   t = t.replace(/(வெளியிட்டது|புதுப்பிக்கப்பட்டது)\s*:/gu, '\n$&\n');
   t = t.replace(/(وكالات|بقلم)\s*/gu, '\n$1 ');
-  // Strip "Advertisement" / ad labels in common languages
-  t = t.replace(/\b(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\b/gi, '');
+  // Strip "Advertisement" / ad labels in common languages (avoid \b for accented chars)
+  t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\s*/gi, ' ');
   // TOI footer: copyright, syndication, follow us
   t = t.replace(/Copyright\s*©\s*\d{4}\s*Bennett[^\n]*/gi, '');
   t = t.replace(/For\s+reprint\s+rights\s*:\s*Times\s+Syndication[^\n]*/gi, '');
   t = t.replace(/All\s+rights\s+reserved\.[^\n]*/gi, '');
-  // TOI edition picker chrome: "EditionININUSGCCEnglishहिन्दी..."
-  t = t.replace(/Edition\s*(?:IN|US|GCC)[^\n]{0,200}/gi, '');
+  // TOI full nav bar: "EditionININUSGCC...WeatherSign InTOIToday's ePaper " — strip whole block
+  t = t.replace(/Edition\s*(?:IN{1,2}|US|GCC)[^\n]*?Today's?\s*ePaper\s*/gi, '');
+  // Fallback: Edition picker without ePaper marker (cap at 80 to avoid eating article text)
+  t = t.replace(/Edition\s*(?:IN{1,2}|US|GCC)[^\n]{0,80}/gi, '');
+  // TOI navigation fragments that get mashed inline (fallback when above didn't catch them)
+  t = t.replace(/WeatherSign\s*In\s*TOI/gi, '');
+  t = t.replace(/\bSign\s*In\s*TOI\b/gi, '');
+  t = t.replace(/Today's?\s*ePaper[^\n]{0,60}/gi, '');
   // TOI byline: "TOI Sports Desk / TIMESOFINDIA.COM / May 30, 2026, 08:33 IST"
-  t = t.replace(/TOI\s+\w[\w\s]*Desk\s*\/[^\n]*/gi, '');
-  t = t.replace(/TIMESOFINDIA\.COM\s*\/[^\n]*/gi, '');
-  // TOI article chrome: "CommentsShareAA+Text SizeSmallMediumLarge"
-  t = t.replace(/Comments\s*Share\s*AA\+?\s*Text\s*Size[^\n]*/gi, '');
-  // TOI navigation: "WeatherSign InTOIToday's ePaper"
-  t = t.replace(/Weather\s*Sign\s*In\s*TOI[^\n]*/gi, '');
-  t = t.replace(/Today's?\s*ePaper[^\n]*/gi, '');
+  t = t.replace(/TOI\s+\w+\s+Desk\s*\/\s*TIMESOFINDIA\.COM\s*\/[^\n]*?(?:IST|UTC|GMT)\b\s*/gi, '');
+  t = t.replace(/TIMESOFINDIA\.COM\s*\/[^/\n]{0,80}(?:IST|UTC|GMT)\b\s*/gi, '');
+  // TOI article chrome: "CommentsShareAA+Text SizeSmallMediumLarge" (Text Size part optional)
+  t = t.replace(/Comments\s*Share\s*AA\+?(?:\s*Text\s*Size(?:\s*Small\s*Medium\s*Large)?)?\s*/gi, '');
   // English date/time stamps mashed inline: "May 29, 2026 10:03 am"
   t = t.replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:am|pm)/gi, '\n$&\n');
   // Photo / image credits: "Photo: Patrick Odey." or "Image: ..."
@@ -71,6 +74,18 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/\b(Kindly\s+share\s+this\s+story|Share\s+this\s+(?:story|article|news)|Spread\s+the\s+word)[:\s]*/gi, '\n$&\n');
   // Strip social media share chrome mashed inline
   t = t.replace(/\b(Follow us on|Subscribe|Newsletter)\b[^\n]*/gi, '');
+  // Amar Ujala footer chrome — split mashed block at recognizable boundaries
+  t = t.replace(/\bLink\s*Copied\b/gi, '\nLink Copied\n');
+  t = t.replace(/(फोटो\s*:\s*@[^\n।]*)/gu, '\n$1\n');
+  t = t.replace(/(खबरें\s*लगातार\s*पढ़ने\s*के\s*लिए[^\n।]*)/gu, '\n$1\n');
+  t = t.replace(/(Recommended\s+विशेष[^\n]*)/gu, '\n$1\n');
+  t = t.replace(/(About\s+Us\s+Advertise[^\n]*)/gi, '\n$1\n');
+  t = t.replace(/(©\s*20\d{2}[-–]\d{2,4}\s*Amar\s*Ujala[^\n]*)/gi, '\n$1\n');
+  t = t.replace(/(अमर\s*उजाला\s*(?:एप|ऐप)\s*इंस्टॉल[^\n]*)/gu, '\n$1\n');
+  t = t.replace(/(Disclaimer\s+हम\s+डाटा[^\n]*)/gu, '\n$1\n');
+  // Hindi social follow prompts mashed inline
+  t = t.replace(/(?:WhatsApp|Google\s*News|Twitter|Facebook|Instagram|YouTube)\s*पर\s*(?:फॉलो|लाइक|सब्सक्राइब)[^\n]{0,60}/gu, '\n$&\n');
+  t = t.replace(/हमें\s*(?:Google\s*News|WhatsApp|Twitter|Facebook)[^\n]{0,60}/gu, '\n$&\n');
   // Hindi/regional desk attribution lines mashed inline
   t = t.replace(/([ऀ-ॿ\w\s]*डेस्क\s*,[^\n।]{0,80}[।\n])/gu, '\n$1\n');
   // Known publisher name attribution lines (Hindi + regional)
@@ -83,10 +98,13 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(वार्ताहर|प्रतिनिधी|बातमीदार)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
   // Urdu/Arabic by-line patterns
   t = t.replace(/(نامہ\s*نگار|رپورٹر|نمائندہ)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
+  t = t.replace(/(مراسلنا|مراسل)\s+في\s+[^\n.،]{0,40}[.،\n]/gu, '\n$&\n');
   // French/Spanish/Portuguese byline
   t = t.replace(/\b(Par\s+[A-ZÀÁÂÃÄÅÆÇ][^\n]{2,40})\s*[\|\-—]/g, '\n$1\n');
   // German "Von [Name]"
-  t = t.replace(/\bVon\s+[A-ZÄÖÜ][a-zäöüß\s]{2,30}[\|\-—\n]/g, '\n$&\n');
+  t = t.replace(/\bVon\s+[A-ZÄÖÜ][a-zA-Zäöüß]+(?:\s+[a-zA-Zäöüß]+){0,3}\s*[|—–\-]/g, '\n$&\n');
+  // Wire agency prefix mashed inline: "PTI: New Delhi."
+  t = t.replace(/\b(PTI|ANI|AFP|AP|Reuters|IANS|UNI)\s*:/gi, '\n$&\n');
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -235,6 +253,18 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   ) {
     return true;
   }
+  // Amar Ujala footer/UI chrome lines
+  if (/^फोटो\s*:\s*@/u.test(t)) return true;
+  if (/^Link\s*Copied$/i.test(t)) return true;
+  if (/^खबरें\s*लगातार\s*पढ़ने\s*के\s*लिए/u.test(t)) return true;
+  if (/^Recommended\b/i.test(t) && /विशेष|खास|आज\s*का/u.test(t)) return true;
+  if (/^About\s+Us\s+Advertise/i.test(t)) return true;
+  if (/^©\s*20\d{2}.*Amar\s*Ujala/i.test(t)) return true;
+  if (/अमर\s*उजाला\s*(?:एप|ऐप)\s*इंस्टॉल/u.test(t)) return true;
+  if (/^Disclaimer\s+हम\s+डाटा/u.test(t)) return true;
+  // Hindi social follow prompts
+  if (/(?:WhatsApp|Google\s*News|Twitter|Facebook|Instagram|YouTube)\s*पर\s*(?:फॉलो|लाइक|सब्सक्राइब)/u.test(t) && t.length < 120) return true;
+  if (/^हमें\s*(?:Google\s*News|WhatsApp|Twitter|Facebook)/u.test(t)) return true;
   if (t.length < 4) return true;
   if (/^https?:\/\/\S+$/i.test(t)) return true;
   return false;
