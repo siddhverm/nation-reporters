@@ -47,6 +47,10 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(وكالات|بقلم)\s*/gu, '\n$1 ');
   // Strip "Advertisement" / ad labels in common languages
   t = t.replace(/\b(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\b/gi, '');
+  // TOI footer: copyright, syndication, follow us
+  t = t.replace(/Copyright\s*©\s*\d{4}\s*Bennett[^\n]*/gi, '');
+  t = t.replace(/For\s+reprint\s+rights\s*:\s*Times\s+Syndication[^\n]*/gi, '');
+  t = t.replace(/All\s+rights\s+reserved\.[^\n]*/gi, '');
   // TOI edition picker chrome: "EditionININUSGCCEnglishहिन्दी..."
   t = t.replace(/Edition\s*(?:IN|US|GCC)[^\n]{0,200}/gi, '');
   // TOI byline: "TOI Sports Desk / TIMESOFINDIA.COM / May 30, 2026, 08:33 IST"
@@ -153,6 +157,11 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}/i.test(t) && t.length < 80) return true;
   // Share prompts
   if (/^(Kindly\s+share\s+this\s+story|Share\s+this\s+(story|article|news)|Spread\s+the\s+word)/i.test(t)) return true;
+  // TOI footer lines
+  if (/^Copyright\s*©\s*\d{4}\s*Bennett/i.test(t)) return true;
+  if (/^For\s+reprint\s+rights/i.test(t)) return true;
+  if (/^All\s+rights\s+reserved/i.test(t) && t.length < 80) return true;
+  if (/Times\s+Syndication\s+Service/i.test(t)) return true;
   // TOI navigation/chrome lines
   if (/^Edition\s*(IN|US|GCC)/i.test(t)) return true;
   if (/^TOI\s+\w[\w\s]*Desk\s*\//i.test(t)) return true;
