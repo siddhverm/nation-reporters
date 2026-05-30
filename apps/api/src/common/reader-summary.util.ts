@@ -47,6 +47,16 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(وكالات|بقلم)\s*/gu, '\n$1 ');
   // Strip "Advertisement" / ad labels in common languages
   t = t.replace(/\b(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\b/gi, '');
+  // TOI edition picker chrome: "EditionININUSGCCEnglishहिन्दी..."
+  t = t.replace(/Edition\s*(?:IN|US|GCC)[^\n]{0,200}/gi, '');
+  // TOI byline: "TOI Sports Desk / TIMESOFINDIA.COM / May 30, 2026, 08:33 IST"
+  t = t.replace(/TOI\s+\w[\w\s]*Desk\s*\/[^\n]*/gi, '');
+  t = t.replace(/TIMESOFINDIA\.COM\s*\/[^\n]*/gi, '');
+  // TOI article chrome: "CommentsShareAA+Text SizeSmallMediumLarge"
+  t = t.replace(/Comments\s*Share\s*AA\+?\s*Text\s*Size[^\n]*/gi, '');
+  // TOI navigation: "WeatherSign InTOIToday's ePaper"
+  t = t.replace(/Weather\s*Sign\s*In\s*TOI[^\n]*/gi, '');
+  t = t.replace(/Today's?\s*ePaper[^\n]*/gi, '');
   // English date/time stamps mashed inline: "May 29, 2026 10:03 am"
   t = t.replace(/\b(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}\s+\d{1,2}:\d{2}\s*(?:am|pm)/gi, '\n$&\n');
   // Photo / image credits: "Photo: Patrick Odey." or "Image: ..."
@@ -143,6 +153,14 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^(Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{1,2},?\s+\d{4}/i.test(t) && t.length < 80) return true;
   // Share prompts
   if (/^(Kindly\s+share\s+this\s+story|Share\s+this\s+(story|article|news)|Spread\s+the\s+word)/i.test(t)) return true;
+  // TOI navigation/chrome lines
+  if (/^Edition\s*(IN|US|GCC)/i.test(t)) return true;
+  if (/^TOI\s+\w[\w\s]*Desk\s*\//i.test(t)) return true;
+  if (/TIMESOFINDIA\.COM/i.test(t) && t.length < 120) return true;
+  if (/^Comments\s*Share\s*AA/i.test(t)) return true;
+  if (/^(Text\s*Size|Small\s*Medium\s*Large)/i.test(t)) return true;
+  if (/Today's?\s*ePaper/i.test(t) && t.length < 80) return true;
+  if (/^Weather\s*Sign\s*In/i.test(t)) return true;
   if (/^read more:?\s*https?:\/\//i.test(t)) return true;
   if (/^read full report at source\.?$/i.test(low)) return true;
   if (/^full details are available on the original publisher page\.?$/i.test(low)) return true;
