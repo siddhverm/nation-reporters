@@ -514,6 +514,7 @@ export default function ArticlePage() {
   const [loading, setLoading]  = useState(true);
   const [error, setError]      = useState(false);
   const [moreInLang, setMoreInLang] = useState<RelatedArticle[]>([]);
+  const [heroImgError, setHeroImgError] = useState(false);
 
   useEffect(() => {
     const onLangChange = (e: Event) => {
@@ -698,7 +699,6 @@ export default function ArticlePage() {
   const teaserForSeo = (displaySummary || excerptText).trim();
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
-  const [heroImgError, setHeroImgError] = useState(false);
   const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
