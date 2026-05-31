@@ -128,7 +128,7 @@ export class PublishingService {
       excerpt: excerptForPublish,
       // Use canonical slug used by web route. seoSlug can be non-unique / unsuffixed.
       url: `${this.publicWebBaseUrl}/article/${article.slug}`,
-      imageUrl: imageAsset?.url ?? 'https://nationreporters.com/logo.png',
+      imageUrl: imageAsset?.url ?? `${this.publicWebBaseUrl}/logo.png`,
       videoUrl: videoAsset?.url,
       caption: caption?.caption,
       hashtags: article.hashtags,

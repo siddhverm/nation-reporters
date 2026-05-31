@@ -86,6 +86,11 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   // Hindi social follow prompts mashed inline
   t = t.replace(/(?:WhatsApp|Google\s*News|Twitter|Facebook|Instagram|YouTube)\s*पर\s*(?:फॉलो|लाइक|सब्सक्राइब)[^\n]{0,60}/gu, '\n$&\n');
   t = t.replace(/हमें\s*(?:Google\s*News|WhatsApp|Twitter|Facebook)[^\n]{0,60}/gu, '\n$&\n');
+  // HT (Hindustan Times) article-end chrome: video links end with -WATCH, puzzle section headers
+  t = t.replace(/([^\n]+-WATCH)\s*/g, '\n$1\n');
+  t = t.replace(/\bTired\s+of\s+too\s+many\s+ads\??/gi, '\n$&\n');
+  t = t.replace(/\b(Daily\s*Puzzles?|Spelling\s*Bee\s*Today|Connections\s*Game\s*Today|Wordle\s*(?:Answer|Hint)\s*Today)\b/gi, '\n$1\n');
+  t = t.replace(/\bGet\s+Latest\s+(?:News|Updates)\s+on\s+(?:HT|Hindustan\s*Times)[^\n]*/gi, '\n$&\n');
   // Hindi/regional desk attribution lines mashed inline
   t = t.replace(/([ऀ-ॿ\w\s]*डेस्क\s*,[^\n।]{0,80}[।\n])/gu, '\n$1\n');
   // Known publisher name attribution lines (Hindi + regional)
@@ -265,6 +270,11 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   // Hindi social follow prompts
   if (/(?:WhatsApp|Google\s*News|Twitter|Facebook|Instagram|YouTube)\s*पर\s*(?:फॉलो|लाइक|सब्सक्राइब)/u.test(t) && t.length < 120) return true;
   if (/^हमें\s*(?:Google\s*News|WhatsApp|Twitter|Facebook)/u.test(t)) return true;
+  // HT (Hindustan Times) footer chrome
+  if (/-WATCH\s*$/i.test(t) && t.length < 200) return true;
+  if (/^Tired\s+of\s+too\s+many\s+ads\??$/i.test(t)) return true;
+  if (/^(Daily\s*Puzzles?|Spelling\s*Bee\s*Today|Connections\s*Game\s*Today|Wordle\s*(?:Answer|Hint)\s*Today)$/i.test(t)) return true;
+  if (/^Get\s+Latest\s+(?:News|Updates)\s+on\s+(?:HT|Hindustan\s*Times)/i.test(t)) return true;
   if (t.length < 4) return true;
   if (/^https?:\/\/\S+$/i.test(t)) return true;
   return false;

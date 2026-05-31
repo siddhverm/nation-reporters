@@ -18,6 +18,15 @@ export function extractReadableTextFromHtml(html: string, maxLen: number): strin
     const $ = cheerio.load(html);
     // Remove non-content elements; template elements may carry embedded JSON data
     $('script, style, noscript, svg, iframe, nav, footer, header, form, template').remove();
+    // Remove known junk sections (related articles, trending, puzzles, ads, subscribe prompts)
+    $('[class*="related"], [class*="Related"]').remove();
+    $('[class*="trending"], [class*="Trending"]').remove();
+    $('[class*="taboola"], [id*="taboola"]').remove();
+    $('[class*="newsletter"], [class*="Newsletter"]').remove();
+    $('[class*="puzzle"], [class*="Puzzle"], [class*="daily-puzzle"]').remove();
+    $('[class*="subscribe"], [class*="Subscribe"]').remove();
+    $('[class*="recommended"], [class*="Recommended"]').remove();
+    $('[class*="advertisement"], [class*="Advertisement"], [class*="ads-container"]').remove();
     const selectors = [
       '[itemprop="articleBody"]',
       '[itemprop="articlebody"]',
@@ -28,6 +37,14 @@ export function extractReadableTextFromHtml(html: string, maxLen: number): strin
       '[data-component="text-block"]',
       '[data-testid="article"]',
       '.story-body__inner',
+      // Hindustan Times
+      '.storySection',
+      '.storyDetails',
+      '.detail-post-story',
+      '.story_detail',
+      '[class*="storySection"]',
+      '[class*="DetailText"]',
+      '[class*="storyContent"]',
       // Common article body classes
       '.article-body',
       '.article__body',

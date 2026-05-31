@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, ChevronRight, Flame, Globe } from 'lucide-react';
-import { getArticleImage, getPreferredArticleImage, getBodyImageUrl } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage, getBodyImageUrl, LOGO_FALLBACK } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
@@ -67,12 +67,17 @@ function fillSectionWithFallback(_slug: string, list: Article[], min = MIN_SECTI
 }
 
 function ArticleCard({ a }: { a: Article }) {
+  const [imgError, setImgError] = useState(false);
+  const imgSrc = imgError
+    ? LOGO_FALLBACK
+    : getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body));
   return (
     <Link href={`/article/${a.slug}`}
       className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
       <div className="h-14 w-14 rounded-lg overflow-hidden shrink-0 relative">
-        <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))}
-          alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
+        <Image src={imgSrc}
+          alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized
+          onError={() => setImgError(true)} />
       </div>
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>

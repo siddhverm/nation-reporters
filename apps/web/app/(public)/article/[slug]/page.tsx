@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
-import { getArticleImage, getBodyImageCredit, getPreferredArticleImage } from '@/lib/news-image';
+import { getArticleImage, getBodyImageCredit, getPreferredArticleImage, LOGO_FALLBACK } from '@/lib/news-image';
 import {
   htmlToPlainText,
   rssPlainLine,
@@ -698,6 +698,7 @@ export default function ArticlePage() {
   const teaserForSeo = (displaySummary || excerptText).trim();
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
+  const [heroImgError, setHeroImgError] = useState(false);
   const sourceImageUrl = getPreferredArticleImage(article);
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
@@ -753,8 +754,10 @@ export default function ArticlePage() {
           {/* Hero image */}
           <div className="relative overflow-hidden">
             <div className="h-64 md:h-80 relative">
-              <Image src={getArticleImage(article.slug, undefined, 'hero', sourceImageUrl)} alt={titleText}
-                fill className="object-cover" unoptimized priority />
+              <Image
+                src={heroImgError ? LOGO_FALLBACK : getArticleImage(article.slug, undefined, 'hero', sourceImageUrl)}
+                alt={titleText} fill className="object-cover" unoptimized priority
+                onError={() => setHeroImgError(true)} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
               <div className="absolute bottom-3 left-4">
                 <span className="bg-brand text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">

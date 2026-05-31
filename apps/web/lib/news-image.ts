@@ -1,6 +1,8 @@
 // Returns a consistent image URL for an article.
 // Public Nation Reporters pages do not use syndicated publisher images (avoids branding e.g. TOI on art).
 // Only non-external (e.g. uploaded / generated) assets are used; otherwise Picsum placeholder by slug.
+export const LOGO_FALLBACK = '/logo.png';
+
 export function getArticleImage(
   slug: string,
   categorySlug?: string,
@@ -8,8 +10,7 @@ export function getArticleImage(
   externalImageUrl?: string | null,
 ): string {
   if (externalImageUrl) return externalImageUrl;
-  const dims = size === 'hero' ? '1200/630' : size === 'thumb' ? '120/80' : '800/450';
-  return `https://picsum.photos/seed/${encodeURIComponent(slug)}/${dims}`;
+  return LOGO_FALLBACK;
 }
 
 type ImageLikeArticle = {
