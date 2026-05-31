@@ -86,6 +86,15 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   // Hindi social follow prompts mashed inline
   t = t.replace(/(?:WhatsApp|Google\s*News|Twitter|Facebook|Instagram|YouTube)\s*पर\s*(?:फॉलो|लाइक|सब्सक्राइब)[^\n]{0,60}/gu, '\n$&\n');
   t = t.replace(/हमें\s*(?:Google\s*News|WhatsApp|Twitter|Facebook)[^\n]{0,60}/gu, '\n$&\n');
+  // TOI Trending sidebar that leaks inline: "Trending Ajith Kumar Rakesh Bedi ..."
+  t = t.replace(/\bTrending\s+(?:[A-Z][a-zA-Zà-ÿऀ-ॿ]+\s*){2,}/g, '\n$&\n');
+  // Dainik Bhaskar related-articles header and footer section
+  t = t.replace(/यह\s*खबर\s*भी\s*पढ़ें[…\.]{0,3}/gu, '\nयह खबर भी पढ़ें\n');
+  t = t.replace(/खबरें\s*और\s*भी\s*हैं[…\.]{0,3}/gu, '\nखबरें और भी हैं\n');
+  t = t.replace(/दैनिक\s*भास्कर\s*को\s*Google\s*पर\s*पसंदीदा\s*सोर्स[^\n]*/gu, '');
+  // "Play videoPlay video<city>शेयर" — Bhaskar video article link pattern
+  t = t.replace(/(?:Play\s*video){1,2}[^\n]{0,40}शेयर/gu, '');
+  t = t.replace(/(\d+:\d{2})\s*(?:Play\s*video\s*){1,2}/gi, '\n$1\n');
   // HT (Hindustan Times) article-end chrome: video links end with -WATCH, puzzle section headers
   t = t.replace(/([^\n]+-WATCH)\s*/g, '\n$1\n');
   t = t.replace(/\bTired\s+of\s+too\s+many\s+ads\??/gi, '\n$&\n');
@@ -275,6 +284,15 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^Tired\s+of\s+too\s+many\s+ads\??$/i.test(t)) return true;
   if (/^(Daily\s*Puzzles?|Spelling\s*Bee\s*Today|Connections\s*Game\s*Today|Wordle\s*(?:Answer|Hint)\s*Today)$/i.test(t)) return true;
   if (/^Get\s+Latest\s+(?:News|Updates)\s+on\s+(?:HT|Hindustan\s*Times)/i.test(t)) return true;
+  // TOI Trending sidebar lines: "Trending Ajith Kumar Rakesh Bedi ..."
+  if (/^Trending\s+[A-Z]/.test(t) && !/[।.!?,]/.test(t) && t.length < 200) return true;
+  // Dainik Bhaskar related-article section headers
+  if (/^यह\s*खबर\s*भी\s*पढ़ें[…\.]*$/u.test(t)) return true;
+  if (/^खबरें\s*और\s*भी\s*हैं[…\.]*$/u.test(t)) return true;
+  if (/^दैनिक\s*भास्कर\s*को\s*Google\s*पर\s*पसंदीदा\s*सोर्स/u.test(t)) return true;
+  // Bhaskar video link trailing text: "1:34Play videoPlay videoGhaziabadशेयर"
+  if (/^(?:Play\s*video){1,2}[^\n]{0,40}शेयर$/u.test(t)) return true;
+  if (/^\d+:\d{2}$/.test(t)) return true;
   if (t.length < 4) return true;
   if (/^https?:\/\/\S+$/i.test(t)) return true;
   return false;
