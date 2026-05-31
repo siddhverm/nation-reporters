@@ -698,7 +698,7 @@ export default function ArticlePage() {
   const teaserForSeo = (displaySummary || excerptText).trim();
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
-  const sourceImageUrl = null; // never show external publisher images — always use Nation Reporters branding
+  const sourceImageUrl = getPreferredArticleImage(article) ?? null;
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
   const proseText = (text: string) => safeArticleText(text);
