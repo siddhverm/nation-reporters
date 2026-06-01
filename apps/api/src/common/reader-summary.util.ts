@@ -74,9 +74,15 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/\b(Kindly\s+share\s+this\s+story|Share\s+this\s+(?:story|article|news)|Spread\s+the\s+word)[:\s]*/gi, '\n$&\n');
   // Strip social media share chrome mashed inline
   t = t.replace(/\b(Follow us on|Subscribe|Newsletter)\b[^\n]*/gi, '');
+  // BBC / Guardian "Live Well" newsletter promo and similar UK publisher footers
+  t = t.replace(/Make\s+the\s+most\s+of\s+your\s+health[^\n]*/gi, '');
+  t = t.replace(/(?:Live\s+Well\s+newsletter|Well\s+newsletter)[^\n]*/gi, '');
+  t = t.replace(/Get\s+it\s+in\s+your\s+inbox\s+every\s+\w+day[^\n]*/gi, '');
+  t = t.replace(/Sign\s+up\s+(?:for|to)\s+(?:the\s+)?(?:BBC|Guardian|Live\s+Well)[^\n]*/gi, '');
   // Amar Ujala footer chrome — split mashed block at recognizable boundaries
   t = t.replace(/\bLink\s*Copied\b/gi, '\nLink Copied\n');
-  t = t.replace(/(फोटो\s*:\s*@[^\n।]*)/gu, '\n$1\n');
+  t = t.replace(/(फोटो\s*:\s*[^\n।]{0,80})/gu, '\n$1\n');
+  t = t.replace(/(-\s*फोटो\s*:\s*[^\n।]{0,80})/gu, '\n$1\n');
   t = t.replace(/(खबरें\s*लगातार\s*पढ़ने\s*के\s*लिए[^\n।]*)/gu, '\n$1\n');
   t = t.replace(/(Recommended\s+विशेष[^\n]*)/gu, '\n$1\n');
   t = t.replace(/(About\s+Us\s+Advertise[^\n]*)/gi, '\n$1\n');
@@ -268,7 +274,7 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
     return true;
   }
   // Amar Ujala footer/UI chrome lines
-  if (/^फोटो\s*:\s*@/u.test(t)) return true;
+  if (/^-?\s*फोटो\s*:/u.test(t) && t.length < 120) return true;
   if (/^Link\s*Copied$/i.test(t)) return true;
   if (/^खबरें\s*लगातार\s*पढ़ने\s*के\s*लिए/u.test(t)) return true;
   if (/^Recommended\b/i.test(t) && /विशेष|खास|आज\s*का/u.test(t)) return true;
@@ -284,6 +290,11 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^Tired\s+of\s+too\s+many\s+ads\??$/i.test(t)) return true;
   if (/^(Daily\s*Puzzles?|Spelling\s*Bee\s*Today|Connections\s*Game\s*Today|Wordle\s*(?:Answer|Hint)\s*Today)$/i.test(t)) return true;
   if (/^Get\s+Latest\s+(?:News|Updates)\s+on\s+(?:HT|Hindustan\s*Times)/i.test(t)) return true;
+  // BBC / Guardian newsletter promo lines
+  if (/^Make\s+the\s+most\s+of\s+your\s+health/i.test(t)) return true;
+  if (/Live\s+Well\s+newsletter/i.test(t) && t.length < 150) return true;
+  if (/^Get\s+it\s+in\s+your\s+inbox\s+every/i.test(t)) return true;
+  if (/^Sign\s+up\s+(for|to)\s+(the\s+)?(BBC|Guardian|Live\s+Well)/i.test(t)) return true;
   // TOI Trending sidebar lines: "Trending Ajith Kumar Rakesh Bedi ..."
   if (/^Trending\s+[A-Z]/.test(t) && !/[।.!?,]/.test(t) && t.length < 200) return true;
   // Dainik Bhaskar related-article section headers

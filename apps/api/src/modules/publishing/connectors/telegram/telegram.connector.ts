@@ -51,10 +51,12 @@ export class TelegramConnector extends SocialConnector {
     // Only publish to main channel if language is English or main channel is the only one
     const mainChannel = this.config.get<string>('TELEGRAM_CHANNEL_ID');
     if (!mainChannel?.trim()) return null;
+    // TELEGRAM_ENGLISH_ONLY=true → only English articles post to main channel
+    const englishOnly = this.config.get<string>('TELEGRAM_ENGLISH_ONLY');
+    if (englishOnly === 'true' && lang !== 'en') return null;
     // For non-English: only post to main channel if no language-specific channel is set
     // and there are no other language channels configured at all (single-channel mode).
     if (lang !== 'en') {
-      // Check if ANY language-specific channel exists — if so, this article has no channel.
       const anyLangChannel = ['hi','mr','bn','ta','te','kn','ml','gu','pa','ur',
         'ar','fr','de','es','pt','ru','zh','ja','ko','id','tr','it']
         .some((l) => !!this.config.get<string>(`TELEGRAM_CHANNEL_ID_${l.toUpperCase()}`)?.trim());
