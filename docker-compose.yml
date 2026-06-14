@@ -42,10 +42,16 @@ services:
       MINIO_ROOT_PASSWORD: minioadmin
     volumes:
       - minio_data:/data
+    restart: on-failure
     healthcheck:
       test: ['CMD', 'curl', '-f', 'http://localhost:9000/minio/health/live']
       interval: 30s
+      timeout: 10s
       retries: 3
+
+  meilisearch:
+    healthcheck:
+      timeout: 10s
 
   api:
     build:
@@ -65,8 +71,16 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      meilisearch:
+        condition: service_healthy
     command: >
       sh -c "npx prisma migrate deploy && node dist/main"
+    restart: on-failure
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/api/v1/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   web:
     build:
@@ -78,6 +92,12 @@ services:
       NEXT_PUBLIC_API_URL: http://api:3001/api/v1
     depends_on:
       - api
+    restart: on-failure
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   postgres_data:

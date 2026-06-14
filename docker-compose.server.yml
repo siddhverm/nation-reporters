@@ -29,6 +29,11 @@ services:
     volumes:
       - meilisearch_data:/meili_data
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:7700/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   api:
     build:
@@ -49,8 +54,15 @@ services:
         condition: service_healthy
       redis:
         condition: service_healthy
+      meilisearch:
+        condition: service_healthy
     command: sh -c "npx prisma migrate deploy && node dist/main"
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3001/api/v1/health']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   web:
     build:
@@ -66,6 +78,11 @@ services:
     depends_on:
       - api
     restart: unless-stopped
+    healthcheck:
+      test: ['CMD', 'curl', '-f', 'http://localhost:3000/']
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   postgres_data:
