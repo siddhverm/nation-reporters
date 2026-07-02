@@ -1,0 +1,16 @@
+node_modules
+**/node_modules
+.next
+**/.next
+dist
+**/dist
+build
+.turbo
+coverage
+.git
+.github
+*.md
+**/*.tsbuildinfo
+.env
+.env.*
+!.env.template

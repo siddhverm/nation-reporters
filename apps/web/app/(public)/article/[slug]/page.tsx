@@ -14,7 +14,7 @@ import {
   stripWireHeadlinePrefix,
 } from '@/lib/rss-plain-text';
 import { fetchJsonFromApi } from '@/lib/api-client';
-import { formatListingExcerpt, resolveArticleReaderSummary, stripPublisherFeedBoilerplate as stripFeedBoilerplate } from '@/lib/reader-summary';
+import { formatListingExcerpt, resolveArticleReaderSummary, stripPublisherFeedBoilerplate } from '@/lib/reader-summary';
 import {
   articleMatchesLanguageOrScript,
   normalizeUiLanguage,
@@ -41,6 +41,15 @@ interface Article {
   categoryId: string | null;
   provenance?: { sourceName: string; sourceUrl: string; attributionNote?: string } | null;
   mediaAssets?: { id: string; type: string; url: string }[];
+}
+
+/** Single-arg wrapper so this can be passed to `.map()` without TS index/headline confusion. */
+function stripFeedBoilerplate(text: string): string {
+  return stripPublisherFeedBoilerplate(text);
+}
+
+function stripFeedBoilerplateWithTitle(text: string, headline: string): string {
+  return stripPublisherFeedBoilerplate(text, headline);
 }
 
 const FALLBACK_ARTICLES: Record<string, { title: string; excerpt: string; paragraphs: string[] }> = {
@@ -405,7 +414,7 @@ function tieredStoryParagraphs(article: Article, titleText: string, teaserDedupe
     const cleaned = stripFeedBoilerplate(raw).trim();
     if (!cleaned || isFeedBodyPlaceholder(cleaned)) continue;
     const parts = dedupeParagraphs(
-      splitTextToParagraphs(cleaned).map(stripFeedBoilerplate).filter(Boolean),
+      splitTextToParagraphs(cleaned).map((p) => stripFeedBoilerplateWithTitle(p, titleText)).filter(Boolean),
     ).filter((p) => !isFeedBodyPlaceholder(p));
     const filtered = filterBodyParagraphs(filterTitleOnly(parts, titleText), teaserDedupe, titleText);
     if (filtered.length > 0) return filtered;

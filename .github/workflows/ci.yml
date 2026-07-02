@@ -25,6 +25,11 @@ jobs:
       - name: Lint Web
         run: cd apps/web && npm run lint
 
+      - name: Build Web
+        run: cd apps/web && npm run build
+        env:
+          NEXT_TELEMETRY_DISABLED: 1
+
       - name: Build API
         run: cd apps/api && npm run build
         env:

@@ -13,6 +13,7 @@ COPY packages/shared-types/ ./packages/shared-types/
 COPY package.json ./
 WORKDIR /app/apps/web
 ENV NEXT_TELEMETRY_DISABLED=1
+ENV NODE_OPTIONS=--max-old-space-size=1536
 RUN npm run build
 
 FROM node:20-alpine AS runner
