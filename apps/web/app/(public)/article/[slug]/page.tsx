@@ -634,7 +634,7 @@ export default function ArticlePage() {
   const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
   const combinedForDedupe = [...bodyStructured, ...fallbackParagraphs];
   const deduped = dedupeParagraphs(
-    combinedForDedupe.map(stripFeedBoilerplate).filter(Boolean),
+    combinedForDedupe.map((p) => stripFeedBoilerplate(p)).filter(Boolean),
   ).filter((p) => !isFeedBodyPlaceholder(p));
   const excerptRaw = stripSyndicationLinkbacks(
     stripFeedBoilerplate(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim()),
