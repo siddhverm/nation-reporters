@@ -30,6 +30,11 @@ import {
   splitStoryBodies,
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
+import {
+  normalizeImageUrl,
+  persistArticleImage,
+  s3ConfigFromEnv,
+} from '../../../common/mirror-external-image.util';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
 
 type CategorySlug =
@@ -216,7 +221,10 @@ export class IngestionCronService {
         this.logger.log(
           `Ingestion: stored body from source page (${fetched.length}c) vs RSS (${rssPlain.length}c) titleOnly=${looksTitleOnly}`,
         );
-        return stripSyndicationLinkbacks(fetched);
+        return stripPublisherFeedBoilerplate(
+          stripSyndicationLinkbacks(fetched),
+          itemTitlePlain,
+        );
       }
     } catch (e) {
       this.logger.warn(`Ingestion source fetch failed ${sourceUrl.slice(0, 64)}: ${(e as Error).message}`);
@@ -306,13 +314,23 @@ export class IngestionCronService {
   }
 
   private extractImage(item: any): string | null {
-    // Try media:content, media:thumbnail, enclosure, image in content
-    return item['media:content']?.$.url
-        ?? item['media:thumbnail']?.$.url
-        ?? (item.enclosure?.type?.startsWith('image') ? item.enclosure.url : null)
-        ?? item['ht:image']?.['$']?.url
-        ?? this.extractImgFromHtml(item.content ?? item.summary ?? '')
-        ?? null;
+    const link = typeof item.link === 'string' ? item.link : item.link?.href ?? item.guid;
+    const fromMediaGroup = item['media:group']?.['media:content'];
+    const groupUrl = Array.isArray(fromMediaGroup)
+      ? fromMediaGroup.find((m: { $?: { type?: string; url?: string } }) =>
+          String(m?.$?.type ?? '').startsWith('image'))?.$?.url
+      : fromMediaGroup?.$?.url;
+
+    const raw =
+      item['media:content']?.$.url
+      ?? item['media:thumbnail']?.$.url
+      ?? groupUrl
+      ?? (item.enclosure?.type?.startsWith('image') ? item.enclosure.url : null)
+      ?? item['ht:image']?.['$']?.url
+      ?? this.extractImgFromHtml(item.content ?? item.summary ?? '')
+      ?? null;
+
+    return normalizeImageUrl(raw, link);
   }
 
   private extractImgFromHtml(html: string): string | null {
@@ -690,17 +708,25 @@ export class IngestionCronService {
     });
 
     if (imageUrl) {
-      await this.prisma.mediaAsset.create({
-        data: {
-          articleId: article.id,
-          type: 'IMAGE',
-          url: imageUrl,
-          s3Key: `external/${article.id}/source-image`,
-          mimeType: 'image/jpeg',
-          sizeBytes: 0,
-          scanStatus: 'external',
-        },
-      });
+      const storedUrl = await persistArticleImage(
+        this.prisma,
+        s3ConfigFromEnv((k) => this.config.get(k)),
+        article.id,
+        imageUrl,
+        ingestedArticle.sourceUrl,
+      );
+      if (storedUrl) {
+        await this.prisma.article.update({
+          where: { id: article.id },
+          data: {
+            body: {
+              ...(article.body as object),
+              imageUrl: storedUrl,
+              imageCredit: 'Story image',
+            },
+          },
+        });
+      }
     }
 
     if (ingestedArticle.sourceUrl) {

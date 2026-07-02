@@ -21,6 +21,8 @@ import { translatePrompt } from './prompts/translate.prompt';
 import { Platform } from '@prisma/client';
 import { PublishingService } from '../publishing/publishing.service';
 import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../common/editorial-sanitize';
+import { stripPublisherFeedBoilerplate } from '../../common/reader-summary.util';
+import { persistArticleImage, s3ConfigFromEnv } from '../../common/mirror-external-image.util';
 
 type ProcessIngestedOptions = {
   language?: string;
@@ -106,7 +108,10 @@ export class AiService {
         }
       }
 
-      bodyForRewrite = stripSyndicationLinkbacks(bodyForRewrite);
+      bodyForRewrite = stripPublisherFeedBoilerplate(
+        stripSyndicationLinkbacks(bodyForRewrite),
+        titlePlain || ingested.sourceTitle,
+      );
 
       // Always publish under the feed's language — never let AI or script detection override.
       const language = feedLangHint;
@@ -117,14 +122,17 @@ export class AiService {
         summary: string; podcastScript: string; language: string;
       }>(rewritePrompt(titlePlain || ingested.sourceTitle, bodyForRewrite, language));
 
+      const headlineForStrip = titlePlain || ingested.sourceTitle;
+      const stripRewritten = (t: string) =>
+        stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(t), headlineForStrip);
       const rewrite = {
         ...rewriteRaw,
-        title: stripWireHeadlinePrefix(stripSyndicationLinkbacks(rewriteRaw.title)),
-        short: stripSyndicationLinkbacks(rewriteRaw.short),
-        medium: stripSyndicationLinkbacks(rewriteRaw.medium),
-        long: stripSyndicationLinkbacks(rewriteRaw.long),
-        summary: stripSyndicationLinkbacks(rewriteRaw.summary),
-        podcastScript: stripSyndicationLinkbacks(rewriteRaw.podcastScript),
+        title: stripWireHeadlinePrefix(stripRewritten(rewriteRaw.title)),
+        short: stripRewritten(rewriteRaw.short),
+        medium: stripRewritten(rewriteRaw.medium),
+        long: stripRewritten(rewriteRaw.long),
+        summary: stripRewritten(rewriteRaw.summary),
+        podcastScript: stripRewritten(rewriteRaw.podcastScript),
         language: rewriteRaw.language,
       };
 
@@ -269,17 +277,25 @@ export class AiService {
       });
 
       if (options.imageUrl) {
-        await this.prisma.mediaAsset.create({
-          data: {
-            articleId: article.id,
-            type: 'IMAGE',
-            url: options.imageUrl,
-            s3Key: `external/${article.id}/source-image`,
-            mimeType: 'image/jpeg',
-            sizeBytes: 0,
-            scanStatus: 'external',
-          },
-        });
+        const storedUrl = await persistArticleImage(
+          this.prisma,
+          s3ConfigFromEnv((k) => this.config.get(k)),
+          article.id,
+          options.imageUrl,
+          ingested.sourceUrl,
+        );
+        if (storedUrl) {
+          await this.prisma.article.update({
+            where: { id: article.id },
+            data: {
+              body: {
+                ...(article.body as object),
+                imageUrl: storedUrl,
+                imageCredit: 'Story image',
+              },
+            },
+          });
+        }
       }
 
       if (options.sourceVideoUrl) {

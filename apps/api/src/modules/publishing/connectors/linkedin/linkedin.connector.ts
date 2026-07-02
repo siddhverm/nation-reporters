@@ -23,10 +23,8 @@ export class LinkedinConnector extends SocialConnector {
         specificContent: {
           'com.linkedin.ugc.ShareContent': {
             shareCommentary: { text: `${payload.caption || payload.title}\n${payload.url}` },
-            shareMediaCategory: payload.imageUrl ? 'IMAGE' : 'ARTICLE',
-            media: payload.imageUrl
-              ? undefined
-              : [{ status: 'READY', originalUrl: payload.url, title: { text: payload.title } }],
+            shareMediaCategory: 'ARTICLE',
+            media: [{ status: 'READY', originalUrl: payload.url, title: { text: payload.title } }],
           },
         },
         visibility: { 'com.linkedin.ugc.MemberNetworkVisibility': 'PUBLIC' },

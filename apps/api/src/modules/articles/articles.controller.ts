@@ -1,10 +1,11 @@
 import {
   Controller, Get, Post, Patch, Body, Param,
-  Query, UseGuards, HttpCode,
+  Query, UseGuards, HttpCode, BadRequestException,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ArticleStatus, Role } from '@prisma/client';
 import { ArticlesService } from './articles.service';
+import { PublishingService } from '../publishing/publishing.service';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
@@ -14,7 +15,10 @@ import { CurrentUser } from '../../common/decorators/current-user.decorator';
 @ApiTags('articles')
 @Controller('articles')
 export class ArticlesController {
-  constructor(private readonly svc: ArticlesService) {}
+  constructor(
+    private readonly svc: ArticlesService,
+    private readonly publishing: PublishingService,
+  ) {}
 
   // ── Public read endpoints (no auth required) ──────────────────────────────
 
@@ -113,7 +117,19 @@ export class ArticlesController {
   @Roles(Role.CHIEF_EDITOR, Role.ADMIN)
   @Post(':id/publish')
   @HttpCode(200)
-  publish(@Param('id') id: string, @CurrentUser() user: { id: string }) {
-    return this.svc.transition(id, ArticleStatus.PUBLISHING, user.id);
+  async publish(@Param('id') id: string, @CurrentUser() user: { id: string }) {
+    const article = await this.svc.findOne(id);
+    const publishable: ArticleStatus[] = [
+      ArticleStatus.APPROVED,
+      ArticleStatus.SCHEDULED,
+      ArticleStatus.PUBLISH_FAILED,
+    ];
+    if (!publishable.includes(article.status)) {
+      throw new BadRequestException(
+        `Cannot publish article in status ${article.status}. Approve the article first.`,
+      );
+    }
+    await this.svc.transition(id, ArticleStatus.PUBLISHING, user.id);
+    return this.publishing.publishArticle(id);
   }
 }

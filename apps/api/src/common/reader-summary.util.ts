@@ -262,6 +262,8 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/\d{1,2}:\d{2}\s*(AM|PM)?\s*(IST|GMT|UTC|EST|PST|CET|JST|KST|CST)\b/i.test(t) && t.length < 80) return true;
   // "Reporter: Name" / "By Name" short attribution lines
   if (/^(Reporter|Correspondent|Staff Reporter|Special Correspondent|ANI|PTI|AFP|AP|Reuters)\s*[:|,]/i.test(t)) return true;
+  if (/^by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(t)) return true;
+  if (/^according to\s+/i.test(low)) return true;
   // Short numeric-only lines (ad counts, page numbers)
   if (/^\d{1,3}$/.test(t)) return true;
   // Source breadcrumb footer lines like "National > Breaking News > Hindi > Dainik Bhaskar"

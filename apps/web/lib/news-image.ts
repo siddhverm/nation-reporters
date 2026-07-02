@@ -1,6 +1,7 @@
 // Returns a consistent image URL for an article.
-// Public Nation Reporters pages do not use syndicated publisher images (avoids branding e.g. TOI on art).
-// Only non-external (e.g. uploaded / generated) assets are used; otherwise Picsum placeholder by slug.
+// External publisher images are proxied via /api/image to avoid hotlink blocks.
+// S3-mirrored images (scanStatus: clean) are served directly.
+// Falls back to site logo when no story image is available.
 export const LOGO_FALLBACK = '/logo.png';
 
 export function getArticleImage(
@@ -23,15 +24,34 @@ type ImageLikeArticle = {
   }>;
 };
 
+function isMirroredImage(media: { scanStatus?: string | null; url?: string | null }): boolean {
+  if (media.scanStatus === 'clean') return true;
+  const url = media.url ?? '';
+  return /localhost:9000|minio|\/ingested\/images\//i.test(url);
+}
+
+function proxyExternalImage(url: string): string {
+  if (!url || url.startsWith('/')) return url;
+  if (isMirroredImage({ url, scanStatus: 'clean' })) return url;
+  return `/api/image?url=${encodeURIComponent(url)}`;
+}
+
 /**
- * Image for public cards / article hero. Shows original source images — a copyright disclaimer
- * is displayed on all article cards and pages.
+ * Image for public cards / article hero. Prefers mediaAssets, then body.imageUrl.
+ * External URLs are proxied unless already mirrored to S3.
  */
 export function getPreferredArticleImage(article: ImageLikeArticle | null | undefined): string | null {
   if (!article) return null;
+
   const media = article.mediaAssets?.find((m) => m.type === 'IMAGE' && typeof m.url === 'string' && m.url.length > 0);
-  if (!media?.url) return null;
-  return media.url;
+  if (media?.url) {
+    return isMirroredImage(media) ? media.url : proxyExternalImage(media.url);
+  }
+
+  const bodyUrl = getBodyImageUrl(article.body);
+  if (bodyUrl) return proxyExternalImage(bodyUrl);
+
+  return null;
 }
 
 export function getCategoryImage(categorySlug: string): string {

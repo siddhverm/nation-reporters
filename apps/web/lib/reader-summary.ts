@@ -46,6 +46,13 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^full details are available on the original publisher page\.?$/i.test(low)) return true;
   if (/^source:\s*.+syndicated summary/i.test(low)) return true;
   if (/original reporting at source/i.test(low)) return true;
+  if (/^\d+\s*(मिनट|घंटे?|दिन|सेकंड)\s*पहले$/.test(t)) return true;
+  if (/^लेखक\s*:/.test(t)) return true;
+  if (/^कॉपी\s*लिंक$/.test(t)) return true;
+  if (/^(Hindi\s*News|Bhaskar\s*Khaas?|Khabar\s*Hatke|खबर\s*हटके|भास्कर\s*खास)$/i.test(t)) return true;
+  if (/पूरी\s*खबर\s*पढ़ें\s*ऐप|ऐप\s*पर\s*पढ़ें|QR\s*स्कैन|प्रीमियम\s*मेंबरशिप|अधूरा\s*नहीं|पढ़िए\s*पूरा/u.test(t)) return true;
+  if (/^by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(t)) return true;
+  if (/^according to\s+/i.test(low)) return true;
   if (t.length < 4) return true;
   if (/^https?:\/\/\S+$/i.test(t)) return true;
   return false;
@@ -93,6 +100,8 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   );
   t = t.replace(/प्रकाशित\s+\d+\s*(मिनट|घंटे|दिन)\s*पहले/gu, '\n$&\n');
   t = t.replace(/वीडियो कैप्शन/gu, '\n$&\n');
+  t = t.replace(/(लेखक\s*:\s*[^\n]+)/gu, '\n$1\n');
+  t = t.replace(/(कॉपी\s*लिंक)/gu, '\n$1\n');
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');

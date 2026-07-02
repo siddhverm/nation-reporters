@@ -14,7 +14,7 @@ import {
   stripWireHeadlinePrefix,
 } from '@/lib/rss-plain-text';
 import { fetchJsonFromApi } from '@/lib/api-client';
-import { formatListingExcerpt, resolveArticleReaderSummary } from '@/lib/reader-summary';
+import { formatListingExcerpt, resolveArticleReaderSummary, stripPublisherFeedBoilerplate as stripFeedBoilerplate } from '@/lib/reader-summary';
 import {
   articleMatchesLanguageOrScript,
   normalizeUiLanguage,
@@ -228,28 +228,6 @@ function splitTextToParagraphs(text: string): string[] {
     .split(/\n\s*\n|(?<=[.!?।।])\s+(?=[A-Z0-9])/)
     .map((p) => p.trim())
     .filter((p) => p.length > 0);
-}
-
-function stripFeedBoilerplate(text: string): string {
-  return text
-    .split(/\n+/)
-    .map((l) => l.trim())
-    .filter((line) => {
-      if (!line) return false;
-      const low = line.toLowerCase();
-      if (/^share:?\s*$/i.test(line) || /^fb\s*$/i.test(low) || /^x\s*$/i.test(low)) return false;
-      if (/^share:\s*(fb|x|twitter)/i.test(line)) return false;
-      if (/^(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d/i.test(low)) return false;
-      if (/प्रकाशित\s+\d+\s*(मिनट|घंटे|दिन)\s*पहले/u.test(line)) return false;
-      if (/^(video caption|वीडियो कैप्शन)/i.test(low)) return false;
-      return true;
-    })
-    .join('\n')
-    .replace(/\s+continue reading\.?\.?\.*\s*$/i, '')
-    .replace(/\s+read more\.?\.?\.*\s*$/i, '')
-    .replace(/\s+\.\.\.\s*$/i, '')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
 }
 
 function dedupeParagraphs(paragraphs: string[]): string[] {
