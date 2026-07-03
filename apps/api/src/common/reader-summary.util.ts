@@ -187,6 +187,8 @@ function stripInlinePublisherChrome(text: string): string {
   t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама)\s*/gi, ' ');
   t = t.replace(/\b(Photo\s*:|Photos\s*:|Image\s*:|Pic\s*:|Picture\s*:|Caption\s*:)\s*[^\n.]{0,80}/gi, '');
   t = t.replace(/\b(Follow us on|Subscribe to|Subscribe for|Get our newsletter)\b[^\n.]*/gi, '');
+  t = t.replace(/\bImage\s+notice\s*:\s*[^\n.]*/gi, '');
+  t = t.replace(/\bArticle\s+image\s+is\s+shown\s+when\s+available[^\n.]*/gi, '');
   return t.replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -293,6 +295,8 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   ) {
     return true;
   }
+  if (/^Image\s+notice\s*:/i.test(t)) return true;
+  if (/Article\s+image\s+is\s+shown\s+when\s+available/i.test(t)) return true;
   // Short numeric-only lines (ad counts, page numbers)
   if (/^\d{1,3}$/.test(t)) return true;
   // Source breadcrumb footer lines like "National > Breaking News > Hindi > Dainik Bhaskar"

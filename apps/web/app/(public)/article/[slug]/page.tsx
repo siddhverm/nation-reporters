@@ -425,7 +425,7 @@ function tieredStoryParagraphs(article: Article, titleText: string, teaserDedupe
     (v): v is string => typeof v === 'string' && v.trim().length > 0,
   );
   for (const raw of tiers) {
-    const cleaned = stripFeedBoilerplate(raw).trim();
+    const cleaned = stripFeedBoilerplateWithTitle(raw, titleText).trim();
     if (!cleaned || isFeedBodyPlaceholder(cleaned)) continue;
     const parts = dedupeParagraphs(
       splitTextToParagraphs(cleaned).map((p) => stripFeedBoilerplateWithTitle(p, titleText)).filter(Boolean),
@@ -442,7 +442,7 @@ function rawLongFormParagraphs(article: Article, titleText: string, teaserDedupe
   const s = article.bodyShort?.trim();
   const raw = m && s ? (m.length >= s.length ? m : s) : m ?? s ?? '';
   if (!raw || raw.length < 40) return [];
-  const cleaned = stripFeedBoilerplate(raw).trim();
+  const cleaned = stripFeedBoilerplateWithTitle(raw, titleText).trim();
   if (isFeedBodyPlaceholder(cleaned)) return [];
   const parts = splitTextToParagraphs(cleaned).filter((p) => !isFeedBodyPlaceholder(p));
   const blocks = parts.length > 0 ? parts : [cleaned];
@@ -472,7 +472,7 @@ function mediumShortLastResort(article: Article, displaySummary: string, titleTe
   } else {
     raw = (m ?? s ?? '').trim();
   }
-  raw = stripFeedBoilerplate(raw);
+  raw = stripFeedBoilerplateWithTitle(raw, titleText);
   if (!raw || raw.length < 60 || isFeedBodyPlaceholder(raw)) return null;
   if (titleText && isTitleEcho(raw, titleText)) return null;
   const sum = displaySummary.trim();
@@ -488,9 +488,10 @@ function mediumShortLastResort(article: Article, displaySummary: string, titleTe
 function pickFallbackBodyParagraph(article: Article, titleText: string, displaySummary: string): string {
   const chunks = [article.bodyMedium, article.bodyShort, article.excerpt]
     .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-    .map((s) => stripFeedBoilerplate(s.trim()));
+    .map((s) => stripFeedBoilerplateWithTitle(s.trim(), titleText));
   for (const chunk of chunks) {
     if (isFeedBodyPlaceholder(chunk)) continue;
+    if (isPublisherBoilerplateLine(chunk, titleText)) continue;
     if (isTeaserStyleLead(chunk)) continue;
     if (titleText && isTitleEcho(chunk, titleText)) continue;
     if (
@@ -703,12 +704,17 @@ export default function ArticlePage() {
   const sourceImageUrl = getPreferredArticleImage(article) ?? null;
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
-  const proseText = (text: string) => safeArticleText(text);
+  const proseText = (text: string) =>
+    safeArticleText(stripFeedBoilerplateWithTitle(text, titleText));
   const renderProseBlocks = (text: string, keyPrefix: string) => {
-    const parts = splitTextToParagraphs(proseText(text)).filter(Boolean);
+    const parts = filterBodyParagraphs(
+      splitTextToParagraphs(proseText(text)).filter(Boolean),
+      teaserForDedupe,
+      titleText,
+    );
     return parts.length > 0
       ? parts.map((p, i) => <p key={`${keyPrefix}-${i}`}>{p}</p>)
-      : <p>{proseText(text)}</p>;
+      : null;
   };
 
   let bodyContent: ReactNode = null;
@@ -719,7 +725,15 @@ export default function ArticlePage() {
   } else if (lastResortFullDoc) {
     bodyContent = renderProseBlocks(lastResortFullDoc, 'lr-doc');
   } else if (fallbackBodyText && !fallbackIsDuplicateOfSummary) {
-    bodyContent = <p>{proseText(fallbackBodyText)}</p>;
+    const fallbackParts = filterBodyParagraphs(
+      splitTextToParagraphs(proseText(fallbackBodyText)).filter(Boolean),
+      teaserForDedupe,
+      titleText,
+    );
+    bodyContent =
+      fallbackParts.length > 0
+        ? fallbackParts.map((p, i) => <p key={`fb-${i}`}>{p}</p>)
+        : null;
   } else if (seoExtra) {
     bodyContent = <p className="text-gray-800 leading-relaxed not-italic">{proseText(seoExtra)}</p>;
   } else if (displaySummary || excerptText) {

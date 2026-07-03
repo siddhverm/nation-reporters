@@ -116,6 +116,13 @@ test('Australian English: strips Morning Edition promo, reporter at outlet, adve
   expect(out).toContain('humpback whale');
 });
 
+test('Australian English: strips Image notice placeholder lines', () => {
+  const raw = `Image notice: Article image is shown when available for this story. A humpback whale was rescued off Queensland.`;
+  const out = stripPublisherFeedBoilerplate(raw, 'Whale rescue');
+  assertClean(out, [/Image notice/i, /Article image is shown/i], 'Image notice');
+  expect(out).toContain('humpback whale');
+});
+
 // ─── FRENCH ───────────────────────────────────────────────────────────────────
 test('French: strips Par byline and Advertisement', () => {
   const raw = `Par Jean Dupont | Le gouvernement français a annoncé de nouvelles mesures économiques. Ces mesures visent à réduire le chômage et à stimuler la croissance. Publicité`;
