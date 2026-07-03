@@ -14,7 +14,7 @@ import {
   stripWireHeadlinePrefix,
 } from '@/lib/rss-plain-text';
 import { fetchJsonFromApi } from '@/lib/api-client';
-import { formatListingExcerpt, resolveArticleReaderSummary, stripPublisherFeedBoilerplate } from '@/lib/reader-summary';
+import { formatListingExcerpt, resolveArticleReaderSummary, stripPublisherFeedBoilerplate, isPublisherBoilerplateLine } from '@/lib/reader-summary';
 import {
   articleMatchesLanguageOrScript,
   normalizeUiLanguage,
@@ -118,7 +118,10 @@ function collectTextDeep(node: unknown): string {
 }
 
 /** TipTap doc: walk blocks (paragraph, heading, list items, blockquote) and collect readable lines. */
-function extractParagraphs(body: Article['body'] | string | null | undefined): string[] {
+function extractParagraphs(
+  body: Article['body'] | string | null | undefined,
+  headline = '',
+): string[] {
   let doc: Record<string, unknown> | null = body as Record<string, unknown>;
   if (typeof body === 'string') {
     try {
@@ -154,13 +157,18 @@ function extractParagraphs(body: Article['body'] | string | null | undefined): s
     }
   };
   visit(doc.content as { type?: string; content?: unknown[] }[]);
+  const strip = (s: string) =>
+    headline ? stripFeedBoilerplateWithTitle(s, headline) : stripFeedBoilerplate(s);
   return out
-    .map((s) => stripFeedBoilerplate(rssPlainLine(s) || s))
+    .map((s) => strip(rssPlainLine(s) || s))
     .filter(Boolean);
 }
 
 /** When block types are non-standard, still recover readable paragraphs from the whole doc. */
-function extractPlainParagraphsFromBody(body: Article['body'] | string | null | undefined): string[] {
+function extractPlainParagraphsFromBody(
+  body: Article['body'] | string | null | undefined,
+  headline = '',
+): string[] {
   let doc: Record<string, unknown> | null = body as Record<string, unknown>;
   if (typeof body === 'string') {
     try {
@@ -176,8 +184,10 @@ function extractPlainParagraphsFromBody(body: Article['body'] | string | null | 
     .replace(/\s+/g, ' ')
     .trim();
   if (blob.length < 50 || isFeedBodyPlaceholder(blob)) return [];
-  const chunks = splitTextToParagraphs(stripFeedBoilerplate(blob)).filter((c) => !isFeedBodyPlaceholder(c));
-  const single = stripFeedBoilerplate(blob);
+  const strip = (s: string) =>
+    headline ? stripFeedBoilerplateWithTitle(s, headline) : stripFeedBoilerplate(s);
+  const chunks = splitTextToParagraphs(strip(blob)).filter((c) => !isFeedBodyPlaceholder(c));
+  const single = strip(blob);
   return chunks.length > 0 ? chunks : isFeedBodyPlaceholder(single) ? [] : [single];
 }
 
@@ -293,8 +303,8 @@ function isTitleEcho(paragraph: string, titleText: string): boolean {
   return isNearDuplicate(p, t);
 }
 
-function trimSummaryDisplay(text: string, maxLen = 1100): string {
-  const t = stripFeedBoilerplate(text).trim();
+function trimSummaryDisplay(text: string, titleText: string, maxLen = 1100): string {
+  const t = stripFeedBoilerplateWithTitle(text, titleText).trim();
   if (t.length <= maxLen) return t;
   const cut = t.slice(0, maxLen);
   const last = Math.max(
@@ -351,7 +361,7 @@ function pickDisplaySummary(
     minChars: MIN_SUBSTANTIVE_SUMMARY_CHARS,
     lang: uiLang,
   });
-  return raw ? trimSummaryDisplay(raw, 1200) : '';
+  return raw ? trimSummaryDisplay(raw, titleText, 1200) : '';
 }
 
 /**
@@ -376,18 +386,22 @@ function isRedundantOpeningVsTeaser(paragraph: string, teaser: string): boolean 
   return isNearDuplicate(p, t);
 }
 
-/** Drop title echoes; drop teaser echoes only for short redundant openers, not full article blocks. */
+/** Drop title echoes; drop teaser echoes; drop publisher boilerplate-only blocks. */
 function filterBodyParagraphs(
   paragraphs: string[],
   teaserText: string,
   titleText: string,
 ): string[] {
-  return paragraphs.filter((p) => {
-    if (titleText && isTitleEcho(p, titleText)) return false;
-    if (!teaserText) return true;
-    if (!isRedundantOpeningVsTeaser(p, teaserText)) return true;
-    return false;
-  });
+  return paragraphs
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)).trim())
+    .filter((p) => {
+      if (!p || isFeedBodyPlaceholder(p)) return false;
+      if (isPublisherBoilerplateLine(p, titleText)) return false;
+      if (titleText && isTitleEcho(p, titleText)) return false;
+      if (!teaserText) return true;
+      if (!isRedundantOpeningVsTeaser(p, teaserText)) return true;
+      return false;
+    });
 }
 
 /** If leading blocks repeat the teaser/title, drop them so only distinct story copy remains. */
@@ -616,14 +630,18 @@ export default function ArticlePage() {
     </div>
   );
 
-  const structuredParas = extractParagraphs(article.body)
-    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplate(p)))
+  const titleText = stripWireHeadlinePrefix(
+    stripSyndicationLinkbacks(rssPlainLine(article.title) || (article.title ?? '').trim()),
+  );
+
+  const structuredParas = extractParagraphs(article.body, titleText)
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)))
     .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   const bodyStructured =
     structuredParas.length > 0
       ? structuredParas
-      : extractPlainParagraphsFromBody(article.body)
-          .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplate(p)))
+      : extractPlainParagraphsFromBody(article.body, titleText)
+          .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)))
           .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   // Do not merge excerpt into body text — it duplicates the teaser and breaks dedupe/filter.
   const fallbackText = stripSyndicationLinkbacks(
@@ -634,17 +652,14 @@ export default function ArticlePage() {
   const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
   const combinedForDedupe = [...bodyStructured, ...fallbackParagraphs];
   const deduped = dedupeParagraphs(
-    combinedForDedupe.map((p) => stripFeedBoilerplate(p)).filter(Boolean),
+    combinedForDedupe.map((p) => stripFeedBoilerplateWithTitle(p, titleText)).filter(Boolean),
   ).filter((p) => !isFeedBodyPlaceholder(p));
   const excerptRaw = stripSyndicationLinkbacks(
-    stripFeedBoilerplate(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim()),
+    stripFeedBoilerplateWithTitle(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim(), titleText),
   );
   const excerptText = isFeedBodyPlaceholder(excerptRaw) ? '' : excerptRaw;
-  const titleText = stripWireHeadlinePrefix(
-    stripSyndicationLinkbacks(rssPlainLine(article.title) || (article.title ?? '').trim()),
-  );
   const summarySourceParas = [...bodyStructured, ...fallbackParagraphs]
-    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplate(p)))
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)))
     .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   const displaySummary = pickDisplaySummary(article, titleText, summarySourceParas, uiLang);
   const teaserFull = (displaySummary || excerptText).trim();
@@ -818,12 +833,6 @@ export default function ArticlePage() {
                 ))}
               </div>
             )}
-
-            <div className="mt-3 p-3 bg-blue-50 rounded-lg text-xs text-blue-900 border border-blue-200">
-              Image notice: {sourceImageUrl
-                ? 'Article image is shown when available for this story.'
-                : 'A representative image is used when no story image is available.'}
-            </div>
 
             <div className="mt-3 p-3 bg-amber-50 rounded-lg text-xs text-amber-900 border border-amber-200">
               Legal notice: This article may include AI-assisted summarization/translation from third-party reports.

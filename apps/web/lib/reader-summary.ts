@@ -20,8 +20,8 @@ function escapeRegExp(s: string): string {
 /** Inline newsletter promos, ad labels, and AU/UK bylines mashed into story text. */
 function stripInlinePublisherChrome(text: string): string {
   let t = text;
-  t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition[^\n.]*/gi, '');
-  t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n.]{3,60}(?:newsletter|Edition)[^\n.]*/gi, '');
+  t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition\b\.?\s*/gi, '');
+  t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n]{3,60}?\b(?:newsletter|Edition)\b\.?\s*/gi, '');
   t = t.replace(/\b(?:[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?\s+)?reporter\s+at\s+[A-Z][^\n.]{2,60}\./gi, '');
   t = t.replace(/\bAdvertisem(?:ent)?\b/gi, ' ');
   t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad)\s*/gi, ' ');
@@ -84,6 +84,12 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   return false;
 }
 
+/** True when a paragraph is only publisher UI chrome (newsletter, byline, ad label, etc.). */
+export function isPublisherBoilerplateLine(line: string, headline?: string): boolean {
+  const title = stripWireHeadlinePrefix((headline ?? '').trim());
+  return isBoilerplateLine(line.trim(), normalizeForCompare(title));
+}
+
 function splitSentences(text: string): string[] {
   return text
     .split(/(?<=[.!?।])\s+/)
@@ -128,6 +134,9 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/वीडियो कैप्शन/gu, '\n$&\n');
   t = t.replace(/(लेखक\s*:\s*[^\n]+)/gu, '\n$1\n');
   t = t.replace(/(कॉपी\s*लिंक)/gu, '\n$1\n');
+  t = t.replace(/\b(Sign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition)\b/gi, '\n$1\n');
+  t = t.replace(/(\breporter\s+at\s+[A-Z][^\n.]{2,80}\.?)/gi, '\n$1\n');
+  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, '\n$&\n');
   t = stripInlinePublisherChrome(t);
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {

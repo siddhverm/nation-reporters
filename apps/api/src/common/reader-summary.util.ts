@@ -79,6 +79,10 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(?:Live\s+Well\s+newsletter|Well\s+newsletter)[^\n]*/gi, '');
   t = t.replace(/Get\s+it\s+in\s+your\s+inbox\s+every\s+\w+day[^\n]*/gi, '');
   t = t.replace(/Sign\s+up\s+(?:for|to)\s+(?:the\s+)?(?:BBC|Guardian|Live\s+Well)[^\n]*/gi, '');
+  // Australian Fairfax / Nine newsletter promos and bylines
+  t = t.replace(/\b(Sign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition)\b/gi, '\n$1\n');
+  t = t.replace(/(\breporter\s+at\s+[A-Z][^\n.]{2,80}\.?)/gi, '\n$1\n');
+  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, '\n$&\n');
   // Amar Ujala footer chrome — split mashed block at recognizable boundaries
   t = t.replace(/\bLink\s*Copied\b/gi, '\nLink Copied\n');
   t = t.replace(/(फोटो\s*:\s*[^\n।]{0,80})/gu, '\n$1\n');
@@ -176,8 +180,8 @@ function escapeRegExp(s: string): string {
 /** Inline newsletter promos, ad labels, and AU/UK bylines mashed into story text. */
 function stripInlinePublisherChrome(text: string): string {
   let t = text;
-  t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition[^\n.]*/gi, '');
-  t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n.]{3,60}(?:newsletter|Edition)[^\n.]*/gi, '');
+  t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition\b\.?\s*/gi, '');
+  t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n]{3,60}?\b(?:newsletter|Edition)\b\.?\s*/gi, '');
   t = t.replace(/\b(?:[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?\s+)?reporter\s+at\s+[A-Z][^\n.]{2,60}\./gi, '');
   t = t.replace(/\bAdvertisem(?:ent)?\b/gi, ' ');
   t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама)\s*/gi, ' ');
