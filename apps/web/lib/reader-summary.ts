@@ -17,6 +17,19 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/** Inline newsletter promos, ad labels, and AU/UK bylines mashed into story text. */
+function stripInlinePublisherChrome(text: string): string {
+  let t = text;
+  t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition[^\n.]*/gi, '');
+  t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n.]{3,60}(?:newsletter|Edition)[^\n.]*/gi, '');
+  t = t.replace(/\b(?:[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?\s+)?reporter\s+at\s+[A-Z][^\n.]{2,60}\./gi, '');
+  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, ' ');
+  t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad)\s*/gi, ' ');
+  t = t.replace(/\b(Photo\s*:|Photos\s*:|Image\s*:|Pic\s*:|Picture\s*:|Caption\s*:)\s*[^\n.]{0,80}/gi, '');
+  t = t.replace(/\b(Follow us on|Subscribe to|Subscribe for|Get our newsletter)\b[^\n.]*/gi, '');
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
 function isBoilerplateLine(line: string, titleNorm: string): boolean {
   const t = line.trim();
   if (!t) return true;
@@ -53,6 +66,19 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/पूरी\s*खबर\s*पढ़ें\s*ऐप|ऐप\s*पर\s*पढ़ें|QR\s*स्कैन|प्रीमियम\s*मेंबरशिप|अधूरा\s*नहीं|पढ़िए\s*पूरा/u.test(t)) return true;
   if (/^by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(t)) return true;
   if (/^according to\s+/i.test(low)) return true;
+  if (/^(Photo|Photos|Image|Pic|Picture|Caption)\s*:/i.test(t) && t.length < 150) return true;
+  if (/^(Advertisement|Advertisem|Publicité|Werbung|Publicidad)$/i.test(t)) return true;
+  if (/^Sign\s+up\s+for\s+(?:our\s+)?/i.test(t) && t.length < 120) return true;
+  if (/\breporter\s+at\s+[A-Z]/i.test(t) && t.length < 100) return true;
+  if (/^(Follow us on|Subscribe to|Subscribe for|Newsletter|Get our)/i.test(t) && t.length < 120) return true;
+  if (
+    /^(Brisbane\s+Times|Sydney\s+Morning\s+Herald|The\s+Age|WAtoday|Perth\s+Now|Canberra\s+Times|Fairfax|nine\.com\.au)/i.test(
+      t,
+    ) &&
+    t.length < 80
+  ) {
+    return true;
+  }
   if (t.length < 4) return true;
   if (/^https?:\/\/\S+$/i.test(t)) return true;
   return false;
@@ -102,6 +128,7 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/वीडियो कैप्शन/gu, '\n$&\n');
   t = t.replace(/(लेखक\s*:\s*[^\n]+)/gu, '\n$1\n');
   t = t.replace(/(कॉपी\s*लिंक)/gu, '\n$1\n');
+  t = stripInlinePublisherChrome(t);
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -130,6 +157,7 @@ export function stripPublisherFeedBoilerplate(text: string, headline?: string): 
   }
 
   let joined = stripSyndicationLinkbacks(kept.join('\n\n').trim());
+  joined = stripInlinePublisherChrome(joined);
   if (title && titleNorm) {
     joined = joined.replace(new RegExp(`^${escapeRegExp(title)}\\s*`, 'u'), '').trim();
     joined = joined.replace(new RegExp(`${escapeRegExp(title)}{2,}`, 'gu'), title).trim();

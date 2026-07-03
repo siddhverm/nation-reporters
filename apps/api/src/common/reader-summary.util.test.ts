@@ -104,6 +104,18 @@ test('Arabic: strips reporter attribution', () => {
   expect(out).toContain('الحكومة');
 });
 
+// ─── AUSTRALIAN ENGLISH (Brisbane Times / Fairfax) ───────────────────────────
+test('Australian English: strips Morning Edition promo, reporter at outlet, advertisement', () => {
+  const raw = `Sign up for our Morning Edition A humpback whale tangled in fishing nets was rescued off the Gold Coast on Thursday. Wildlife officers cut the nets free after a three-hour operation. reporter at Brisbane Times. Advertisem`;
+  const out = stripPublisherFeedBoilerplate(raw, 'Humpback whale rescued off Gold Coast');
+  assertClean(out, [
+    /Sign up for our Morning Edition/i,
+    /reporter at Brisbane Times/i,
+    /Advertisem/i,
+  ], 'Australian Fairfax');
+  expect(out).toContain('humpback whale');
+});
+
 // ─── FRENCH ───────────────────────────────────────────────────────────────────
 test('French: strips Par byline and Advertisement', () => {
   const raw = `Par Jean Dupont | Le gouvernement français a annoncé de nouvelles mesures économiques. Ces mesures visent à réduire le chômage et à stimuler la croissance. Publicité`;

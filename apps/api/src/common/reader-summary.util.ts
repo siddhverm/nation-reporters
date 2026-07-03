@@ -125,6 +125,7 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/\bVon\s+[A-ZÄÖÜ][a-zA-Zäöüß]+(?:\s+[a-zA-Zäöüß]+){0,3}\s*[|—–\-]/g, '\n$&\n');
   // Wire agency prefix mashed inline: "PTI: New Delhi."
   t = t.replace(/\b(PTI|ANI|AFP|AP|Reuters|IANS|UNI)\s*:/gi, '\n$&\n');
+  t = stripInlinePublisherChrome(t);
   const title = stripWireHeadlinePrefix((headline ?? '').trim());
   if (title.length > 16) {
     const re = new RegExp(`(${escapeRegExp(title)})\\s*\\1+`, 'gu');
@@ -152,6 +153,7 @@ export function stripPublisherFeedBoilerplate(text: string, headline?: string): 
   }
 
   let joined = kept.join('\n\n').trim();
+  joined = stripInlinePublisherChrome(joined);
   if (title && titleNorm) {
     joined = joined.replace(new RegExp(`^${escapeRegExp(title)}\\s*`, 'u'), '').trim();
     joined = joined.replace(new RegExp(`${escapeRegExp(title)}{2,}`, 'gu'), title).trim();
@@ -169,6 +171,19 @@ function normalizeForCompare(s: string): string {
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+/** Inline newsletter promos, ad labels, and AU/UK bylines mashed into story text. */
+function stripInlinePublisherChrome(text: string): string {
+  let t = text;
+  t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition[^\n.]*/gi, '');
+  t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n.]{3,60}(?:newsletter|Edition)[^\n.]*/gi, '');
+  t = t.replace(/\b(?:[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?\s+)?reporter\s+at\s+[A-Z][^\n.]{2,60}\./gi, '');
+  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, ' ');
+  t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама)\s*/gi, ' ');
+  t = t.replace(/\b(Photo\s*:|Photos\s*:|Image\s*:|Pic\s*:|Picture\s*:|Caption\s*:)\s*[^\n.]{0,80}/gi, '');
+  t = t.replace(/\b(Follow us on|Subscribe to|Subscribe for|Get our newsletter)\b[^\n.]*/gi, '');
+  return t.replace(/\s{2,}/g, ' ').trim();
 }
 
 function isBoilerplateLine(line: string, titleNorm: string): boolean {
@@ -264,6 +279,16 @@ function isBoilerplateLine(line: string, titleNorm: string): boolean {
   if (/^(Reporter|Correspondent|Staff Reporter|Special Correspondent|ANI|PTI|AFP|AP|Reuters)\s*[:|,]/i.test(t)) return true;
   if (/^by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(t)) return true;
   if (/^according to\s+/i.test(low)) return true;
+  if (/^Advertisem/i.test(t)) return true;
+  if (/\breporter\s+at\s+[A-Z]/i.test(t) && t.length < 100) return true;
+  if (
+    /^(Brisbane\s+Times|Sydney\s+Morning\s+Herald|The\s+Age|WAtoday|Perth\s+Now|Canberra\s+Times|Fairfax|nine\.com\.au)/i.test(
+      t,
+    ) &&
+    t.length < 80
+  ) {
+    return true;
+  }
   // Short numeric-only lines (ad counts, page numbers)
   if (/^\d{1,3}$/.test(t)) return true;
   // Source breadcrumb footer lines like "National > Breaking News > Hindi > Dainik Bhaskar"
