@@ -30,6 +30,50 @@ export function normalizeImageUrl(url: string | null | undefined, baseUrl?: stri
   return u;
 }
 
+/**
+ * Reject publisher chrome / tracking / brand marks that often appear as the first
+ * RSS enclosure or HTML <img> but are not the story photo.
+ */
+export function isWeakStoryImageUrl(url: string | null | undefined): boolean {
+  if (!url) return true;
+  const u = url.trim().toLowerCase();
+  if (!u || u.startsWith('data:')) return true;
+  if (/\.svg(\?|#|$)/i.test(u)) return true;
+  if (
+    /(?:^|[\/._-])(?:logo|favicon|icon|sprite|avatar|placeholder|default[-_]?image|brand(?:ing)?|masthead|watermark|badge|button|spinner|loader|spacer|pixel|tracking|1x1|blank)(?:[\/._-]|$)/i.test(
+      u,
+    )
+  ) {
+    return true;
+  }
+  if (/\/(?:wp-content\/(?:themes|plugins)|static\/(?:logo|icons?))\//i.test(u)) return true;
+  if (/[_\-](?:16|24|32|48|50|64|72|96)x(?:16|24|32|48|50|64|72|96)(?:[_\-./?]|$)/i.test(u)) return true;
+  if (/[?&](?:w|width|h|height)=(1[6-9]|[2-9]\d|1[01]\d)(?:&|$)/i.test(u)) {
+    // Tiny requested dimensions are usually icons, not hero art.
+    const w = /[?&](?:w|width)=(\d+)/i.exec(u);
+    const h = /[?&](?:h|height)=(\d+)/i.exec(u);
+    const wn = w ? Number(w[1]) : null;
+    const hn = h ? Number(h[1]) : null;
+    if ((wn != null && wn > 0 && wn < 120) || (hn != null && hn > 0 && hn < 120)) return true;
+  }
+  return false;
+}
+
+/** First usable story image from a candidate list (normalized + non-weak). */
+export function pickStrongestImageUrl(
+  candidates: Array<string | null | undefined>,
+  baseUrl?: string,
+): string | null {
+  let weakFallback: string | null = null;
+  for (const raw of candidates) {
+    const normalized = normalizeImageUrl(raw, baseUrl);
+    if (!normalized) continue;
+    if (!isWeakStoryImageUrl(normalized)) return normalized;
+    if (!weakFallback) weakFallback = normalized;
+  }
+  return weakFallback;
+}
+
 export async function mirrorExternalImage(
   config: S3Config,
   sourceUrl: string,
@@ -89,6 +133,21 @@ export function s3ConfigFromEnv(get: (key: string) => string | undefined): S3Con
   };
 }
 
+function isPrivateObjectStoreEndpoint(endpoint: string): boolean {
+  try {
+    const host = new URL(endpoint).hostname.toLowerCase();
+    return (
+      host === 'localhost' ||
+      host === '127.0.0.1' ||
+      host === 'minio' ||
+      host.endsWith('.local') ||
+      host.endsWith('.internal')
+    );
+  } catch {
+    return true;
+  }
+}
+
 /** Mirror publisher image to S3 when possible; fall back to external URL. */
 export async function persistArticleImage(
   prisma: PrismaService,
@@ -96,6 +155,7 @@ export async function persistArticleImage(
   articleId: string,
   rawImageUrl: string,
   feedLink?: string,
+  publicBaseUrl?: string | null,
 ): Promise<string | null> {
   const normalized = normalizeImageUrl(rawImageUrl, feedLink);
   if (!normalized) return null;
@@ -110,11 +170,21 @@ export async function persistArticleImage(
   if (s3Config) {
     const mirrored = await mirrorExternalImage(s3Config, normalized, s3Key);
     if (mirrored) {
-      url = mirrored.publicUrl;
       mimeType = mirrored.mimeType;
       sizeBytes = mirrored.sizeBytes;
       scanStatus = 'clean';
       storedKey = s3Key;
+      const publicBase = (publicBaseUrl ?? '').trim();
+      if (publicBase) {
+        url = `${publicBase.replace(/\/+$/, '')}/${s3Config.bucket}/${s3Key}`;
+      } else if (!isPrivateObjectStoreEndpoint(s3Config.endpoint)) {
+        // Public S3/CDN endpoint — safe to expose directly (still proxied by web).
+        url = mirrored.publicUrl;
+      } else {
+        // Private MinIO/docker endpoint is unreachable from browsers; keep publisher URL
+        // so /api/image can fetch the story photo from the open web.
+        url = normalized;
+      }
     }
   }
 

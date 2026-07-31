@@ -30,6 +30,10 @@ function needsBackfill(excerpt: string | null, title: string): boolean {
   if (!e || e.length < 280) return true;
   if (/share:\s*(fb|x)/i.test(e)) return true;
   if (/प्रकाशित\s+\d+\s*मिनट/u.test(e)) return true;
+  if (/Entertainment\s+Desk|DeskNew\s*Delhi|,UPDATED|\bUPDATED\b/i.test(e)) return true;
+  if (/\breporter\s+at\s+[A-Z]/i.test(e)) return true;
+  if (/^Sign\s+up\s+for\s+(?:our\s+)?/i.test(e)) return true;
+  if (/डेस्क\s*,/.test(e)) return true;
   if (/^(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d/i.test(e.toLowerCase())) return true;
   if (
     /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d{1,2}\s+\w+[,]?\s+\d{4}\s+at\s+/i.test(
@@ -58,11 +62,12 @@ async function main() {
     const fromBody = stripSyndicationLinkbacks(
       stripPublisherFeedBoilerplate(bodyToPlain(a.body), a.title),
     );
-    const fromMedium = (a.bodyMedium ?? '').trim();
-    const plain = [fromMedium, fromBody, (a.excerpt ?? '').trim()].filter((s) => s.length > 80).join('\n\n');
-    if (plain.length < 120) continue;
+    const fromMedium = stripPublisherFeedBoilerplate((a.bodyMedium ?? '').trim(), a.title);
+    const fromExcerpt = stripPublisherFeedBoilerplate((a.excerpt ?? '').trim(), a.title);
+    const plain = [fromMedium, fromBody, fromExcerpt].filter((s) => s.length > 40).join('\n\n');
+    if (plain.length < 80) continue;
 
-    const summary = buildReaderSummaryFromPlainText(plain, a.title);
+    const summary = buildReaderSummaryFromPlainText(plain, a.title, { minChars: 80 });
     const { bodyShort } = splitStoryBodies(plain, a.title);
     if (!summary && !bodyShort) continue;
 

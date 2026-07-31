@@ -3,6 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from './gemini.client';
 import {
+  fetchArticleOgImage,
   fetchArticlePlainText,
   MIN_SOURCE_ARTICLE_PLAIN_CHARS,
   rssBodyLooksLikeTitleOnly,
@@ -22,7 +23,12 @@ import { Platform } from '@prisma/client';
 import { PublishingService } from '../publishing/publishing.service';
 import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../common/editorial-sanitize';
 import { stripPublisherFeedBoilerplate } from '../../common/reader-summary.util';
-import { persistArticleImage, s3ConfigFromEnv } from '../../common/mirror-external-image.util';
+import {
+  isWeakStoryImageUrl,
+  normalizeImageUrl,
+  persistArticleImage,
+  s3ConfigFromEnv,
+} from '../../common/mirror-external-image.util';
 
 type ProcessIngestedOptions = {
   language?: string;
@@ -66,12 +72,17 @@ export class AiService {
   async processIngestedArticle(ingestedArticleId: string, options: ProcessIngestedOptions = {}) {
     const ingested = await this.prisma.ingestedArticle.findUniqueOrThrow({
       where: { id: ingestedArticleId },
+      include: { source: { select: { name: true } } },
     });
     const feedLangHint = normalizeLanguageCode(options.language ?? 'en');
     const langForFetch = resolveArticleLanguage(feedLangHint, {
       title: ingested.sourceTitle,
       body: ingested.body,
     });
+    const publisherSanitize = {
+      sourceName: ingested.source?.name ?? null,
+      sourceUrl: ingested.sourceUrl ?? null,
+    };
 
     await this.prisma.ingestedArticle.update({
       where: { id: ingestedArticleId },
@@ -111,6 +122,7 @@ export class AiService {
       bodyForRewrite = stripPublisherFeedBoilerplate(
         stripSyndicationLinkbacks(bodyForRewrite),
         titlePlain || ingested.sourceTitle,
+        publisherSanitize,
       );
 
       // Always publish under the feed's language — never let AI or script detection override.
@@ -124,7 +136,7 @@ export class AiService {
 
       const headlineForStrip = titlePlain || ingested.sourceTitle;
       const stripRewritten = (t: string) =>
-        stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(t), headlineForStrip);
+        stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(t), headlineForStrip, publisherSanitize);
       const rewrite = {
         ...rewriteRaw,
         title: stripWireHeadlinePrefix(stripRewritten(rewriteRaw.title)),
@@ -136,14 +148,18 @@ export class AiService {
         language: rewriteRaw.language,
       };
 
-      const readerSummary = this.ensureReaderSummary(
-        rewrite.summary,
-        rewrite.short,
-        rewrite.medium,
-        rewrite.long,
-        bodyForRewrite.length,
-        language,
+      const readerSummary = stripPublisherFeedBoilerplate(
+        this.ensureReaderSummary(
+          rewrite.summary,
+          rewrite.short,
+          rewrite.medium,
+          rewrite.long,
+          bodyForRewrite.length,
+          language,
+          rewrite.title,
+        ),
         rewrite.title,
+        publisherSanitize,
       );
       const longForPrompts = this.clipForPrompt(rewrite.long, 24_000);
 
@@ -276,12 +292,38 @@ export class AiService {
         },
       });
 
-      if (options.imageUrl) {
+      let storyImageUrl = options.imageUrl ?? null;
+      if (
+        (!storyImageUrl || isWeakStoryImageUrl(storyImageUrl)) &&
+        this.fetchSourceArticle &&
+        ingested.sourceUrl
+      ) {
+        try {
+          const og = await fetchArticleOgImage(
+            ingested.sourceUrl,
+            {
+              timeoutMs: Math.min(this.fetchSourceTimeoutMs, 12_000),
+              maxBytes: 400_000,
+            },
+            { acceptLanguage: acceptLanguageHeaderForLocale(langForFetch) },
+          );
+          const ogNorm = normalizeImageUrl(og, ingested.sourceUrl);
+          if (ogNorm && !isWeakStoryImageUrl(ogNorm)) {
+            storyImageUrl = ogNorm;
+          } else if (!storyImageUrl && ogNorm) {
+            storyImageUrl = ogNorm;
+          }
+        } catch {
+          /* keep RSS image */
+        }
+      }
+
+      if (storyImageUrl) {
         const storedUrl = await persistArticleImage(
           this.prisma,
           s3ConfigFromEnv((k) => this.config.get(k)),
           article.id,
-          options.imageUrl,
+          storyImageUrl,
           ingested.sourceUrl,
         );
         if (storedUrl) {

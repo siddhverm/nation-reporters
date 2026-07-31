@@ -14,7 +14,7 @@ import {
   stripWireHeadlinePrefix,
 } from '@/lib/rss-plain-text';
 import { fetchJsonFromApi } from '@/lib/api-client';
-import { formatListingExcerpt, resolveArticleReaderSummary, stripPublisherFeedBoilerplate, isPublisherBoilerplateLine } from '@/lib/reader-summary';
+import { formatListingExcerpt, resolveArticleReaderSummary, sanitizePublisherStoryText, isPublisherBoilerplateLine, type PublisherSanitizeOptions } from '@/lib/reader-summary';
 import {
   articleMatchesLanguageOrScript,
   normalizeUiLanguage,
@@ -43,13 +43,13 @@ interface Article {
   mediaAssets?: { id: string; type: string; url: string }[];
 }
 
-/** Single-arg wrapper so this can be passed to `.map()` without TS index/headline confusion. */
-function stripFeedBoilerplate(text: string): string {
-  return stripPublisherFeedBoilerplate(text);
+/** Always run full multi-language / outlet sanitizer (known outlets + optional feed provenance). */
+function stripFeedBoilerplate(text: string, ctx: PublisherSanitizeOptions = {}): string {
+  return sanitizePublisherStoryText(text, ctx);
 }
 
-function stripFeedBoilerplateWithTitle(text: string, headline: string): string {
-  return stripPublisherFeedBoilerplate(text, headline);
+function stripFeedBoilerplateWithTitle(text: string, headline: string, ctx: PublisherSanitizeOptions = {}): string {
+  return sanitizePublisherStoryText(text, { ...ctx, headline });
 }
 
 const FALLBACK_ARTICLES: Record<string, { title: string; excerpt: string; paragraphs: string[] }> = {
@@ -287,8 +287,8 @@ function isNearDuplicate(a: string, b: string): boolean {
 }
 
 const MIN_SUMMARY_CHARS = 28;
-/** Prefer a fuller Summary box when the API excerpt is only a one-line hook. */
-const MIN_SUBSTANTIVE_SUMMARY_CHARS = 220;
+/** Prefer a readable Summary box even when RSS body is thin. */
+const MIN_SUBSTANTIVE_SUMMARY_CHARS = 48;
 
 /** Headlines in body copy often repeat tokens from the title; only treat as title-echo when reasonably short. */
 function isTitleEcho(paragraph: string, titleText: string): boolean {
@@ -360,6 +360,8 @@ function pickDisplaySummary(
   const raw = resolveArticleReaderSummary(article, titleText, bodyParagraphs, {
     minChars: MIN_SUBSTANTIVE_SUMMARY_CHARS,
     lang: uiLang,
+    sourceName: article.provenance?.sourceName,
+    sourceUrl: article.provenance?.sourceUrl,
   });
   return raw ? trimSummaryDisplay(raw, titleText, 1200) : '';
 }
@@ -391,9 +393,10 @@ function filterBodyParagraphs(
   paragraphs: string[],
   teaserText: string,
   titleText: string,
+  ctx: PublisherSanitizeOptions = {},
 ): string[] {
   return paragraphs
-    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)).trim())
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText, ctx)).trim())
     .filter((p) => {
       if (!p || isFeedBodyPlaceholder(p)) return false;
       if (isPublisherBoilerplateLine(p, titleText)) return false;
@@ -420,35 +423,47 @@ function filterTitleOnly(paragraphs: string[], titleText: string): string[] {
   return paragraphs.filter((p) => !titleText || !isTitleEcho(p, titleText));
 }
 
-function tieredStoryParagraphs(article: Article, titleText: string, teaserDedupe: string): string[] {
+function tieredStoryParagraphs(
+  article: Article,
+  titleText: string,
+  teaserDedupe: string,
+  ctx: PublisherSanitizeOptions = {},
+): string[] {
   const tiers = [article.bodyMedium, article.bodyShort].filter(
     (v): v is string => typeof v === 'string' && v.trim().length > 0,
   );
   for (const raw of tiers) {
-    const cleaned = stripFeedBoilerplateWithTitle(raw, titleText).trim();
+    const cleaned = stripFeedBoilerplateWithTitle(raw, titleText, ctx).trim();
     if (!cleaned || isFeedBodyPlaceholder(cleaned)) continue;
     const parts = dedupeParagraphs(
-      splitTextToParagraphs(cleaned).map((p) => stripFeedBoilerplateWithTitle(p, titleText)).filter(Boolean),
+      splitTextToParagraphs(cleaned)
+        .map((p) => stripFeedBoilerplateWithTitle(p, titleText, ctx))
+        .filter(Boolean),
     ).filter((p) => !isFeedBodyPlaceholder(p));
-    const filtered = filterBodyParagraphs(filterTitleOnly(parts, titleText), teaserDedupe, titleText);
+    const filtered = filterBodyParagraphs(filterTitleOnly(parts, titleText), teaserDedupe, titleText, ctx);
     if (filtered.length > 0) return filtered;
   }
   return [];
 }
 
 /** When TipTap body is empty but API has long-form fields, show them minus teaser echo. */
-function rawLongFormParagraphs(article: Article, titleText: string, teaserDedupe: string): string[] {
+function rawLongFormParagraphs(
+  article: Article,
+  titleText: string,
+  teaserDedupe: string,
+  ctx: PublisherSanitizeOptions = {},
+): string[] {
   const m = article.bodyMedium?.trim();
   const s = article.bodyShort?.trim();
   const raw = m && s ? (m.length >= s.length ? m : s) : m ?? s ?? '';
   if (!raw || raw.length < 40) return [];
-  const cleaned = stripFeedBoilerplateWithTitle(raw, titleText).trim();
+  const cleaned = stripFeedBoilerplateWithTitle(raw, titleText, ctx).trim();
   if (isFeedBodyPlaceholder(cleaned)) return [];
   const parts = splitTextToParagraphs(cleaned).filter((p) => !isFeedBodyPlaceholder(p));
   const blocks = parts.length > 0 ? parts : [cleaned];
   const withoutTitle = blocks.filter((p) => !titleText || !isTitleEcho(p, titleText));
   const base = withoutTitle.length > 0 ? withoutTitle : blocks;
-  return filterBodyParagraphs(base, teaserDedupe, titleText);
+  return filterBodyParagraphs(base, teaserDedupe, titleText, ctx);
 }
 
 /**
@@ -463,7 +478,12 @@ function stripDuplicateSummaryPrefix(full: string, summary: string): string {
   return tail.length >= 50 ? tail : full;
 }
 
-function mediumShortLastResort(article: Article, displaySummary: string, titleText: string): string | null {
+function mediumShortLastResort(
+  article: Article,
+  displaySummary: string,
+  titleText: string,
+  ctx: PublisherSanitizeOptions = {},
+): string | null {
   const m = article.bodyMedium?.trim();
   const s = article.bodyShort?.trim();
   let raw = '';
@@ -472,7 +492,7 @@ function mediumShortLastResort(article: Article, displaySummary: string, titleTe
   } else {
     raw = (m ?? s ?? '').trim();
   }
-  raw = stripFeedBoilerplateWithTitle(raw, titleText);
+  raw = stripFeedBoilerplateWithTitle(raw, titleText, ctx);
   if (!raw || raw.length < 60 || isFeedBodyPlaceholder(raw)) return null;
   if (titleText && isTitleEcho(raw, titleText)) return null;
   const sum = displaySummary.trim();
@@ -485,10 +505,15 @@ function mediumShortLastResort(article: Article, displaySummary: string, titleTe
   return stripDuplicateSummaryPrefix(raw, sum);
 }
 
-function pickFallbackBodyParagraph(article: Article, titleText: string, displaySummary: string): string {
+function pickFallbackBodyParagraph(
+  article: Article,
+  titleText: string,
+  displaySummary: string,
+  ctx: PublisherSanitizeOptions = {},
+): string {
   const chunks = [article.bodyMedium, article.bodyShort, article.excerpt]
     .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
-    .map((s) => stripFeedBoilerplateWithTitle(s.trim(), titleText));
+    .map((s) => stripFeedBoilerplateWithTitle(s.trim(), titleText, ctx));
   for (const chunk of chunks) {
     if (isFeedBodyPlaceholder(chunk)) continue;
     if (isPublisherBoilerplateLine(chunk, titleText)) continue;
@@ -631,63 +656,79 @@ export default function ArticlePage() {
     </div>
   );
 
-  const titleText = stripWireHeadlinePrefix(
+  const sanitizeCtx: PublisherSanitizeOptions = {
+    sourceName: article.provenance?.sourceName ?? null,
+    sourceUrl: article.provenance?.sourceUrl ?? null,
+  };
+  const titleRaw = stripWireHeadlinePrefix(
     stripSyndicationLinkbacks(rssPlainLine(article.title) || (article.title ?? '').trim()),
   );
+  const cleanedTitle = stripFeedBoilerplate(titleRaw, sanitizeCtx).trim();
+  const titleText =
+    cleanedTitle ||
+    (/Entertainment\s+Desk|DeskNew|,UPDATED|\bUPDATED\b/i.test(titleRaw) && titleRaw.length < 280
+      ? ''
+      : titleRaw.trim());
+  sanitizeCtx.headline = titleText;
 
   const structuredParas = extractParagraphs(article.body, titleText)
-    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)))
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText, sanitizeCtx)))
     .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   const bodyStructured =
     structuredParas.length > 0
       ? structuredParas
       : extractPlainParagraphsFromBody(article.body, titleText)
-          .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)))
+          .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText, sanitizeCtx)))
           .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   // Do not merge excerpt into body text — it duplicates the teaser and breaks dedupe/filter.
   const fallbackText = stripSyndicationLinkbacks(
     [article.bodyMedium, article.bodyShort]
       .filter((v): v is string => typeof v === 'string' && v.trim().length > 0)
+      .map((v) => stripFeedBoilerplateWithTitle(v, titleText, sanitizeCtx))
       .join('\n\n'),
   );
   const fallbackParagraphs = fallbackText ? splitTextToParagraphs(fallbackText) : [];
   const combinedForDedupe = [...bodyStructured, ...fallbackParagraphs];
   const deduped = dedupeParagraphs(
-    combinedForDedupe.map((p) => stripFeedBoilerplateWithTitle(p, titleText)).filter(Boolean),
+    combinedForDedupe.map((p) => stripFeedBoilerplateWithTitle(p, titleText, sanitizeCtx)).filter(Boolean),
   ).filter((p) => !isFeedBodyPlaceholder(p));
   const excerptRaw = stripSyndicationLinkbacks(
-    stripFeedBoilerplateWithTitle(rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim(), titleText),
+    stripFeedBoilerplateWithTitle(
+      rssPlainLine(article.excerpt ?? '') || (article.excerpt ?? '').trim(),
+      titleText,
+      sanitizeCtx,
+    ),
   );
   const excerptText = isFeedBodyPlaceholder(excerptRaw) ? '' : excerptRaw;
   const summarySourceParas = [...bodyStructured, ...fallbackParagraphs]
-    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText)))
+    .map((p) => stripSyndicationLinkbacks(stripFeedBoilerplateWithTitle(p, titleText, sanitizeCtx)))
     .filter((p) => p.length > 0 && !isFeedBodyPlaceholder(p));
   const displaySummary = pickDisplaySummary(article, titleText, summarySourceParas, uiLang);
   const teaserFull = (displaySummary || excerptText).trim();
   const teaserForDedupe = teaserFull ? ledeSnippetForDedupe(teaserFull) : '';
 
-  const filteredParagraphs = filterBodyParagraphs(deduped, teaserForDedupe, titleText);
+  const filteredParagraphs = filterBodyParagraphs(deduped, teaserForDedupe, titleText, sanitizeCtx);
 
   let paragraphs =
     filteredParagraphs.length > 0
       ? filteredParagraphs
       : stripLeadingTeaserEcho(deduped, teaserForDedupe, titleText);
   if (paragraphs.length === 0) {
-    const tiered = tieredStoryParagraphs(article, titleText, teaserForDedupe);
+    const tiered = tieredStoryParagraphs(article, titleText, teaserForDedupe, sanitizeCtx);
     if (tiered.length > 0) paragraphs = tiered;
   }
   if (paragraphs.length === 0) {
-    const raw = rawLongFormParagraphs(article, titleText, teaserForDedupe);
+    const raw = rawLongFormParagraphs(article, titleText, teaserForDedupe, sanitizeCtx);
     if (raw.length > 0) paragraphs = raw;
   }
 
-  paragraphs = filterBodyParagraphs(paragraphs, teaserForDedupe, titleText);
+  paragraphs = filterBodyParagraphs(paragraphs, teaserForDedupe, titleText, sanitizeCtx);
 
-  const lastResortMedium = mediumShortLastResort(article, displaySummary, titleText);
+  const lastResortMedium = mediumShortLastResort(article, displaySummary, titleText, sanitizeCtx);
   const lastResortFullDoc = fullPlainBodyLastResort(article, displaySummary, titleText);
 
   const fallbackBodyText =
-    pickFallbackBodyParagraph(article, titleText, displaySummary) ||
+    pickFallbackBodyParagraph(article, titleText, displaySummary, sanitizeCtx) ||
     (excerptText && (!displaySummary || !isNearDuplicate(excerptText, displaySummary)) ? excerptText : '') ||
     '';
 
@@ -705,7 +746,7 @@ export default function ArticlePage() {
   const imageCredit = getBodyImageCredit(article.body);
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
   const proseText = (text: string) =>
-    safeArticleText(stripFeedBoilerplateWithTitle(text, titleText));
+    safeArticleText(stripFeedBoilerplateWithTitle(text, titleText, sanitizeCtx));
   const renderProseBlocks = (text: string, keyPrefix: string) => {
     const parts = filterBodyParagraphs(
       splitTextToParagraphs(proseText(text)).filter(Boolean),

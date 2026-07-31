@@ -177,11 +177,35 @@ export function isAllowedArticleFetchUrl(urlStr: string): boolean {
   }
 }
 
+/** Extract og/twitter share image URLs from HTML (absolute against page URL). */
+export function extractOgImageFromHtml(html: string, pageUrl: string): string | null {
+  const $ = cheerio.load(html);
+  const candidates = [
+    $('meta[property="og:image"]').attr('content'),
+    $('meta[property="og:image:secure_url"]').attr('content'),
+    $('meta[property="og:image:url"]').attr('content'),
+    $('meta[name="twitter:image"]').attr('content'),
+    $('meta[name="twitter:image:src"]').attr('content'),
+    $('link[rel="image_src"]').attr('href'),
+  ];
+  for (const raw of candidates) {
+    const u = (raw ?? '').trim();
+    if (!u) continue;
+    try {
+      const abs = new URL(u.startsWith('//') ? `https:${u}` : u, pageUrl).href;
+      if (/^https?:\/\//i.test(abs) && !/\.(svg)(\?|$)/i.test(abs)) return abs;
+    } catch {
+      /* ignore */
+    }
+  }
+  return null;
+}
+
 export async function fetchArticleTitleAndText(
   url: string,
   opts: { timeoutMs: number; maxBytes: number },
   fetchOpts?: { acceptLanguage?: string },
-): Promise<{ title: string; text: string } | null> {
+): Promise<{ title: string; text: string; ogImage: string | null } | null> {
   if (!isAllowedArticleFetchUrl(url)) return null;
   const ctrl = new AbortController();
   const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
@@ -210,7 +234,7 @@ export async function fetchArticleTitleAndText(
       $('title').text().trim() ||
       '';
     const text = extractReadableTextFromHtml(html, 120_000);
-    return { title, text };
+    return { title, text, ogImage: extractOgImageFromHtml(html, url) };
   } catch {
     return null;
   } finally {
@@ -244,6 +268,39 @@ export async function fetchArticlePlainText(
     const slice = buf.byteLength > opts.maxBytes ? buf.slice(0, opts.maxBytes) : buf;
     const html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
     return extractReadableTextFromHtml(html, 120_000);
+  } catch {
+    return null;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+/** Prefer og:image / twitter:image from the publisher page when RSS has no usable image. */
+export async function fetchArticleOgImage(
+  url: string,
+  opts: { timeoutMs: number; maxBytes: number },
+  fetchOpts?: { acceptLanguage?: string },
+): Promise<string | null> {
+  if (!isAllowedArticleFetchUrl(url)) return null;
+  const ctrl = new AbortController();
+  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
+  try {
+    const res = await fetch(url, {
+      signal: ctrl.signal,
+      redirect: 'follow',
+      headers: {
+        'User-Agent': randomUserAgent(),
+        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
+        'Accept-Language': fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
+        'Cache-Control': 'no-cache',
+      },
+    });
+    if (!res.ok) return null;
+    const max = Math.min(opts.maxBytes, 400_000);
+    const buf = await res.arrayBuffer();
+    const slice = buf.byteLength > max ? buf.slice(0, max) : buf;
+    const html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+    return extractOgImageFromHtml(html, url);
   } catch {
     return null;
   } finally {

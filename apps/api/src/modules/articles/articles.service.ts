@@ -10,6 +10,10 @@ import { assertTransition } from './status.machine';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { inferLangFromText, normalizeLanguageCode } from '../ai/language-resolution.util';
 import { resolveUniqueArticleSlug } from '../../common/slug.util';
+import {
+  sanitizeArticleForPublicResponse,
+  sanitizeArticleListItem,
+} from '../../common/article-public-sanitize.util';
 
 type CountryFeedResult = {
   localLang: string;
@@ -83,6 +87,7 @@ export class ArticlesService {
       categoryId: true,
       language: true,
       mediaAssets: {
+        where: { type: MediaType.IMAGE },
         take: 3,
         select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
       },
@@ -130,9 +135,9 @@ export class ArticlesService {
     const payload: CountryFeedResult = {
       localLang,
       globalLang,
-      local,
-      global,
-      mixed,
+      local: local.map((a) => sanitizeArticleListItem(a)),
+      global: global.map((a) => sanitizeArticleListItem(a)),
+      mixed: mixed.map((a) => sanitizeArticleListItem(a)),
       total: mixed.length,
     };
     this.setCountryFeedCache(cacheKey, payload);
@@ -181,16 +186,12 @@ export class ArticlesService {
       language: true,
       status: true,
       podcastScript: true,
-      mediaAssets: hasVideo
-        ? {
-          where: { type: MediaType.VIDEO },
-          take: 3,
-          select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
-        }
-        : {
-          take: 3,
-          select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
-        },
+      // Prefer story IMAGE assets on public cards (not VIDEO thumbnails / unrelated media).
+      mediaAssets: {
+        where: { type: hasVideo ? MediaType.VIDEO : MediaType.IMAGE },
+        take: 3,
+        select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
+      },
     };
   }
 
@@ -284,7 +285,11 @@ export class ArticlesService {
     const page = p;
     const limit = take;
 
-    return { data, total, page, limit };
+    const sanitized = omitBody
+      ? data.map((row) => sanitizeArticleListItem(row))
+      : data.map((row) => sanitizeArticleForPublicResponse(row));
+
+    return { data: sanitized, total, page, limit };
   }
 
   async findOne(idOrSlug: string) {
@@ -294,7 +299,8 @@ export class ArticlesService {
       versions: { orderBy: { changedAt: 'desc' } as const, take: 10 },
       riskAssessment: true,
       socialCaptions: true,
-      // provenance is internal-only — never expose source URLs to end users
+      // Loaded for outlet-aware sanitization only — stripped before response.
+      provenance: true,
     };
     // Try UUID first, fall back to slug lookup
     const isUuid = /^[0-9a-f-]{36}$/.test(idOrSlug);
@@ -318,7 +324,7 @@ export class ArticlesService {
       });
     }
     if (!article) throw new NotFoundException('Article not found');
-    return article;
+    return sanitizeArticleForPublicResponse(article);
   }
 
   async update(id: string, userId: string, userRole: Role, data: Partial<CreateArticleDto>) {
@@ -389,7 +395,8 @@ export class ArticlesService {
   }
 
   private getCountryFeedRedisKey(cacheKey: string): string {
-    return `country-feed:${cacheKey}`;
+    // v3: list payloads are sanitized (desk chrome / outlet boilerplate stripped).
+    return `country-feed:v3:${cacheKey}`;
   }
 
   private async generateSlug(title: string): Promise<string> {

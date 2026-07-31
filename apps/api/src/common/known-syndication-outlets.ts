@@ -1,0 +1,82 @@
+/**
+ * Publisher names/domains stripped from EVERY syndicated story (all feeds + languages).
+ * Per-feed sourceName from ingested_sources is merged in collectSourceLabels().
+ * Keep in sync with apps/web/lib/known-syndication-outlets.ts
+ */
+export const KNOWN_SYNDICATION_OUTLET_LABELS: readonly string[] = [
+  // Australia — Fairfax / Nine
+  'Brisbane Times',
+  'Sydney Morning Herald',
+  'The Age',
+  'WAtoday',
+  'Perth Now',
+  'Canberra Times',
+  'The Australian',
+  'Fairfax Media',
+  'nine.com.au',
+  // UK
+  'BBC News',
+  'The Guardian',
+  'Daily Mail',
+  'The Telegraph',
+  'The Independent',
+  // US / global wire
+  'Reuters',
+  'Associated Press',
+  'AP News',
+  'AFP',
+  'CNN',
+  'Fox News',
+  'The New York Times',
+  'Washington Post',
+  'Bloomberg',
+  // India — English
+  'Times of India',
+  'TIMESOFINDIA.COM',
+  'Hindustan Times',
+  'NDTV',
+  'India Today',
+  'indiatoday.in',
+  'The Hindu',
+  'Indian Express',
+  'News18',
+  'Zee News',
+  'Aaj Tak',
+  // India — Hindi / regional
+  'Dainik Bhaskar',
+  'Amar Ujala',
+  'Dainik Jagran',
+  'Navbharat Times',
+  'Rajasthan Patrika',
+  'Patrika',
+  'Jansatta',
+  'Live Hindustan',
+  'India TV',
+  'Anandabazar Patrika',
+  'Eenadu',
+  'Lokmat',
+  'Sakal',
+  'Sandesh',
+  'Jagbani',
+  // Wire agencies (India)
+  'ANI',
+  'PTI',
+  'IANS',
+  'UNI',
+  // Europe
+  'Le Figaro',
+  'Le Monde',
+  'Der Spiegel',
+  'Bild',
+  'El País',
+  'La Repubblica',
+  'Deutsche Welle',
+  // Middle East / Asia
+  'Al Jazeera',
+  'Gulf News',
+  'Khaleej Times',
+  'Hurriyet',
+  'TRT Haber',
+  'G1 Globo',
+  'News24',
+];

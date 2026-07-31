@@ -11,6 +11,7 @@ import { AiService } from '../../ai/ai.service';
 import { ArticleStatus } from '@prisma/client';
 import { PublishingService } from '../../publishing/publishing.service';
 import {
+  fetchArticleOgImage,
   fetchArticlePlainText,
   fetchArticleTitleAndText,
   isAllowedArticleFetchUrl,
@@ -31,8 +32,10 @@ import {
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
 import {
+  isWeakStoryImageUrl,
   normalizeImageUrl,
   persistArticleImage,
+  pickStrongestImageUrl,
   s3ConfigFromEnv,
 } from '../../../common/mirror-external-image.util';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
@@ -164,9 +167,12 @@ export class IngestionCronService {
     });
 
     let articleId: string | undefined;
+    const imageUrl =
+      fetched.ogImage && !isWeakStoryImageUrl(fetched.ogImage) ? fetched.ogImage : undefined;
     try {
       const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
         language: lang,
+        imageUrl,
         forceAutoPublish: true,
         allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
       });
@@ -178,7 +184,7 @@ export class IngestionCronService {
     }
 
     if (!articleId) {
-      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang });
+      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang }, imageUrl);
       if (!ok) throw new Error('Failed to publish article');
       const published = await this.prisma.article.findFirst({
         where: { ingestedArticleId: ingestedArticle.id },
@@ -201,9 +207,15 @@ export class IngestionCronService {
     sourceUrl: string,
     sourceLang: string,
     itemTitlePlain: string,
+    sourceName?: string,
   ): Promise<string> {
+    const sanitizeOpts = { sourceName: sourceName ?? null, sourceUrl: sourceUrl || null };
     if (!this.fetchSourceArticle || !sourceUrl || !isAllowedArticleFetchUrl(sourceUrl)) {
-      return stripSyndicationLinkbacks(rssBody);
+      return stripPublisherFeedBoilerplate(
+        stripSyndicationLinkbacks(rssBody),
+        itemTitlePlain,
+        sanitizeOpts,
+      );
     }
     const rssPlain = this.stripHtmlToPlain(rssBody, true);
     const rssIsThin = rssPlain.length < 700;
@@ -214,7 +226,13 @@ export class IngestionCronService {
         { timeoutMs: this.fetchSourceTimeoutMs, maxBytes: this.fetchSourceMaxBytes },
         { acceptLanguage: acceptLanguageHeaderForLocale(sourceLang) },
       );
-      if (!fetched || fetched.length < MIN_SOURCE_ARTICLE_PLAIN_CHARS) return stripSyndicationLinkbacks(rssBody);
+      if (!fetched || fetched.length < MIN_SOURCE_ARTICLE_PLAIN_CHARS) {
+        return stripPublisherFeedBoilerplate(
+          stripSyndicationLinkbacks(rssBody),
+          itemTitlePlain,
+          sanitizeOpts,
+        );
+      }
       const materiallyLonger = fetched.length > rssPlain.length + 40;
       const muchLongerThanHeadline = fetched.length > (itemTitlePlain?.length ?? 0) + 120;
       if (materiallyLonger || rssIsThin || looksTitleOnly || muchLongerThanHeadline) {
@@ -224,12 +242,17 @@ export class IngestionCronService {
         return stripPublisherFeedBoilerplate(
           stripSyndicationLinkbacks(fetched),
           itemTitlePlain,
+          sanitizeOpts,
         );
       }
     } catch (e) {
       this.logger.warn(`Ingestion source fetch failed ${sourceUrl.slice(0, 64)}: ${(e as Error).message}`);
     }
-    return stripSyndicationLinkbacks(rssBody);
+    return stripPublisherFeedBoilerplate(
+      stripSyndicationLinkbacks(rssBody),
+      itemTitlePlain,
+      sanitizeOpts,
+    );
   }
 
   // 08:00, 14:00, 20:00 IST (UTC+5:30 = 02:30, 08:30, 14:30 UTC)
@@ -316,26 +339,75 @@ export class IngestionCronService {
   private extractImage(item: any): string | null {
     const link = typeof item.link === 'string' ? item.link : item.link?.href ?? item.guid;
     const fromMediaGroup = item['media:group']?.['media:content'];
-    const groupUrl = Array.isArray(fromMediaGroup)
-      ? fromMediaGroup.find((m: { $?: { type?: string; url?: string } }) =>
-          String(m?.$?.type ?? '').startsWith('image'))?.$?.url
-      : fromMediaGroup?.$?.url;
+    const groupUrls = Array.isArray(fromMediaGroup)
+      ? fromMediaGroup
+          .filter((m: { $?: { type?: string; url?: string } }) =>
+            !m?.$?.type || String(m.$.type).startsWith('image'))
+          .map((m: { $?: { url?: string } }) => m?.$?.url)
+      : [fromMediaGroup?.$?.url];
 
-    const raw =
-      item['media:content']?.$.url
-      ?? item['media:thumbnail']?.$.url
-      ?? groupUrl
-      ?? (item.enclosure?.type?.startsWith('image') ? item.enclosure.url : null)
-      ?? item['ht:image']?.['$']?.url
-      ?? this.extractImgFromHtml(item.content ?? item.summary ?? '')
-      ?? null;
-
-    return normalizeImageUrl(raw, link);
+    return pickStrongestImageUrl(
+      [
+        item['media:content']?.$.url,
+        item['media:thumbnail']?.$.url,
+        ...groupUrls,
+        item.enclosure?.type?.startsWith('image') ? item.enclosure.url : null,
+        item['ht:image']?.['$']?.url,
+        ...this.extractImgCandidatesFromHtml(item.content ?? item['content:encoded'] ?? item.summary ?? ''),
+      ],
+      link,
+    );
   }
 
-  private extractImgFromHtml(html: string): string | null {
-    const m = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-    return m?.[1] ?? null;
+  private extractImgCandidatesFromHtml(html: string): string[] {
+    if (!html || typeof html !== 'string') return [];
+    const out: string[] = [];
+    const re = /<img[^>]+src=["']([^"']+)["']/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      if (m[1]) out.push(m[1]);
+      if (out.length >= 8) break;
+    }
+    return out;
+  }
+
+  /**
+   * Prefer a real story photo: strong RSS media first, else publisher og:image/twitter:image.
+   * Avoids logos / icons that often appear as the first feed enclosure.
+   */
+  private async resolveStoryImage(
+    item: any,
+    sourceUrl: string,
+    sourceLang: string,
+  ): Promise<string | null> {
+    const fromRss = this.extractImage(item);
+    if (fromRss && !isWeakStoryImageUrl(fromRss)) return fromRss;
+
+    if (this.fetchSourceArticle && sourceUrl && isAllowedArticleFetchUrl(sourceUrl)) {
+      try {
+        const og = await fetchArticleOgImage(
+          sourceUrl,
+          { timeoutMs: Math.min(this.fetchSourceTimeoutMs, 12_000), maxBytes: 400_000 },
+          { acceptLanguage: acceptLanguageHeaderForLocale(sourceLang) },
+        );
+        const ogNorm = normalizeImageUrl(og, sourceUrl);
+        if (ogNorm && !isWeakStoryImageUrl(ogNorm)) {
+          if (fromRss && fromRss !== ogNorm) {
+            this.logger.log(
+              `Ingestion: replaced weak RSS image with og:image for ${sourceUrl.slice(0, 64)}`,
+            );
+          }
+          return ogNorm;
+        }
+        if (ogNorm && !fromRss) return ogNorm;
+      } catch (e) {
+        this.logger.warn(
+          `Ingestion og:image fetch failed ${sourceUrl.slice(0, 64)}: ${(e as Error).message}`,
+        );
+      }
+    }
+
+    return fromRss;
   }
 
   private extractVideo(item: any): string | null {
@@ -376,12 +448,13 @@ export class IngestionCronService {
         item.link ?? '',
         langForEnrichFetch,
         titlePlain,
+        source.name,
       );
       const articleLang = normalizeLanguageCode(
         resolveArticleLanguage(feedLangHint, { title: titlePlain, body }),
       );
       const hash = crypto.createHash('sha256').update(item.link ?? item.title ?? '').digest('hex');
-      const imageUrl = this.extractImage(item);
+      const imageUrl = await this.resolveStoryImage(item, item.link ?? '', langForEnrichFetch);
       const sourceVideoUrl = this.extractVideo(item);
 
       const isDuplicate = await this.dedup.isDuplicate(hash, body, articleLang);
@@ -563,11 +636,16 @@ export class IngestionCronService {
   }
 
   /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
-  private rawHtmlToDocContent(htmlOrText: string, maxTotalChars = 80000) {
+  private rawHtmlToDocContent(
+    htmlOrText: string,
+    sanitizeOpts: { headline?: string; sourceName?: string; sourceUrl?: string } = {},
+    maxTotalChars = 80000,
+  ) {
     const text = stripSyndicationLinkbacks(
       stripPublisherFeedBoilerplate(
         this.stripHtmlToPlain(htmlOrText, true).slice(0, maxTotalChars),
-        '',
+        sanitizeOpts.headline ?? '',
+        sanitizeOpts,
       ),
     );
     if (!text) {
@@ -659,14 +737,50 @@ export class IngestionCronService {
     }
 
     const lang = normalizeLanguageCode(langHint);
+    const sanitizeOpts = {
+      headline: displayTitle,
+      sourceName: source.name,
+      sourceUrl: ingestedArticle.sourceUrl || null,
+    };
 
-    plainLead = stripPublisherFeedBoilerplate(plainLead, displayTitle);
-    rawBodyForArticle = stripPublisherFeedBoilerplate(rawBodyForArticle, displayTitle);
+    let resolvedImageUrl = imageUrl ?? null;
+    if (
+      (!resolvedImageUrl || isWeakStoryImageUrl(resolvedImageUrl)) &&
+      this.fetchSourceArticle &&
+      ingestedArticle.sourceUrl &&
+      isAllowedArticleFetchUrl(ingestedArticle.sourceUrl)
+    ) {
+      try {
+        const og = await fetchArticleOgImage(
+          ingestedArticle.sourceUrl,
+          { timeoutMs: Math.min(this.fetchSourceTimeoutMs, 12_000), maxBytes: 400_000 },
+          { acceptLanguage: acceptLanguageHeaderForLocale(langForRawFetch) },
+        );
+        const ogNorm = normalizeImageUrl(og, ingestedArticle.sourceUrl);
+        if (ogNorm && !isWeakStoryImageUrl(ogNorm)) {
+          resolvedImageUrl = ogNorm;
+        } else if (!resolvedImageUrl && ogNorm) {
+          resolvedImageUrl = ogNorm;
+        }
+      } catch {
+        /* keep RSS image if any */
+      }
+    }
+
+    plainLead = stripPublisherFeedBoilerplate(plainLead, displayTitle, sanitizeOpts);
+    rawBodyForArticle = stripPublisherFeedBoilerplate(rawBodyForArticle, displayTitle, sanitizeOpts);
     plainLead = stripSyndicationLinkbacks(plainLead);
     rawBodyForArticle = stripSyndicationLinkbacks(rawBodyForArticle);
 
-    const readerSummary = buildReaderSummaryFromPlainText(rawBodyForArticle || plainLead, displayTitle);
-    const { bodyShort, bodyMedium, paragraphs } = splitStoryBodies(rawBodyForArticle || plainLead, displayTitle);
+    const readerSummary = buildReaderSummaryFromPlainText(rawBodyForArticle || plainLead, displayTitle, {
+      sourceName: source.name,
+      sourceUrl: ingestedArticle.sourceUrl || null,
+    });
+    const { bodyShort, bodyMedium, paragraphs } = splitStoryBodies(
+      rawBodyForArticle || plainLead,
+      displayTitle,
+      { sourceName: source.name, sourceUrl: ingestedArticle.sourceUrl || null },
+    );
     const excerpt = readerSummary || bodyShort.slice(0, 1200) || displayTitle;
     // Map source name to category
     const category =
@@ -682,7 +796,7 @@ export class IngestionCronService {
         bodyMedium: bodyMedium || undefined,
         body: {
           type: 'doc',
-          ...(imageUrl && { imageUrl, imageCredit: 'Story image' }),
+          ...(resolvedImageUrl && { imageUrl: resolvedImageUrl, imageCredit: 'Story image' }),
           aiVideo: {
             title: displayTitle,
             summary: readerSummary || '',
@@ -695,7 +809,7 @@ export class IngestionCronService {
                   type: 'paragraph' as const,
                   content: [{ type: 'text' as const, text }],
                 }))
-              : this.rawHtmlToDocContent(rawBodyForArticle),
+              : this.rawHtmlToDocContent(rawBodyForArticle, sanitizeOpts),
         },
         excerpt,
         status: ArticleStatus.PUBLISHED,
@@ -707,12 +821,12 @@ export class IngestionCronService {
       },
     });
 
-    if (imageUrl) {
+    if (resolvedImageUrl) {
       const storedUrl = await persistArticleImage(
         this.prisma,
         s3ConfigFromEnv((k) => this.config.get(k)),
         article.id,
-        imageUrl,
+        resolvedImageUrl,
         ingestedArticle.sourceUrl,
       );
       if (storedUrl) {

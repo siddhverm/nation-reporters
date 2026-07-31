@@ -1,4 +1,8 @@
-import { stripPublisherFeedBoilerplate, buildReaderSummaryFromPlainText } from './reader-summary.util';
+import {
+  stripPublisherFeedBoilerplate,
+  buildReaderSummaryFromPlainText,
+  sanitizePublisherStoryText,
+} from './reader-summary.util';
 
 // Helper: assert none of the forbidden patterns appear in output
 function assertClean(output: string, forbidden: RegExp[], label: string) {
@@ -162,6 +166,50 @@ test('English: strips wire agency attribution', () => {
   const out = stripPublisherFeedBoilerplate(raw, 'Major policy reform announced');
   assertClean(out, [/Reporter:\s*John Smith/i], 'Wire agencies');
   expect(out).toContain('economic growth');
+});
+
+test('English India Today: strips glued Entertainment DeskNew Delhi,UPDATED chrome', () => {
+  const raw =
+    'India Today Entertainment DeskNew Delhi,UPDATED Alpha movie release and review live: Can Alia and Sharvari crack the box office? The film opened to strong numbers across multiplexes on day one.';
+  const out = stripPublisherFeedBoilerplate(raw, 'Alpha movie release and review live');
+  assertClean(
+    out,
+    [/India Today/i, /Entertainment Desk/i, /UPDATED/i, /DeskNew/i],
+    'India Today desk chrome',
+  );
+  expect(out).toMatch(/Alpha|film|multiplexes/i);
+});
+
+test('English India Today: day-month UPDATED date order is stripped', () => {
+  const raw =
+    'India Today Entertainment Desk New Delhi, UPDATED 30 May 2026 08:33 IST The film opened to strong numbers on day one.';
+  const out = stripPublisherFeedBoilerplate(raw, 'Alpha movie');
+  assertClean(out, [/India Today/i, /UPDATED/i, /Entertainment Desk/i], 'day-month UPDATED');
+  expect(out).toMatch(/film opened/i);
+});
+
+test('sanitizePublisherStoryText: chrome-only field becomes empty', () => {
+  const raw = 'India Today Entertainment DeskNew Delhi,UPDATED';
+  const out = sanitizePublisherStoryText(raw, { sourceName: 'India Today - India' });
+  expect(out.trim()).toBe('');
+});
+
+test('English India Today: strips desk chrome from headline-only field', () => {
+  const raw = 'India Today Entertainment DeskNew Delhi,UPDATED Alpha movie release and review live';
+  const out = stripPublisherFeedBoilerplate(raw);
+  assertClean(out, [/India Today/i, /Entertainment Desk/i, /UPDATED/i], 'India Today title');
+  expect(out).toMatch(/Alpha movie/i);
+});
+
+test('Summary: rebuilds from dirty India Today lede after chrome strip', () => {
+  const raw =
+    'India Today Entertainment DeskNew Delhi,UPDATED The film opened to strong numbers across multiplexes on day one. Crowds lined up early for the Alia Bhatt and Sharvari starrer.';
+  const summary = buildReaderSummaryFromPlainText(raw, 'Alpha movie release and review live', {
+    minChars: 48,
+  });
+  expect(summary.length).toBeGreaterThan(40);
+  expect(summary).not.toMatch(/India Today|UPDATED|Entertainment Desk/i);
+  expect(summary).toMatch(/film|multiplexes|Crowds/i);
 });
 
 // ─── SUMMARY BUILDER ─────────────────────────────────────────────────────────
