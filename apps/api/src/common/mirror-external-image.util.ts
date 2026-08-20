@@ -30,23 +30,39 @@ export function normalizeImageUrl(url: string | null | undefined, baseUrl?: stri
   return u;
 }
 
+const WEAK_IMAGE_STEM =
+  /^(?:logo|favicon|icon|sprite|avatar|placeholder|default[-_]?image|brand(?:ing)?|masthead|watermark|badge|button|spinner|loader|spacer|pixel|tracking|1x1|blank)(?:[-_.].*)?$/i;
+
 /**
  * Reject publisher chrome / tracking / brand marks that often appear as the first
  * RSS enclosure or HTML <img> but are not the story photo.
+ *
+ * Important: match on the **filename**, not path folders. LiveMint (and similar CDNs)
+ * store real story photos under a `/logo/` directory — those must still display.
  */
 export function isWeakStoryImageUrl(url: string | null | undefined): boolean {
   if (!url) return true;
   const u = url.trim().toLowerCase();
   if (!u || u.startsWith('data:')) return true;
   if (/\.svg(\?|#|$)/i.test(u)) return true;
-  if (
-    /(?:^|[\/._-])(?:logo|favicon|icon|sprite|avatar|placeholder|default[-_]?image|brand(?:ing)?|masthead|watermark|badge|button|spinner|loader|spacer|pixel|tracking|1x1|blank)(?:[\/._-]|$)/i.test(
-      u,
-    )
-  ) {
+
+  let pathname = u;
+  try {
+    pathname = new URL(u).pathname.toLowerCase();
+  } catch {
+    /* keep raw */
+  }
+  const file = (pathname.split('/').pop() || '').split('?')[0];
+  const stem = file.replace(/\.[a-z0-9]+$/i, '');
+  if (WEAK_IMAGE_STEM.test(stem)) return true;
+
+  // Theme/plugin/static brand asset folders (not CDN photo folders named "logo").
+  if (/\/(?:wp-content\/(?:themes|plugins)|static\/(?:logo|icons?)|favicons?)\//i.test(pathname)) {
     return true;
   }
-  if (/\/(?:wp-content\/(?:themes|plugins)|static\/(?:logo|icons?))\//i.test(u)) return true;
+  // Generic icon folder + short/generic filename only.
+  if (/\/(?:icons?|favicons?)\//i.test(pathname) && stem.length < 18) return true;
+
   if (/[_\-](?:16|24|32|48|50|64|72|96)x(?:16|24|32|48|50|64|72|96)(?:[_\-./?]|$)/i.test(u)) return true;
   if (/[?&](?:w|width|h|height)=(1[6-9]|[2-9]\d|1[01]\d)(?:&|$)/i.test(u)) {
     // Tiny requested dimensions are usually icons, not hero art.

@@ -5,13 +5,28 @@
 // Falls back to site logo when no story image is available.
 export const LOGO_FALLBACK = '/logo.png';
 
+const WEAK_IMAGE_STEM =
+  /^(?:logo|favicon|icon|sprite|avatar|placeholder|default[-_]?image|brand(?:ing)?|masthead|watermark|badge|button|spinner|loader|spacer|pixel|tracking|1x1|blank)(?:[-_.].*)?$/i;
+
+/** Match on filename, not path folders — LiveMint stores story photos under `/logo/`. */
 function isWeakStoryImageUrl(url: string): boolean {
   const u = url.trim().toLowerCase();
   if (!u || u.startsWith('data:')) return true;
   if (/\.svg(\?|#|$)/i.test(u)) return true;
-  return /(?:^|[\/._-])(?:logo|favicon|icon|sprite|avatar|placeholder|default[-_]?image|brand(?:ing)?|masthead|watermark|badge|button|spinner|loader|spacer|pixel|tracking|1x1|blank)(?:[\/._-]|$)/i.test(
-    u,
-  );
+  let pathname = u;
+  try {
+    pathname = new URL(u).pathname.toLowerCase();
+  } catch {
+    /* keep raw */
+  }
+  const file = (pathname.split('/').pop() || '').split('?')[0];
+  const stem = file.replace(/\.[a-z0-9]+$/i, '');
+  if (WEAK_IMAGE_STEM.test(stem)) return true;
+  if (/\/(?:wp-content\/(?:themes|plugins)|static\/(?:logo|icons?)|favicons?)\//i.test(pathname)) {
+    return true;
+  }
+  if (/\/(?:icons?|favicons?)\//i.test(pathname) && stem.length < 18) return true;
+  return false;
 }
 
 /** Proxy every absolute URL so the browser never talks to publishers or private MinIO. */

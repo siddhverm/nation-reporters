@@ -140,6 +140,11 @@ function stripInlinePublisherChrome(text: string): string {
   t = t.replace(/\bImage\s+notice\s*:\s*[^\n.]*/gi, '');
   t = t.replace(/\bArticle\s+image\s+is\s+shown\s+when\s+available[^\n.]*/gi, '');
   t = t.replace(
+    /\bAlso\s*read\s*[|:–—-]?\s*[A-Z0-9][^.!?\n|]{8,160}(?:[.|]|$)/gi,
+    ' ',
+  );
+  t = t.replace(/\b(?:Related|Read\s+also|Must\s+read)\s*[|:–—-]\s*[^.!?\n|]{8,160}[.!?]?/gi, ' ');
+  t = t.replace(
     /(?:^|\n)\s*[ऀ-ॿA-Za-z\s]{0,40}डेस्क\s*,\s*[^\n।.!?]{0,100}[।.]?\s*/gu,
     '\n',
   );
@@ -209,6 +214,15 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   if (/^(Hindi\s*News|Bhaskar\s*Khaas?|Khabar\s*Hatke|खबर\s*हटके|भास्कर\s*खास)$/i.test(t)) return true;
   if (/पूरी\s*खबर\s*पढ़ें\s*ऐप|ऐप\s*पर\s*पढ़ें|QR\s*स्कैन|प्रीमियम\s*मेंबरशिप|अधूरा\s*नहीं|पढ़िए\s*पूरा/u.test(t)) return true;
   if (/^by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(t)) return true;
+  if (/^Written\s+By\s+/i.test(t) && t.length < 90) return true;
+  if (/^Published\s*\d{1,2}\s+/i.test(t) && /\b(?:IST|UTC|GMT)\b/i.test(t) && t.length < 90) return true;
+  if (/^View\s+Market\s+Dashboard$/i.test(t)) return true;
+  if (/^AI\s+Quick\s+Read/i.test(t)) return true;
+  if (/^Wait\s+for\s+it/i.test(t)) return true;
+  if (/Log\s+in\s+to\s+our\s+website/i.test(t)) return true;
+  if (/exceeded\s+the\s+limit\s+to\s+bookmark/i.test(t)) return true;
+  if (/^Yes,\s*Continue$/i.test(t)) return true;
+  if (/^Remove\s+some\s+to\s+bookmark/i.test(t)) return true;
   if (/^according to\s+/i.test(low)) return true;
   if (/^(Photo|Photos|Image|Pic|Picture|Caption)\s*:/i.test(t) && t.length < 150) return true;
   if (/^(Advertisement|Advertisem|Publicité|Werbung|Publicidad)$/i.test(t)) return true;
@@ -296,6 +310,30 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(نامہ\s*نگار|رپورٹر|نمائندہ)\s*,?\s*[^\n]{0,60}/gu, '\n$&\n');
   t = t.replace(/(مراسلنا|مراسل)\s+في\s+[^\n.،]{0,40}[.،\n]/gu, '\n$&\n');
   t = t.replace(/\b(PTI|ANI|AFP|AP|Reuters|IANS|UNI)\s*:/gi, '\n$&\n');
+  // LiveMint / Mint mashed chrome (often glued to next word — no trailing \b)
+  t = t.replace(/View\s+Market\s+Dashboard/gi, '\n');
+  t = t.replace(/Written\s+By\s+[A-Z][a-zA-Z.'\-]+(?:\s+[A-Z][a-zA-Z.'\-]+){0,4}/g, '\n');
+  t = t.replace(
+    /Published\s*\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4},?\s*\d{1,2}:\d{2}\s*(?:AM|PM)\s*IST/gi,
+    '\n',
+  );
+  t = t.replace(
+    /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4},?\s*\d{1,2}:\d{2}\s*(?:AM|PM)\s*IST/gi,
+    '\n',
+  );
+  t = t.replace(/AI\s+Quick\s+Read/gi, '\n');
+  // Publisher "Also read | …" / related-link chrome mashed into the story lede
+  t = t.replace(
+    /\bAlso\s*read\s*[|:–—-]?\s*[A-Z0-9][^.!?\n|]{8,160}(?:[.|]|$)/gi,
+    '\n',
+  );
+  t = t.replace(/\b(?:Related|Read\s+also|Must\s+read)\s*[|:–—-]\s*[^.!?\n|]{8,160}[.!?]?/gi, '\n');
+  t = t.replace(/Wait\s+for\s+it[….…]*/gi, '\n');
+  t = t.replace(/Log\s+in\s+to\s+our\s+website[^.!?\n]{0,160}[.!?]?/gi, '\n');
+  t = t.replace(/Yes,\s*Continue/gi, '\n');
+  t = t.replace(/Oops!\s*Looks\s+like\s+you\s+have\s+exceeded[^.!?\n]{0,160}[.!?]?/gi, '\n');
+  t = t.replace(/Remove\s+some\s+to\s+bookmark\s+this\s+image\.?/gi, '\n');
+  t = t.replace(/It'll\s+just\s+take\s+a\s+moment\.?/gi, '\n');
   t = t.replace(/\bDesk(?=New\s*Delhi|Mumbai|Bengaluru|Bangalore|Chennai|Kolkata|Hyderabad)/gi, 'Desk ');
   t = t.replace(/,UPDATED/gi, ', UPDATED');
   t = t.replace(/\bUPDATED(?=[A-Za-z0-9])/gi, 'UPDATED ');
@@ -388,11 +426,16 @@ export function buildReaderSummaryFromPlainText(
     if (sents.length >= 1) paragraphs = sents;
   }
 
+  // Aim for a short multi-point brief (not a one-line teaser).
+  const targetChars = Math.min(Math.max(minChars * 2, 320), maxChars);
+  const targetSents = 3;
   const parts: string[] = [];
   for (const p of paragraphs) {
     parts.push(p);
     const joined = parts.join(' ');
-    if (joined.length >= minChars && splitSentences(joined).length >= 1) break;
+    const sentCount = splitSentences(joined).length;
+    if (joined.length >= targetChars && sentCount >= 2) break;
+    if (sentCount >= targetSents && joined.length >= minChars) break;
     if (joined.length >= maxChars) break;
   }
 

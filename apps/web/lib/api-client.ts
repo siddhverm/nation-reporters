@@ -47,12 +47,20 @@ export async function fetchJsonFromApi<T>(path: string, init?: RequestInit): Pro
   const normalizedPath = path.startsWith('/') ? path : `/${path}`;
   let lastError: Error | null = null;
   for (const base of getApiCandidates()) {
+    const controller = new AbortController();
+    const timeoutMs = 12_000;
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
     try {
-      const response = await fetch(`${base}${normalizedPath}`, init);
+      const response = await fetch(`${base}${normalizedPath}`, {
+        ...init,
+        signal: init?.signal ?? controller.signal,
+      });
       if (!response.ok) continue;
       return await parseJsonResponse<T>(response);
     } catch (error) {
       lastError = error as Error;
+    } finally {
+      clearTimeout(timer);
     }
   }
   throw lastError ?? new Error(`All API candidates failed for ${normalizedPath}`);

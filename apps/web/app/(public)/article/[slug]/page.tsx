@@ -363,7 +363,8 @@ function pickDisplaySummary(
     sourceName: article.provenance?.sourceName,
     sourceUrl: article.provenance?.sourceUrl,
   });
-  return raw ? trimSummaryDisplay(raw, titleText, 1200) : '';
+  // Cap the Summary box — Nation Reporters is a brief reader, not a full-wire reprint.
+  return raw ? trimSummaryDisplay(raw, titleText, 560) : '';
 }
 
 /**
@@ -583,26 +584,14 @@ export default function ArticlePage() {
   }, [article?.id, article?.categoryId, uiLang]);
 
   useEffect(() => {
-    const bases = [
-      process.env.NEXT_PUBLIC_API_URL,
-      '/api/proxy',
-      '/api/v1',
-      'http://localhost:3001/api/v1',
-      'http://localhost:3005/api/v1',
-    ].filter((v): v is string => !!v);
-
+    // Prefer same-origin /api/proxy (see getApiCandidates) — baked NEXT_PUBLIC_API_URL
+    // can point at apex HTTPS that hangs on cert/proxy issues.
     const fetchArticle = async () => {
-      for (const base of bases) {
-        try {
-          const r = await fetch(`${base.replace(/\/$/, '')}/articles/${slug}`);
-          if (!r.ok) continue;
-          const data: Article = await r.json();
-          if (data?.id) return data;
-        } catch {
-          // try next endpoint candidate
-        }
+      try {
+        return await fetchJsonFromApi<Article>(`/articles/${slug}`);
+      } catch {
+        throw new Error('Article fetch failed on all endpoints');
       }
-      throw new Error('Article fetch failed on all endpoints');
     };
 
     fetchArticle()
@@ -739,6 +728,11 @@ export default function ArticlePage() {
     fallbackBodyText.trim().length < displaySummary.length + 80;
   const shareUrl = typeof window !== 'undefined' ? window.location.href : '';
   const showSummaryBlock = displaySummary.length >= MIN_SUMMARY_CHARS;
+  // Product: show a reader Summary, not the full syndicated wire story underneath.
+  // Long body paras often start with the same lede and were kept by isRedundantOpeningVsTeaser
+  // (it only drops near-equal short echoes), which made some outlets look like full articles.
+  const summaryOnlyMode =
+    showSummaryBlock && displaySummary.length >= MIN_SUBSTANTIVE_SUMMARY_CHARS;
   const teaserForSeo = (displaySummary || excerptText).trim();
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
@@ -759,7 +753,9 @@ export default function ArticlePage() {
   };
 
   let bodyContent: ReactNode = null;
-  if (paragraphs.length > 0) {
+  if (summaryOnlyMode) {
+    bodyContent = null;
+  } else if (paragraphs.length > 0) {
     bodyContent = paragraphs.map((p, i) => <p key={i}>{proseText(p)}</p>);
   } else if (lastResortMedium) {
     bodyContent = renderProseBlocks(lastResortMedium, 'lr-med');

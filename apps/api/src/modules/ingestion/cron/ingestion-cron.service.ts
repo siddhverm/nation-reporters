@@ -28,6 +28,7 @@ import { resolveSourceFeedLanguage } from '../ingestion-language.util';
 import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../../common/editorial-sanitize';
 import {
   buildReaderSummaryFromPlainText,
+  type PublisherSanitizeOptions,
   splitStoryBodies,
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
@@ -638,7 +639,7 @@ export class IngestionCronService {
   /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
   private rawHtmlToDocContent(
     htmlOrText: string,
-    sanitizeOpts: { headline?: string; sourceName?: string; sourceUrl?: string } = {},
+    sanitizeOpts: PublisherSanitizeOptions = {},
     maxTotalChars = 80000,
   ) {
     const text = stripSyndicationLinkbacks(

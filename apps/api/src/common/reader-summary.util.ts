@@ -149,6 +149,30 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/\bVon\s+[A-ZÄÖÜ][a-zA-Zäöüß]+(?:\s+[a-zA-Zäöüß]+){0,3}\s*[|—–\-]/g, '\n$&\n');
   // Wire agency prefix mashed inline: "PTI: New Delhi."
   t = t.replace(/\b(PTI|ANI|AFP|AP|Reuters|IANS|UNI)\s*:/gi, '\n$&\n');
+  // LiveMint / Mint mashed chrome (often glued to next word — no trailing \b)
+  t = t.replace(/View\s+Market\s+Dashboard/gi, '\n');
+  t = t.replace(/Written\s+By\s+[A-Z][a-zA-Z.'\-]+(?:\s+[A-Z][a-zA-Z.'\-]+){0,4}/g, '\n');
+  t = t.replace(
+    /Published\s*\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4},?\s*\d{1,2}:\d{2}\s*(?:AM|PM)\s*IST/gi,
+    '\n',
+  );
+  // Orphaned timestamp left when "Published" was glued into the byline token
+  t = t.replace(
+    /\b\d{1,2}\s+(?:Jan|Feb|Mar|Apr|May|Jun|Jul|Aug|Sep|Oct|Nov|Dec)[a-z]*\.?\s+\d{4},?\s*\d{1,2}:\d{2}\s*(?:AM|PM)\s*IST/gi,
+    '\n',
+  );
+  t = t.replace(/AI\s+Quick\s+Read/gi, '\n');
+  t = t.replace(
+    /\bAlso\s*read\s*[|:–—-]?\s*[A-Z0-9][^.!?\n|]{8,160}(?:[.|]|$)/gi,
+    '\n',
+  );
+  t = t.replace(/\b(?:Related|Read\s+also|Must\s+read)\s*[|:–—-]\s*[^.!?\n|]{8,160}[.!?]?/gi, '\n');
+  t = t.replace(/Wait\s+for\s+it[….…]*/gi, '\n');
+  t = t.replace(/Log\s+in\s+to\s+our\s+website[^.!?\n]{0,160}[.!?]?/gi, '\n');
+  t = t.replace(/Yes,\s*Continue/gi, '\n');
+  t = t.replace(/Oops!\s*Looks\s+like\s+you\s+have\s+exceeded[^.!?\n]{0,160}[.!?]?/gi, '\n');
+  t = t.replace(/Remove\s+some\s+to\s+bookmark\s+this\s+image\.?/gi, '\n');
+  t = t.replace(/It'll\s+just\s+take\s+a\s+moment\.?/gi, '\n');
   // India Today / NDTV mashed desk: "Entertainment DeskNew Delhi,UPDATED"
   t = t.replace(/\bDesk(?=New\s*Delhi|Mumbai|Bengaluru|Bangalore|Chennai|Kolkata|Hyderabad)/gi, 'Desk ');
   t = t.replace(/,UPDATED/gi, ', UPDATED');
@@ -352,6 +376,11 @@ function stripInlinePublisherChrome(text: string): string {
   t = t.replace(/\b(Follow us on|Subscribe to|Subscribe for|Get our newsletter)\b[^\n.]*/gi, '');
   t = t.replace(/\bImage\s+notice\s*:\s*[^\n.]*/gi, '');
   t = t.replace(/\bArticle\s+image\s+is\s+shown\s+when\s+available[^\n.]*/gi, '');
+  t = t.replace(
+    /\bAlso\s*read\s*[|:–—-]?\s*[A-Z0-9][^.!?\n|]{8,160}(?:[.|]|$)/gi,
+    ' ',
+  );
+  t = t.replace(/\b(?:Related|Read\s+also|Must\s+read)\s*[|:–—-]\s*[^.!?\n|]{8,160}[.!?]?/gi, ' ');
   // Indic desk prefix mashed into story: "न्यूज डेस्क, अमर उजाला नई दिल्ली। …"
   t = t.replace(
     /(?:^|\n)\s*[ऀ-ॿA-Za-z\s]{0,40}डेस्क\s*,\s*[^\n।.!?]{0,100}[।.]?\s*/gu,
@@ -439,6 +468,16 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   if (/\b\d{1,2}:\d{2}\s*(AM|PM)\s*IST\b/i.test(t) && t.length < 60) return true;
   // "Published by: Name" editorial attribution
   if (/^Published\s+by\s*:/i.test(t)) return true;
+  // LiveMint / Mint UI + byline chrome
+  if (/^View\s+Market\s+Dashboard$/i.test(t)) return true;
+  if (/^Written\s+By\s+/i.test(t) && t.length < 90) return true;
+  if (/^Published\s*\d{1,2}\s+/i.test(t) && /\b(?:IST|UTC|GMT)\b/i.test(t) && t.length < 90) return true;
+  if (/^AI\s+Quick\s+Read/i.test(t)) return true;
+  if (/^Wait\s+for\s+it/i.test(t)) return true;
+  if (/Log\s+in\s+to\s+our\s+website/i.test(t)) return true;
+  if (/exceeded\s+the\s+limit\s+to\s+bookmark/i.test(t)) return true;
+  if (/^Yes,\s*Continue$/i.test(t)) return true;
+  if (/^Remove\s+some\s+to\s+bookmark/i.test(t)) return true;
   // Author byline patterns: "लेखक: name", "By name", "Reporter, City"
   if (/^लेखक\s*:/.test(t)) return true;
   if (/^By\s+[A-Z][\w\s]+$/.test(t) && t.length < 60) return true;
@@ -586,11 +625,16 @@ export function buildReaderSummaryFromPlainText(
     if (sents.length >= 1) paragraphs = sents;
   }
 
+  // Aim for a short multi-point brief (not a one-line teaser) so readers get the gist fast.
+  const targetChars = Math.min(Math.max(minChars * 2, 320), maxChars);
+  const targetSents = 3;
   const parts: string[] = [];
   for (const p of paragraphs) {
     parts.push(p);
     const joined = parts.join(' ');
-    if (joined.length >= minChars && splitSentences(joined).length >= 1) break;
+    const sentCount = splitSentences(joined).length;
+    if (joined.length >= targetChars && sentCount >= 2) break;
+    if (sentCount >= targetSents && joined.length >= minChars) break;
     if (joined.length >= maxChars) break;
   }
 

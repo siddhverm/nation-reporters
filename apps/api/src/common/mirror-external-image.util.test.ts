@@ -18,6 +18,12 @@ test('isWeakStoryImageUrl rejects logos icons and tiny assets', () => {
   expect(isWeakStoryImageUrl('https://cdn.example.com/icon-32x32.png')).toBe(true);
   expect(isWeakStoryImageUrl('https://cdn.example.com/brand.svg')).toBe(true);
   expect(isWeakStoryImageUrl('https://cdn.example.com/photos/alpha-movie-premiere.jpg')).toBe(false);
+  // LiveMint CDN uses /logo/ as a photo folder — not brand chrome.
+  expect(
+    isWeakStoryImageUrl(
+      'https://www.livemint.com/lm-img/img/2026/08/11/1600x900/logo/jamie_lee_curtis_1753714590417.jpg',
+    ),
+  ).toBe(false);
 });
 
 test('pickStrongestImageUrl prefers story photo over logo', () => {
