@@ -12,50 +12,28 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to VPS via git pull
+      - name: Deploy to VPS
         uses: appleboy/ssh-action@v1.0.3
         with:
           host: ${{ secrets.VPS_HOST }}
           username: ${{ secrets.VPS_USER }}
           key: ${{ secrets.VPS_SSH_KEY }}
+          port: 22
+          timeout: 60s
           command_timeout: 15m
           script: |
-            set -e
             cd /opt/nation-reporters
-
-            echo "📦 Syncing to origin/master..."
             git fetch origin master
             git reset --hard origin/master
-
-            echo "🐳 Rebuilding api + web (keeping postgres/redis/meilisearch up)..."
-            docker compose -f docker-compose.server.yml up -d --build api web
-
-            echo "⏳ Waiting for API + web..."
-            for i in $(seq 1 60); do
-              if curl -sf http://localhost:3001/api/v1/health/live >/dev/null \
-                && curl -sf http://localhost:3000/ >/dev/null; then
-                echo "✅ Services ready after ${i}0s"
-                break
-              fi
-              if [ "$i" -eq 60 ]; then
-                echo "❌ Timed out waiting for services"
-                docker compose -f docker-compose.server.yml ps
-                docker compose -f docker-compose.server.yml logs api --tail 30
-                docker compose -f docker-compose.server.yml logs web --tail 30
-                exit 1
-              fi
-              sleep 10
-            done
-
-            echo "✅ Nation Reporters deployed at $(date) — $(git rev-parse --short HEAD)"
-            docker compose -f docker-compose.server.yml ps api web
+            chmod +x scripts/deploy-production.sh
+            bash scripts/deploy-production.sh
 
       - name: Notify deployment status
         if: always()
         run: |
           if [ "${{ job.status }}" = 'success' ]; then
-            echo "🎉 Nation Reporters deployed to nationreporters.com"
+            echo "Nation Reporters deployed to nationreporters.com"
           else
-            echo "❌ Nation Reporters deployment failed"
+            echo "Nation Reporters deployment failed — check VPS_HOST (use 187.127.141.249), VPS_SSH_KEY, and re-run workflow"
             exit 1
           fi
