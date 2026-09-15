@@ -3,7 +3,8 @@ import { NextRequest, NextResponse } from 'next/server';
 const DEFAULT_TARGETS =
   process.env.NODE_ENV === 'development'
     ? 'http://localhost:3001/api/v1,https://nationreporters.com/api/v1'
-    : 'https://nationreporters.com/api/v1,http://127.0.0.1:3001/api/v1';
+    // Inside Docker, prefer the compose service name — 127.0.0.1 is the web container itself.
+    : 'http://api:3001/api/v1,https://nationreporters.com/api/v1';
 
 const TARGETS = (process.env.API_PROXY_TARGETS ?? process.env.API_PROXY_TARGET ?? DEFAULT_TARGETS)
   .split(',')

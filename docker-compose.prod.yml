@@ -50,6 +50,7 @@ services:
       - '127.0.0.1:3000:3000'
     environment:
       NEXT_PUBLIC_API_URL: https://nationreporters.com/api/v1
+      API_PROXY_TARGETS: http://api:3001/api/v1,https://nationreporters.com/api/v1
     depends_on:
       - api
     restart: unless-stopped

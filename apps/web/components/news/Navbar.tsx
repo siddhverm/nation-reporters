@@ -119,20 +119,23 @@ export function Navbar() {
     return () => document.removeEventListener('mousedown', handler);
   }, []);
 
-  // Check which languages currently have published inventory.
+  // Check which languages currently have published inventory (batched; use total, not page size).
   useEffect(() => {
     let cancelled = false;
     const loadAvailability = async () => {
+      const codes = LANGUAGES.map((l) => l.code);
       const entries = await Promise.all(
-        LANGUAGES.map(async (l) => {
+        codes.map(async (code) => {
           try {
-            const d = await fetchJsonFromApi<{ data?: unknown[] } | unknown[]>(
-              `/articles?status=PUBLISHED&limit=1&language=${l.code}&omitBody=true`,
+            const d = await fetchJsonFromApi<{ data?: unknown[]; total?: number } | unknown[]>(
+              `/articles?status=PUBLISHED&limit=1&language=${code}&omitBody=true`,
             );
-            const arr = Array.isArray(d) ? d : (d.data ?? []);
-            return [l.code, arr.length > 0] as const;
+            if (Array.isArray(d)) return [code, d.length > 0] as const;
+            const total = typeof d.total === 'number' ? d.total : (d.data?.length ?? 0);
+            return [code, total > 0] as const;
           } catch {
-            return [l.code, l.code === 'en'] as const;
+            // Don't mark regional langs as empty on transient errors — that shows "No stories yet".
+            return [code, true] as const;
           }
         }),
       );
@@ -174,26 +177,8 @@ export function Navbar() {
     setMenuOpen(false);
   }
 
-  // Languages filtered by selected country's relevant languages only
-  const filteredLanguages = (() => {
-    const codes = new Set(getCountryLanguageCodes(country));
-    return LANGUAGES.filter((l) => codes.has(l.code));
-  })();
-
-  useEffect(() => {
-    if (!country) return;
-    const allowedCodes = new Set(getCountryLanguageCodes(country));
-    const langAllowed = allowedCodes.has(lang);
-    // Keep explicit user selection even when current inventory is low.
-    // Only reset if selected language is outside the country's allowed set.
-    if (langAllowed) return;
-    const defaultLang = resolveCountryDefaultLanguage(country);
-    if (defaultLang !== lang) {
-      setLang(defaultLang);
-      localStorage.setItem('nr-lang', defaultLang);
-      window.dispatchEvent(new CustomEvent('nr-lang-change', { detail: { lang: defaultLang } }));
-    }
-  }, [country, lang]);
+  // Always offer the full language list (country no longer gates the picker).
+  const filteredLanguages = LANGUAGES;
 
   function handleSearch(e: React.FormEvent) {
     e.preventDefault();
@@ -259,10 +244,10 @@ export function Navbar() {
                               onClick={() => {
                                 setWorldOpen(false);
                                 localStorage.setItem('nr-country', c.code);
-                                const allowed = new Set(getCountryLanguageCodes(c));
-                                const current = normalizeUiLanguage(localStorage.getItem('nr-lang') ?? lang);
-                                const newLang = allowed.has(current)
-                                  ? current
+                                // Keep the reader's language; only apply country default when unset.
+                                const hasChosen = Boolean(localStorage.getItem('nr-lang')?.trim());
+                                const newLang = hasChosen
+                                  ? normalizeUiLanguage(localStorage.getItem('nr-lang') ?? lang)
                                   : resolveCountryDefaultLanguage(c);
                                 localStorage.setItem('nr-lang', newLang);
                                 setCountry(c);

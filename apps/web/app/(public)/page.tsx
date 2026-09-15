@@ -30,8 +30,8 @@ function articleListingTeaser(article: Article): string {
   return cleaned || safeArticleText(article.excerpt);
 }
 
-function withFallbackArticles(list: Article[], min = 12): Article[] {
-  return list.slice(0, min);
+function withFallbackArticles(list: Article[]): Article[] {
+  return list.slice(0, 150);
 }
 
 function timeAgo(d: string) {

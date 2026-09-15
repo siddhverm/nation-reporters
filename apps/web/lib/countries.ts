@@ -102,18 +102,13 @@ const COUNTRY_EXTRA_LANGS: Record<string, string[]> = {
 };
 
 /**
- * Languages offered in the nav picker for this country.
- * When no country is selected (“World”), expose every app language so Bengali/Punjabi/Urdu/etc.
- * are still choosable — otherwise the UI only showed English and non-EN feeds looked “broken”.
+ * Languages offered in the nav picker.
+ * Always expose the full multilingual set — country is for country feeds / defaults, not a
+ * hard gate. Restricting by country (e.g. US → English only) made Bengali/Punjabi/Urdu/Tamil
+ * disappear from the picker and forced ?lang=bn back to English.
  */
-export function getCountryLanguageCodes(country: Country | null): string[] {
-  if (!country) return [...SUPPORTED_APP_LANGUAGES];
-  const out = new Set<string>(['en']);
-  if (SUPPORTED_LANGUAGE_SET.has(country.lang)) out.add(country.lang);
-  for (const code of COUNTRY_EXTRA_LANGS[country.code] ?? []) {
-    if (SUPPORTED_LANGUAGE_SET.has(code)) out.add(code);
-  }
-  return [...out];
+export function getCountryLanguageCodes(_country: Country | null): string[] {
+  return [...SUPPORTED_APP_LANGUAGES];
 }
 
 /**
