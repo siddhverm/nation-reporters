@@ -56,7 +56,10 @@ export function htmlToPlainText(htmlOrText: string | null | undefined, multiline
   } else {
     t = t.replace(/<\/p>\s*<p[^>]*>/gi, ' ').replace(/<br\s*\/?>/gi, ' ');
   }
+  t = t.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  t = t.replace(/<script[\s\S]*?<\/script>/gi, ' ');
   t = t.replace(/<[^>]+>/g, ' ');
+  t = stripLeakedPageCss(t);
   return multiline
     ? t.replace(/\n{3,}/g, '\n\n').replace(/[ \t]+\n/g, '\n').trim()
     : t.replace(/\s+/g, ' ').trim();
@@ -103,6 +106,35 @@ function trimSummaryEllipsisEnd(text: string): string {
 }
 
 /**
+ * RSS/HTML leftovers: concatenated stylesheets, spinner CSS, leaked <meta>/<script>.
+ * Keep in sync with stripLeakedPageCss in apps/api/src/common/editorial-sanitize.ts.
+ */
+export function stripLeakedPageCss(text: string): string {
+  if (!text?.trim()) return (text ?? '').trim();
+  let t = text;
+  t = t.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  t = t.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+  t = t.replace(/<meta\b[^>]{0,500}>/gi, ' ');
+  const cssDump = t.search(
+    /(?:\*,\s*:after|\*:after|:before\s*\{|\{[\s]*margin\s*:|-webkit-box-sizing\s*:|box-sizing\s*:\s*border-box|\.spinner-(?:container|loader)\s*\{)/i,
+  );
+  if (cssDump >= 0) {
+    t = t.slice(0, cssDump);
+  }
+  t = t.replace(/@media\s*\([^)]{0,80}\)\s*\{[^{}]{0,800}\}/gi, ' ');
+  t = t.replace(
+    /(?:[.#][\w-]+|\b(?:body|html|a|p|img|ul|li|strong|div|span)\b)\s*\{[^{}]{0,400}\}/gi,
+    ' ',
+  );
+  t = t.replace(
+    /\{[^{}]{0,80}(?:margin|padding|font-family|display|box-sizing)[^{}]{0,200}\}/gi,
+    ' ',
+  );
+  t = t.replace(/\bfunction\s+\w+\s*\([^)]{0,80}\)\s*\{[^}]{0,500}\}/gi, ' ');
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
+/**
  * Syndicated feeds often end with “Read more: https://…”. Nation Reporters must not show that as story body.
  * Keep in sync with apps/api/src/common/editorial-sanitize.ts.
  */
@@ -124,7 +156,7 @@ function isSyndicationLinkbackBlock(block: string): boolean {
 
 export function stripSyndicationLinkbacks(text: string): string {
   if (!text?.trim()) return (text ?? '').trim();
-  return text
+  return stripLeakedPageCss(text)
     .split(/\n\s*\n/)
     .map((b) => b.trim())
     .filter(Boolean)

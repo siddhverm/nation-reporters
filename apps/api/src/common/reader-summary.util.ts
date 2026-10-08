@@ -1,4 +1,4 @@
-import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from './editorial-sanitize';
+import { stripLeakedPageCss, stripSyndicationLinkbacks, stripWireHeadlinePrefix } from './editorial-sanitize';
 import { KNOWN_SYNDICATION_OUTLET_LABELS } from './known-syndication-outlets';
 
 /** Feed/source context for stripping outlet names and domains from syndicated text. */
@@ -37,6 +37,7 @@ function splitSourcePageChrome(text: string): string {
     '$1\nPublished $2 $3 ago\n',
   );
   t = t.replace(/\bPublished\s*(\d+)\s*(hours?|minutes?|days?|mins?)\s*ago/gi, '\nPublished $1 $2 ago\n');
+  t = t.replace(/([a-z])Published\s*(\d{1,2}\s+[A-Za-z]+\s+\d{4})/gi, '$1\nPublished $2\n');
   t = t.replace(/\bRelated\s+topics\b/gi, '\nRelated topics ');
   t = t.replace(/\bBBC\s+(?:Sport|News|Radio)(?:\s+[A-Z][a-z]+)?/g, '\n$&\n');
   return t;
@@ -49,6 +50,11 @@ function stripSourcePageChromeInline(text: string): string {
   t = t.replace(/(?:Image|Media)\s+caption\s*,\s*/gi, '');
   t = t.replace(/(?:Image|Media)\s+credit\s*,\s*[A-Z][A-Za-z0-9 .,&'/-]{1,80}/gi, '');
   t = t.replace(/\bPublished\s*\d+\s*(?:hours?|minutes?|days?|mins?)\s*ago\b/gi, '');
+  t = t.replace(
+    /\bPublished\s*\d{1,2}\s+[A-Za-z]+\s+\d{4}(?:,\s*\d{1,2}:\d{2}\s*(?:BST|GMT|UTC|IST))?/gi,
+    '',
+  );
+  t = t.replace(/\bUpdated\s+\d+\s+(?:minutes?|hours?|days?)\s+ago\b/gi, '');
   t = t.replace(/^\d+\s+(?:hours?|minutes?|days?|mins?)\s+ago\b/gi, '');
   t = t.replace(
     /\bBy\s+[A-Z][a-zA-Z.'\-]+(?:\s+[A-Z][a-zA-Z.'\-]+){0,5}\s*,\s*(?:BBC\s+(?:Sport|News|Radio)[^\n.]{0,120})?/g,
@@ -249,7 +255,10 @@ export function stripPublisherFeedBoilerplate(
   const titleNorm = normalizeForCompare(title);
   const sourceLabels = collectSourceLabels(sourceOpts);
 
-  const lines = preformatMashedPlain(text, headline ?? sourceOpts?.headline)
+  const lines = preformatMashedPlain(
+    stripSectionOutletCrumbs(stripLeakedPageCss(text)),
+    headline ?? sourceOpts?.headline,
+  )
     .split(/\n+/)
     .map((l) => l.trim())
     .filter(Boolean);
@@ -263,6 +272,7 @@ export function stripPublisherFeedBoilerplate(
   }
 
   let joined = kept.join('\n\n').trim();
+  joined = stripSectionOutletCrumbs(stripLeakedPageCss(joined));
   joined = stripInlinePublisherChrome(joined);
   joined = stripSourceAttribution(joined, sourceOpts);
   if (title && titleNorm) {
@@ -290,7 +300,36 @@ const INDIAN_DESK_SECTIONS =
 const INDIAN_BUREAU_CITIES =
   'New\\s+Delhi|Mumbai|Bengaluru|Bangalore|Chennai|Kolkata|Hyderabad|Pune|Ahmedabad|Lucknow|Jaipur|Chandigarh|Gurugram|Noida|Patna|Bhopal|Kochi|Thiruvananthapuram';
 const INDIAN_ENGLISH_OUTLETS =
-  'India\\s+Today|NDTV|Hindustan\\s+Times|News18|Zee\\s+News|Aaj\\s+Tak|India\\s+TV|Live\\s+Hindustan|The\\s+Indian\\s+Express|Indian\\s+Express|The\\s+Hindu|Times\\s+of\\s+India|TOI|Moneycontrol|Economic\\s+Times|ET\\s+Online';
+  'India\\s+Today|NDTV|Hindustan\\s+Times|News18|Zee\\s+News|Aaj\\s+Tak|India\\s+TV|Live\\s+Hindustan|The\\s+Indian\\s+Express|Indian\\s+Express|The\\s+Hindu|Times\\s+of\\s+India|TOI|Moneycontrol|Economic\\s+Times|ET\\s+Online|Business\\s+Standard|Live\\s*Mint|Mint|Financial\\s+Express';
+
+/** Publisher section crumbs mashed into RSS: "Industry News - Business Standard". */
+const SECTION_OUTLET_CRUMB =
+  /(?:^|[\s.])(?:Top\s+)?[A-Z][A-Za-z0-9 /&-]{0,40}News\s*[-–—]\s*[A-Z][A-Za-z0-9 .&']{2,50}/g;
+
+const AMBIGUOUS_OUTLET_LABELS = new Set([
+  'the age',
+  'patrika',
+  'bild',
+  'news24',
+  'ani',
+  'pti',
+  'afp',
+  'ap',
+  'uni',
+  'cnn',
+]);
+
+function shouldStripOutletPhrase(label: string): boolean {
+  const low = label.trim().toLowerCase();
+  if (AMBIGUOUS_OUTLET_LABELS.has(low)) return false;
+  if (/\s/.test(label)) return true;
+  if (label.length >= 8) return true;
+  return /^(ndtv|news18|livemint|toi|bloomberg|reuters)$/i.test(label);
+}
+
+function stripSectionOutletCrumbs(text: string): string {
+  return text.replace(SECTION_OUTLET_CRUMB, ' ').replace(/\s{2,}/g, ' ').trim();
+}
 
 /** Split glued desk tokens before regex passes (DeskNew Delhi, ,UPDATED). */
 function normalizeMashedDeskBoundaries(text: string): string {
@@ -393,10 +432,13 @@ function stripSourceAttribution(text: string, opts?: PublisherSanitizeOptions): 
     t = t.replace(new RegExp(`^\\s*${esc}\\s*\\.?\\s*$`, 'gim'), '');
     t = t.replace(new RegExp(`\\breporter\\s+at\\s+${esc}\\s*\\.?`, 'gi'), '');
     t = t.replace(new RegExp(`\\baccording\\s+to\\s+${esc}\\b[^.\\n]{0,80}\\.?`, 'gi'), '');
-    t = t.replace(new RegExp(`[|\\-–—]\\s*${esc}\\s*\\.?$`, 'gim'), '');
+    t = t.replace(new RegExp(`[|\\-–—]\\s*${esc}\\s*\\.?`, 'gi'), ' ');
+    t = t.replace(new RegExp(`^\\s*${esc}\\s*[-–—:]\\s*`, 'gim'), '');
     t = t.replace(new RegExp(`\\b(?:Source|Via)\\s*:\\s*${esc}\\b[^.\\n]{0,80}\\.?`, 'gi'), '');
     t = t.replace(new RegExp(`\\b${esc}\\s+(?:${INDIAN_DESK_SECTIONS})\\s+Desk\\b`, 'gi'), '');
-    if (label.length >= 5) {
+    if (shouldStripOutletPhrase(label)) {
+      t = t.replace(new RegExp(`\\b${esc}\\b`, 'gi'), ' ');
+    } else if (label.length >= 5) {
       t = t.replace(new RegExp(`\\b${esc}\\b`, 'gi'), (match, offset, full) => {
         const before = full.slice(Math.max(0, offset - 36), offset).toLowerCase();
         if (/reporter\s+at\s*$|according\s+to\s*$|\bvia\s*$|source:\s*$/.test(before)) return '';
@@ -409,7 +451,8 @@ function stripSourceAttribution(text: string, opts?: PublisherSanitizeOptions): 
 
 /** Inline newsletter promos, ad labels, desk chrome, and AU/UK bylines. */
 function stripInlinePublisherChrome(text: string): string {
-  let t = stripIndianEnglishDeskChrome(text);
+  let t = stripSectionOutletCrumbs(stripLeakedPageCss(text));
+  t = stripIndianEnglishDeskChrome(t);
   t = t.replace(/\bSign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition\b\.?\s*/gi, '');
   t = t.replace(/\bSign\s+up\s+for\s+our\s+[^\n]{3,60}?\b(?:newsletter|Edition)\b\.?\s*/gi, '');
   // "reporter at Brisbane Times" — period optional (mashed RSS often omits it)
@@ -435,7 +478,7 @@ function stripInlinePublisherChrome(text: string): string {
     '\n',
   );
   t = t.replace(
-    /^(?:India\s+Today|NDTV|Hindustan\s+Times|Times\s+of\s+India|TOI|News18|The\s+Hindu|Indian\s+Express|Brisbane\s+Times|BBC\s+News|BBC\s+Sport|Reuters|AFP|ANI|PTI)\s*[:|–—-]?\s*/i,
+    /^(?:India\s+Today|NDTV|Hindustan\s+Times|Times\s+of\s+India|TOI|News18|The\s+Hindu|Indian\s+Express|Business\s+Standard|Live\s*Mint|Moneycontrol|ABC\s+News|Brisbane\s+Times|BBC\s+News|BBC\s+Sport|Reuters|AFP|ANI|PTI)\s*[:|–—-]?\s*/i,
     '',
   );
   t = stripSourcePageChromeInline(t);
@@ -459,7 +502,11 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
       return true;
     }
     if (t.length < 90 && /^reporter\s+at\s+/i.test(low) && norm.includes(ln)) return true;
+    if (t.length < 90 && !/[.!?।]/.test(t) && ln.length >= 8 && norm.includes(ln)) return true;
   }
+  if (/\{\s*(?:margin|padding|box-sizing)\s*:/i.test(t)) return true;
+  if (/\*,\s*:after|:before\s*\{|-webkit-box-sizing/i.test(t)) return true;
+  if (/^[A-Z][A-Za-z0-9 /&-]{0,40}News\s*[-–—]\s*/.test(t) && t.length < 90) return true;
   // India Today / NDTV desk + city + UPDATED lines — only drop chrome-only lines.
   // Do NOT drop a line that starts with desk chrome but continues with story text.
   if (

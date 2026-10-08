@@ -606,6 +606,8 @@ export class IngestionCronService {
     } else {
       t = t.replace(/<\/p>\s*<p[^>]*>/gi, ' ').replace(/<br\s*\/?>/gi, ' ');
     }
+    t = t.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+    t = t.replace(/<script[\s\S]*?<\/script>/gi, ' ');
     t = t.replace(/<[^>]+>/g, multiline ? '' : ' ');
     if (multiline) {
       t = t.replace(/\n{3,}/g, '\n\n').trim();

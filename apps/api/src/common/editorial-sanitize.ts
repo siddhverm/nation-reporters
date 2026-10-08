@@ -3,6 +3,35 @@
  * Keep in sync with stripSyndicationLinkbacks in apps/web/lib/rss-plain-text.ts.
  */
 
+/**
+ * RSS/HTML leftovers: concatenated stylesheets, spinner CSS, leaked <meta>/<script>.
+ * Keep in sync with stripLeakedPageCss in apps/web/lib/rss-plain-text.ts.
+ */
+export function stripLeakedPageCss(text: string): string {
+  if (!text?.trim()) return (text ?? '').trim();
+  let t = text;
+  t = t.replace(/<style[\s\S]*?<\/style>/gi, ' ');
+  t = t.replace(/<script[\s\S]*?<\/script>/gi, ' ');
+  t = t.replace(/<meta\b[^>]{0,500}>/gi, ' ');
+  const cssDump = t.search(
+    /(?:\*,\s*:after|\*:after|:before\s*\{|\{[\s]*margin\s*:|-webkit-box-sizing\s*:|box-sizing\s*:\s*border-box|\.spinner-(?:container|loader)\s*\{)/i,
+  );
+  if (cssDump >= 0) {
+    t = t.slice(0, cssDump);
+  }
+  t = t.replace(/@media\s*\([^)]{0,80}\)\s*\{[^{}]{0,800}\}/gi, ' ');
+  t = t.replace(
+    /(?:[.#][\w-]+|\b(?:body|html|a|p|img|ul|li|strong|div|span)\b)\s*\{[^{}]{0,400}\}/gi,
+    ' ',
+  );
+  t = t.replace(
+    /\{[^{}]{0,80}(?:margin|padding|font-family|display|box-sizing)[^{}]{0,200}\}/gi,
+    ' ',
+  );
+  t = t.replace(/\bfunction\s+\w+\s*\([^)]{0,80}\)\s*\{[^}]{0,500}\}/gi, ' ');
+  return t.replace(/\s{2,}/g, ' ').trim();
+}
+
 function isSyndicationLinkbackBlock(block: string): boolean {
   const t = block.trim();
   if (!t) return true;
@@ -22,7 +51,7 @@ function isSyndicationLinkbackBlock(block: string): boolean {
 /** Drop read-more / URL-only blocks; strip inline “Read more:” tails per paragraph. */
 export function stripSyndicationLinkbacks(text: string): string {
   if (!text?.trim()) return (text ?? '').trim();
-  return text
+  return stripLeakedPageCss(text)
     .split(/\n\s*\n/)
     .map((b) => b.trim())
     .filter(Boolean)

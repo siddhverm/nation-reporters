@@ -29,7 +29,7 @@ function looksLikePublisherChrome(text: string): boolean {
   if (/^\s*(Advertisement|Advertisem|Publicité|Werbung|Publicidad|विज्ञापन)\s*$/i.test(t)) return true;
   if (/डेस्क\s*,/.test(t) && t.length < 160) return true;
   if (
-    /^(?:India\s+Today|NDTV|Hindustan\s+Times|Times\s+of\s+India|TOI|News18|Brisbane\s+Times|BBC\s+News|BBC\s+Sport)\b/i.test(
+    /^(?:India\s+Today|NDTV|Hindustan\s+Times|Times\s+of\s+India|TOI|News18|Business\s+Standard|Brisbane\s+Times|BBC\s+News|BBC\s+Sport)\b/i.test(
       t,
     ) &&
     t.length < 100
@@ -37,6 +37,10 @@ function looksLikePublisherChrome(text: string): boolean {
     return true;
   }
   if (/^Image\s+source\s*,/i.test(t) && t.length < 120) return true;
+  if (/\{\s*(?:margin|padding|box-sizing)\s*:/i.test(t)) return true;
+  if (/\*,\s*:after|:before\s*\{|-webkit-box-sizing/i.test(t)) return true;
+  if (/\bNews\s*[-–—]\s*Business\s+Standard\b/i.test(t)) return true;
+  if (/<meta\b/i.test(t) || /\bfunction\s+get_cookie_/i.test(t)) return true;
   return false;
 }
 
@@ -65,7 +69,7 @@ function sanitizeTipTapBody(
     if (typeof next.text === 'string' && next.text.trim()) {
       const cleaned = sanitizePublisherStoryText(next.text, opts).trim();
       if (cleaned) next.text = cleaned;
-      else if (/Desk|UPDATED|डेस्क|Advertis|Sign up for|reporter at|Image\s+source\s*,|BBC\s+(?:Sport|News|Radio)/i.test(next.text)) {
+      else if (/Desk|UPDATED|डेस्क|Advertis|Sign up for|reporter at|Image\s+source\s*,|BBC\s+(?:Sport|News|Radio)|margin\s*:|Business\s+Standard|\*,\s*:after/i.test(next.text)) {
         next.text = '';
       }
     }

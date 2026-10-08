@@ -251,3 +251,44 @@ test('buildReaderSummaryFromPlainText: does not return empty for clean input', (
   expect(summary.length).toBeGreaterThan(80);
   expect(summary).toContain('Reserve Bank');
 });
+
+test('English Business Standard: strips section crumb and dumped page CSS from excerpt', () => {
+  const raw =
+    'Industry News - Business Standard *,:after,:before{margin:0;padding:0;-webkit-box-sizing:border-box;box-sizing:border-box}a{text-decoration:none}p{margin-bottom:4px}body{font-family:Merriweather,Georgia,serif}';
+  const out = stripPublisherFeedBoilerplate(raw, 'Transporters welcome GST Council move');
+  assertClean(
+    out,
+    [
+      /Business Standard/i,
+      /Industry News/i,
+      /margin\s*:\s*0/i,
+      /box-sizing/i,
+      /:after/i,
+      /font-family/i,
+    ],
+    'Business Standard CSS excerpt',
+  );
+});
+
+test('English Business Standard: keeps story text before crumb+CSS dump', () => {
+  const raw =
+    'Transporters welcomed the GST Council decision to curb repeated highway checks. Industry News - Business Standard *,:after,:before{margin:0;padding:0;-webkit-box-sizing:border-box}body{font-family:Georgia,serif}';
+  const out = stripPublisherFeedBoilerplate(raw, 'Transporters welcome GST Council move');
+  assertClean(out, [/Business Standard/i, /Industry News/i, /margin\s*:\s*0/i], 'BS story+css');
+  expect(out).toMatch(/Transporters welcomed/i);
+});
+
+test('English Business Standard: Tech News crumb is stripped', () => {
+  const raw =
+    'Prime Minister called for a global framework to prevent fraud. Tech News - Business Standard *,:after,:before{margin:0;padding:0}';
+  const out = stripPublisherFeedBoilerplate(raw, 'PM Modi calls for creating global framework');
+  assertClean(out, [/Business Standard/i, /Tech News/i, /margin\s*:\s*0/i], 'Tech News crumb');
+  expect(out).toMatch(/global framework/i);
+});
+
+test('sanitizePublisherStoryText: CSS-only listing excerpt becomes empty', () => {
+  const raw =
+    'Finance News - Business Standard *,:after,:before{margin:0;padding:0;-webkit-box-sizing:border-box}';
+  const out = sanitizePublisherStoryText(raw, { sourceName: 'Business Standard' });
+  expect(out.trim()).toBe('');
+});
