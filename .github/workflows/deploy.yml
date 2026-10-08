@@ -3,6 +3,7 @@ name: Deploy Nation Reporters to nationreporters.com
 on:
   push:
     branches: [main, master]
+  workflow_dispatch:
 
 jobs:
   deploy:
@@ -12,28 +13,70 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Deploy to VPS
-        uses: appleboy/ssh-action@v1.0.3
-        with:
-          host: ${{ secrets.VPS_HOST }}
-          username: ${{ secrets.VPS_USER }}
-          key: ${{ secrets.VPS_SSH_KEY }}
-          port: 22
-          timeout: 60s
-          command_timeout: 15m
-          script: |
-            cd /opt/nation-reporters
-            git fetch origin master
-            git reset --hard origin/master
-            chmod +x scripts/deploy-production.sh
-            bash scripts/deploy-production.sh
+      - name: Validate deploy secrets
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          missing=0
+          for name in VPS_HOST VPS_USER VPS_SSH_KEY; do
+            if [ -z "${!name}" ]; then
+              echo "::error::Repository secret $name is not set"
+              missing=1
+            fi
+          done
+          if [ "$missing" -ne 0 ]; then
+            exit 1
+          fi
+          if echo "$VPS_HOST" | grep -qi 'srv1548053'; then
+            echo "::warning::VPS_HOST looks like srv1548053 — GitHub cannot resolve that hostname. Use 187.127.141.249"
+          fi
 
-      - name: Notify deployment status
+      - name: Configure SSH key
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_SSH_KEY: ${{ secrets.VPS_SSH_KEY }}
+        run: |
+          set -euo pipefail
+          install -m 700 -d ~/.ssh
+          printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
+          chmod 600 ~/.ssh/deploy_key
+          echo "Deploy key fingerprint (match one on VPS authorized_keys):"
+          ssh-keygen -lf ~/.ssh/deploy_key
+          ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
+
+      - name: Deploy to VPS
+        env:
+          VPS_HOST: ${{ secrets.VPS_HOST }}
+          VPS_USER: ${{ secrets.VPS_USER }}
+        run: |
+          set -euo pipefail
+          ssh -i ~/.ssh/deploy_key \
+            -o BatchMode=yes \
+            -o ConnectTimeout=30 \
+            -o ServerAliveInterval=15 \
+            -o StrictHostKeyChecking=accept-new \
+            "${VPS_USER}@${VPS_HOST}" \
+            'set -euo pipefail
+             cd /opt/nation-reporters
+             git fetch origin master
+             git reset --hard origin/master
+             sed -i "s/\r$//" scripts/deploy-production.sh || true
+             chmod +x scripts/deploy-production.sh
+             bash scripts/deploy-production.sh'
+
+      - name: Deployment summary
         if: always()
         run: |
           if [ "${{ job.status }}" = 'success' ]; then
             echo "Nation Reporters deployed to nationreporters.com"
           else
-            echo "Nation Reporters deployment failed — check VPS_HOST (use 187.127.141.249), VPS_SSH_KEY, and re-run workflow"
+            echo "Deploy failed. Common fixes:"
+            echo "  - VPS_HOST must be 187.127.141.249 (not srv1548053)"
+            echo "  - VPS_USER must be root"
+            echo "  - VPS_SSH_KEY must be the full private key for a public key in /root/.ssh/authorized_keys"
+            echo "  - Compare the fingerprint from Configure SSH key step with keys on the VPS"
             exit 1
           fi
