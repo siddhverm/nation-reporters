@@ -43,8 +43,19 @@ jobs:
           install -m 700 -d ~/.ssh
           printf '%s\n' "$VPS_SSH_KEY" | tr -d '\r' > ~/.ssh/deploy_key
           chmod 600 ~/.ssh/deploy_key
-          echo "Deploy key fingerprint (match one on VPS authorized_keys):"
-          ssh-keygen -lf ~/.ssh/deploy_key
+          if grep -q 'BEGIN OPENSSH PRIVATE KEY' ~/.ssh/deploy_key \
+            || grep -q 'BEGIN RSA PRIVATE KEY' ~/.ssh/deploy_key \
+            || grep -q 'BEGIN EC PRIVATE KEY' ~/.ssh/deploy_key; then
+            echo "Private key format OK"
+          elif grep -q 'ssh-ed25519\|ssh-rsa' ~/.ssh/deploy_key; then
+            echo "::error::VPS_SSH_KEY looks like a PUBLIC key. Paste the matching PRIVATE key into GitHub secrets."
+            exit 1
+          else
+            echo "::error::VPS_SSH_KEY is not a recognizable OpenSSH private key (check BEGIN/END lines and newlines)."
+            exit 1
+          fi
+          echo "Deploy key fingerprint (must match a line in /root/.ssh/authorized_keys on the VPS):"
+          ssh-keygen -lf ~/.ssh/deploy_key || true
           ssh-keyscan -H "$VPS_HOST" >> ~/.ssh/known_hosts 2>/dev/null || true
 
       - name: Deploy to VPS
