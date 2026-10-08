@@ -14,6 +14,7 @@ import {
 import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { formatListingExcerpt } from '@/lib/reader-summary';
 import { articleMatchesLanguageOrScript, normalizeUiLanguage } from '@/lib/ui-language';
 
 interface Article {
@@ -22,6 +23,10 @@ interface Article {
   language?: string;
   body?: Record<string, unknown>;
   mediaAssets?: { type?: string; url?: string | null }[];
+}
+
+function listingTeaser(a: Article): string {
+  return formatListingExcerpt(a.excerpt, a.title, a.language ?? 'en');
 }
 
 function timeAgo(d: string) {
@@ -194,8 +199,8 @@ export default function CountryPage() {
                     <h2 className="text-white font-serif font-bold text-xl leading-snug group-hover:text-signal line-clamp-3">
                       {safeArticleText(hero.title)}
                     </h2>
-                    {hero.excerpt && (
-                      <p className="text-blue-200 text-sm mt-1 line-clamp-2">{safeArticleText(hero.excerpt)}</p>
+                    {listingTeaser(hero) && (
+                      <p className="text-blue-200 text-sm mt-1 line-clamp-2">{listingTeaser(hero)}</p>
                     )}
                     {hero.publishedAt && (
                       <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">
@@ -217,8 +222,8 @@ export default function CountryPage() {
                       <p className="text-[10px] text-gray-400 mt-0.5 uppercase tracking-wide">
                         {(a.language ?? 'en')}
                       </p>
-                      {a.excerpt && (
-                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                      {listingTeaser(a) && (
+                        <p className="text-sm text-gray-500 mt-1 line-clamp-2">{listingTeaser(a)}</p>
                       )}
                       {a.publishedAt && (
                         <p className="text-xs text-gray-400 mt-1.5 flex items-center gap-1">
@@ -244,8 +249,8 @@ export default function CountryPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
-                          {a.excerpt && (
-                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                          {listingTeaser(a) && (
+                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{listingTeaser(a)}</p>
                           )}
                         </div>
                       </Link>
@@ -268,8 +273,8 @@ export default function CountryPage() {
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
-                          {a.excerpt && (
-                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(a.excerpt)}</p>
+                          {listingTeaser(a) && (
+                            <p className="text-sm text-gray-500 mt-1 line-clamp-2">{listingTeaser(a)}</p>
                           )}
                         </div>
                       </Link>

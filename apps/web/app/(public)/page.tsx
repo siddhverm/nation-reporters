@@ -26,8 +26,7 @@ interface Article {
 interface Category { id: string; name: string; slug: string; }
 
 function articleListingTeaser(article: Article): string {
-  const cleaned = formatListingExcerpt(article.excerpt, article.title, article.language ?? 'en');
-  return cleaned || safeArticleText(article.excerpt);
+  return formatListingExcerpt(article.excerpt, article.title, article.language ?? 'en');
 }
 
 function withFallbackArticles(list: Article[]): Article[] {
@@ -245,7 +244,7 @@ export default function HomePage() {
                 <h2 className="text-white font-serif font-bold text-2xl leading-snug group-hover:text-signal transition-colors line-clamp-3">
                   {safeArticleText(displayArticles[0].title)}
                 </h2>
-                {displayArticles[0].excerpt && (
+                {articleListingTeaser(displayArticles[0]) && (
                   <p className="text-blue-200 text-sm mt-1 line-clamp-2">{articleListingTeaser(displayArticles[0])}</p>
                 )}
                 {displayArticles[0].publishedAt && (
@@ -371,7 +370,7 @@ export default function HomePage() {
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="font-bold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(hero.title)}</h3>
-                    {hero.excerpt && (
+                    {articleListingTeaser(hero) && (
                       <p className="text-xs text-gray-500 mt-1 line-clamp-2">{articleListingTeaser(hero)}</p>
                     )}
                     {hero.publishedAt && (

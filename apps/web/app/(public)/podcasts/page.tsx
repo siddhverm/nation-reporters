@@ -2,6 +2,7 @@ import { Metadata } from 'next';
 import Link from 'next/link';
 import { Mic } from 'lucide-react';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { formatListingExcerpt } from '@/lib/reader-summary';
 
 export const metadata: Metadata = { title: 'Podcasts' };
 export const revalidate = 300;
@@ -51,8 +52,8 @@ export default async function PodcastsPage() {
                 <h3 className="font-semibold text-gray-900 group-hover:text-brand transition-colors line-clamp-2">
                   {safeArticleText(pod.title)}
                 </h3>
-                {pod.excerpt && (
-                  <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{safeArticleText(pod.excerpt)}</p>
+                {formatListingExcerpt(pod.excerpt, pod.title) && (
+                  <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{formatListingExcerpt(pod.excerpt, pod.title)}</p>
                 )}
                 {pod.publishedAt && (
                   <p className="text-xs text-gray-400 mt-1">

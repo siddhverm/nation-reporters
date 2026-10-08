@@ -6,6 +6,7 @@ import { fetchJsonFromApi } from '@/lib/api-client';
 import { normalizeUiLanguage } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { formatListingExcerpt } from '@/lib/reader-summary';
 
 interface Article {
   id: string;
@@ -182,8 +183,8 @@ export default function ArchivePage() {
                         <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug">
                           {safeArticleText(a.title)}
                         </h3>
-                        {a.excerpt && (
-                          <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{safeArticleText(a.excerpt)}</p>
+                        {formatListingExcerpt(a.excerpt, a.title, a.language ?? 'en') && (
+                          <p className="text-sm text-gray-500 mt-0.5 line-clamp-1">{formatListingExcerpt(a.excerpt, a.title, a.language ?? 'en')}</p>
                         )}
                       </div>
                       {a.publishedAt && (

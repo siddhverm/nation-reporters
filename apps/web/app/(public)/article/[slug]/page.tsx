@@ -908,7 +908,7 @@ export default function ArticlePage() {
                     <p className="font-semibold text-gray-800 group-hover:text-brand line-clamp-2">
                       {safeArticleText(a.title)}
                     </p>
-                    {a.excerpt && (
+                    {formatListingExcerpt(a.excerpt, a.title, uiLang) && (
                       <p className="text-xs text-gray-500 mt-0.5 line-clamp-2">
                         {formatListingExcerpt(a.excerpt, a.title, uiLang)}
                       </p>

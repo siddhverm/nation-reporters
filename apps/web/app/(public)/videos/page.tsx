@@ -2,6 +2,7 @@ import { Metadata } from 'next';
 import Link from 'next/link';
 import { PlayCircle } from 'lucide-react';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { formatListingExcerpt } from '@/lib/reader-summary';
 
 export const metadata: Metadata = { title: 'Videos' };
 export const revalidate = 300;
@@ -108,8 +109,8 @@ export default async function VideosPage() {
                 <Link href={`/article/${video.slug}`} className="font-semibold text-gray-900 hover:text-brand line-clamp-2">
                   {safeArticleText(video.title)}
                 </Link>
-                {video.excerpt && (
-                  <p className="text-sm text-gray-500 mt-1 line-clamp-2">{safeArticleText(video.excerpt)}</p>
+                {formatListingExcerpt(video.excerpt, video.title, video.language) && (
+                  <p className="text-sm text-gray-500 mt-1 line-clamp-2">{formatListingExcerpt(video.excerpt, video.title, video.language)}</p>
                 )}
                 <p className="text-xs text-gray-400 mt-2">
                   {video.publishedAt

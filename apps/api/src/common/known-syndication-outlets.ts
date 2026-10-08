@@ -16,6 +16,11 @@ export const KNOWN_SYNDICATION_OUTLET_LABELS: readonly string[] = [
   'nine.com.au',
   // UK
   'BBC News',
+  'BBC Sport',
+  'BBC Radio',
+  'BBC Sport England',
+  'bbc.co.uk',
+  'bbc.com',
   'The Guardian',
   'Daily Mail',
   'The Telegraph',

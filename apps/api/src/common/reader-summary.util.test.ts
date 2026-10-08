@@ -188,6 +188,27 @@ test('English India Today: day-month UPDATED date order is stripped', () => {
   expect(out).toMatch(/film opened/i);
 });
 
+test('English BBC: strips Image source / byline / Published-ago source-page chrome', () => {
+  const raw =
+    "Image source, Getty ImagesImage caption, Brett Deacon moved into coaching in 2013 with Leicester Tigers before joining Gloucester for the 2026-27 seasonByKate Holloway, BBC Sport England and Steve Kitchen, BBC Radio GloucestershirePublished4 hours agoNew Gloucester forwards coach Brett Deacon says he has endeavoured to make the side \"tougher\" and \"harder\" following a successful start to the season.Gloucester are topping the early-season Prem table having claimed a maximum of 10 points from their two games.";
+  const out = stripPublisherFeedBoilerplate(raw, "Deacon aims for a 'tougher, harder' Gloucester");
+  assertClean(
+    out,
+    [
+      /Image\s+source/i,
+      /Getty Images/i,
+      /Image caption/i,
+      /BBC Sport/i,
+      /BBC Radio/i,
+      /Kate Holloway/i,
+      /Published\s*4\s*hours?\s*ago/i,
+    ],
+    'BBC source-page chrome',
+  );
+  expect(out).toMatch(/tougher/i);
+  expect(out).toMatch(/Gloucester/i);
+});
+
 test('sanitizePublisherStoryText: chrome-only field becomes empty', () => {
   const raw = 'India Today Entertainment DeskNew Delhi,UPDATED';
   const out = sanitizePublisherStoryText(raw, { sourceName: 'India Today - India' });

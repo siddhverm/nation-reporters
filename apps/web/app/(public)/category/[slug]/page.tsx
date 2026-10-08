@@ -8,6 +8,7 @@ import { getArticleImage, getPreferredArticleImage, getBodyImageUrl } from '@/li
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { fetchCategoryArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 import { safeArticleText } from '@/lib/rss-plain-text';
+import { formatListingExcerpt } from '@/lib/reader-summary';
 import { withUiLanguagePath } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
 
@@ -170,8 +171,8 @@ export default function CategoryPage() {
                     <h2 className="text-white font-serif font-bold text-xl leading-snug group-hover:text-signal transition-colors line-clamp-3">
                       {safeArticleText(hero.title)}
                     </h2>
-                    {hero.excerpt && (
-                      <p className="text-blue-200 text-sm mt-1 line-clamp-2">{safeArticleText(hero.excerpt)}</p>
+                    {formatListingExcerpt(hero.excerpt, hero.title, hero.language ?? 'en') && (
+                      <p className="text-blue-200 text-sm mt-1 line-clamp-2">{formatListingExcerpt(hero.excerpt, hero.title, hero.language ?? 'en')}</p>
                     )}
                     {hero.publishedAt && (
                       <p className="text-blue-300/70 text-xs mt-2 flex items-center gap-1">

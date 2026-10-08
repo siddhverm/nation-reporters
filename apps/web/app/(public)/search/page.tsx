@@ -69,9 +69,9 @@ export default function SearchPage() {
         {hits.map((hit) => (
           <Link key={hit.id} href={`/article/${hit.slug}`} className="group block border-b pb-4">
             <h3 className="font-semibold text-gray-900 group-hover:text-brand transition-colors">{safeArticleText(hit.title)}</h3>
-            {hit.excerpt && (
+            {formatListingExcerpt(hit.excerpt, hit.title, uiLang) && (
               <p className="text-sm text-gray-500 mt-1 line-clamp-2">
-                {formatListingExcerpt(hit.excerpt, hit.title, uiLang) || safeArticleText(hit.excerpt)}
+                {formatListingExcerpt(hit.excerpt, hit.title, uiLang)}
               </p>
             )}
             {hit.publishedAt && (

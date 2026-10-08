@@ -150,9 +150,10 @@ function stripInlinePublisherChrome(text: string): string {
   );
   // Leading outlet-only prefixes left after desk strip
   t = t.replace(
-    /^(?:India\s+Today|NDTV|Hindustan\s+Times|Times\s+of\s+India|TOI|News18|The\s+Hindu|Indian\s+Express|Brisbane\s+Times|BBC\s+News|Reuters|AFP|ANI|PTI)\s*[:|–—-]?\s*/i,
+    /^(?:India\s+Today|NDTV|Hindustan\s+Times|Times\s+of\s+India|TOI|News18|The\s+Hindu|Indian\s+Express|Brisbane\s+Times|BBC\s+News|BBC\s+Sport|Reuters|AFP|ANI|PTI)\s*[:|–—-]?\s*/i,
     '',
   );
+  t = stripSourcePageChromeInline(t);
   return t.replace(/\s{2,}/g, ' ').trim();
 }
 
@@ -203,6 +204,13 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   if (/published\s+\d+\s*(minute|hour|day)s?\s+ago/i.test(low)) return true;
   if (/^(video caption|वीडियो कैप्शन)/i.test(low)) return true;
   if (/^image credit:/i.test(low)) return true;
+  if (/^Image\s+source\s*,/i.test(t)) return true;
+  if (/^(?:Image|Media)\s+credit\s*,/i.test(t) && t.length < 120) return true;
+  if (/^Published\s+\d+\s+(?:hours?|minutes?|days?|mins?)\s+ago$/i.test(t)) return true;
+  if (/^\d+\s+(?:hours?|minutes?|days?|mins?)\s+ago$/i.test(t)) return true;
+  if (/^Related\s+topics\b/i.test(t)) return true;
+  if (/^By\s+[A-Z].*\bBBC\s+(?:Sport|News|Radio)\b/i.test(t) && t.length < 180) return true;
+  if (/^BBC\s+(?:Sport|News|Radio)\b/i.test(t) && t.length < 80) return true;
   if (/^read more:?\s*https?:\/\//i.test(t)) return true;
   if (/^read full report at source\.?$/i.test(low)) return true;
   if (/^full details are available on the original publisher page\.?$/i.test(low)) return true;
@@ -267,6 +275,8 @@ export function excerptLooksBroken(text: string | null | undefined): boolean {
   if (/share:\s*(fb|x)/i.test(t)) return true;
   if (/प्रकाशित\s+\d+\s*मिनट/u.test(t)) return true;
   if (/Entertainment\s+Desk|DeskNew\s*Delhi|,UPDATED/i.test(t)) return true;
+  if (/Image\s+source\s*,/i.test(t)) return true;
+  if (/\bBBC\s+(?:Sport|News|Radio)\b/i.test(t) && t.length < 220) return true;
   if (/^(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d/i.test(t.toLowerCase())) return true;
   if (
     /\b(sunday|monday|tuesday|wednesday|thursday|friday|saturday)\s+\d{1,2}\s+\w+[,]?\s+\d{4}\s+at\s+/i.test(t)
@@ -278,8 +288,54 @@ export function excerptLooksBroken(text: string | null | undefined): boolean {
   return false;
 }
 
+/**
+ * BBC / wire "source page" chrome mashed into RSS plaintext:
+ * "Image source, Getty ImagesImage caption, …ByName, BBC Sport…Published4 hours ago"
+ */
+function splitSourcePageChrome(text: string): string {
+  let t = text;
+  t = t.replace(/Image\s+source\s*,\s*/gi, '\nImage source, ');
+  t = t.replace(/(?:Image|Media)\s+caption\s*,\s*/gi, '\nImage caption, ');
+  t = t.replace(/(?:Image|Media)\s+credit\s*,\s*/gi, '\nImage credit, ');
+  t = t.replace(/([a-z])By(?=[A-Z][a-z]{2,})/g, '$1\nBy ');
+  t = t.replace(/\bBy(?=[A-Z][a-z]{2,})/g, '\nBy ');
+  t = t.replace(
+    /([a-z])Published\s*(\d+)\s*(hours?|minutes?|days?|mins?)\s*ago/gi,
+    '$1\nPublished $2 $3 ago\n',
+  );
+  t = t.replace(/\bPublished\s*(\d+)\s*(hours?|minutes?|days?|mins?)\s*ago/gi, '\nPublished $1 $2 ago\n');
+  t = t.replace(/\bRelated\s+topics\b/gi, '\nRelated topics ');
+  t = t.replace(/\bBBC\s+(?:Sport|News|Radio)(?:\s+[A-Z][a-z]+)?/g, '\n$&\n');
+  return t;
+}
+
+function stripSourcePageChromeInline(text: string): string {
+  let t = text;
+  t = t.replace(/Image\s+source\s*,\s*[A-Z][A-Za-z0-9 .,&'/-]{1,80}/gi, '');
+  t = t.replace(/(?:Image|Media)\s+caption\s*,\s*/gi, '');
+  t = t.replace(/(?:Image|Media)\s+credit\s*,\s*[A-Z][A-Za-z0-9 .,&'/-]{1,80}/gi, '');
+  t = t.replace(/\bPublished\s*\d+\s*(?:hours?|minutes?|days?|mins?)\s*ago\b/gi, '');
+  t = t.replace(/^\d+\s+(?:hours?|minutes?|days?|mins?)\s+ago\b/gi, '');
+  t = t.replace(
+    /\bBy\s+[A-Z][a-zA-Z.'\-]+(?:\s+[A-Z][a-zA-Z.'\-]+){0,5}\s*,\s*(?:BBC\s+(?:Sport|News|Radio)[^\n.]{0,120})?/g,
+    '',
+  );
+  t = t.replace(
+    /\band\s+[A-Z][a-zA-Z.'\-]+(?:\s+[A-Z][a-zA-Z.'\-]+){0,4}\s*,\s*BBC\s+(?:Sport|News|Radio)[^\n.]{0,80}/g,
+    '',
+  );
+  t = t.replace(/^\s*and\s+[A-Z][a-zA-Z.'\-]+(?:\s+[A-Z][a-zA-Z.'\-]+){0,3}\s*,?\s*$/gm, '');
+  t = t.replace(/\btold\s+BBC\s+(?:Sport|News|Radio)(?:\s+[A-Z][A-Za-z]+){0,4}/gi, '');
+  t = t.replace(
+    /\bBBC\s+(?:Sport|News|Radio)(?:\s+(?:England|Scotland|Wales|Northern\s+Ireland|UK|[A-Z][a-z]+))?\b/g,
+    '',
+  );
+  t = t.replace(/\bRelated\s+topics\b[\s\S]{0,180}$/gi, '');
+  return t;
+}
+
 function preformatMashedPlain(plain: string, headline?: string): string {
-  let t = plain;
+  let t = splitSourcePageChrome(plain);
   t = t.replace(/\bShare:\s*/gi, '\n\nShare: ');
   t = t.replace(/\bShare:\s*(FB|X)(\s*(FB|X))*\b/gi, '\n');
   t = t.replace(/\b(Updated on|Published|Posted on):/gi, '\n$& ');
