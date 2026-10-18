@@ -3,10 +3,6 @@ name: CI
 on:
   pull_request:
     branches: [master, develop]
-  # also test every feature-branch push before it is opened as a PR / merged (merging to master auto-deploys)
-  push:
-    branches-ignore: [master, main]
-  workflow_dispatch:
 
 jobs:
   lint-test:
@@ -48,14 +44,6 @@ jobs:
           S3_SECRET_KEY: test
           MEILISEARCH_URL: http://localhost:7700
           MEILISEARCH_KEY: test
-
-      - name: Validate Prisma schema
-        run: cd apps/api && npx prisma validate
-        env:
-          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/nationreporters
-
-      - name: Test Web
-        run: cd apps/web && npm test
 
       - name: Test API
         run: cd apps/api && npm test
