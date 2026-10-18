@@ -1,0 +1,383 @@
+{
+ "outlet": "Daily Planet Gazette",
+ "domain": "dailyplanet-gazette.example",
+ "reporter": "Rohan Mehta",
+ "photographer": "Kiran Rao",
+ "languages": {
+  "en": {
+   "dir": "ltr",
+   "title": "Government unveils new metro line for the capital",
+   "paragraphs": [
+    "The government on Sunday unveiled a new metro line that will connect the airport to the city centre by 2028.",
+    "Officials said advertising revenue from stations will help fund the project.",
+    "By next year, preliminary work will begin."
+   ],
+   "adWord": "advertising",
+   "chrome": {
+    "byline": "By Rohan Mehta",
+    "photoCredit": "Photo: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Source: Daily Planet Gazette",
+    "viaLine": "via Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "hi": {
+   "dir": "ltr",
+   "title": "सरकार ने राजधानी के लिए नई मेट्रो लाइन का ऐलान किया",
+   "paragraphs": [
+    "सरकार ने रविवार को नई मेट्रो लाइन की घोषणा की, जो वर्ष 2028 तक हवाई अड्डे को शहर के केंद्र से जोड़ेगी।",
+    "अधिकारियों ने कहा कि स्टेशनों से होने वाली विज्ञापन आय से परियोजना का खर्च निकाला जाएगा।"
+   ],
+   "adWord": "विज्ञापन",
+   "chrome": {
+    "byline": "लेखक: Rohan Mehta",
+    "photoCredit": "फोटो: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "स्रोत: Daily Planet Gazette",
+    "viaLine": "के अनुसार Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "mr": {
+   "dir": "ltr",
+   "title": "सरकारने राजधानीसाठी नवीन मेट्रो मार्गाची घोषणा केली",
+   "paragraphs": [
+    "सरकारने रविवारी नवीन मेट्रो मार्गाची घोषणा केली, जो २०२८ पर्यंत विमानतळाला शहराच्या मध्यभागाशी जोडेल.",
+    "अधिकाऱ्यांनी सांगितले की स्थानकांवरील जाहिरात उत्पन्नातून प्रकल्पाचा खर्च भागवला जाईल."
+   ],
+   "adWord": "जाहिरात",
+   "chrome": {
+    "byline": "लेखक: Rohan Mehta",
+    "photoCredit": "फोटो: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "स्रोत: Daily Planet Gazette",
+    "viaLine": "नुसार Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "bn": {
+   "dir": "ltr",
+   "title": "সরকার রাজধানীর জন্য নতুন মেট্রো লাইন ঘোষণা করেছে",
+   "paragraphs": [
+    "সরকার রবিবার একটি নতুন মেট্রো লাইন ঘোষণা করেছে, যা ২০২৮ সালের মধ্যে বিমানবন্দরকে শহরের কেন্দ্রের সঙ্গে যুক্ত করবে।",
+    "কর্মকর্তারা জানিয়েছেন, স্টেশনগুলি থেকে প্রাপ্ত বিজ্ঞাপন আয় প্রকল্পের ব্যয় মেটাতে সাহায্য করবে।"
+   ],
+   "adWord": "বিজ্ঞাপন",
+   "chrome": {
+    "byline": "প্রতিবেদক: Rohan Mehta",
+    "photoCredit": "ছবি: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "সূত্র: Daily Planet Gazette",
+    "viaLine": "সূত্র Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "te": {
+   "dir": "ltr",
+   "title": "రాజధాని కోసం కొత్త మెట్రో లైన్‌ను ప్రభుత్వం ప్రకటించింది",
+   "paragraphs": [
+    "2028 నాటికి విమానాశ్రయాన్ని నగర కేంద్రంతో అనుసంధానించే కొత్త మెట్రో లైన్‌ను ప్రభుత్వం ఆదివారం ప్రకటించింది.",
+    "స్టేషన్ల నుంచి వచ్చే ప్రకటనల ఆదాయం ప్రాజెక్టు ఖర్చుకు తోడ్పడుతుందని అధికారులు తెలిపారు."
+   ],
+   "adWord": "ప్రకటనల",
+   "chrome": {
+    "byline": "రచయిత: Rohan Mehta",
+    "photoCredit": "ఫోటో: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "మూలం: Daily Planet Gazette",
+    "viaLine": "మూలం Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ta": {
+   "dir": "ltr",
+   "title": "தலைநகருக்கு புதிய மெட்ரோ பாதையை அரசு அறிவித்தது",
+   "paragraphs": [
+    "2028-க்குள் விமான நிலையத்தை நகர மையத்துடன் இணைக்கும் புதிய மெட்ரோ பாதையை அரசு ஞாயிற்றுக்கிழமை அறிவித்தது.",
+    "நிலையங்களில் இருந்து கிடைக்கும் விளம்பர வருவாய் திட்டச் செலவுக்கு உதவும் என அதிகாரிகள் தெரிவித்தனர்."
+   ],
+   "adWord": "விளம்பர",
+   "chrome": {
+    "byline": "எழுதியவர்: Rohan Mehta",
+    "photoCredit": "புகைப்படம்: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "ஆதாரம்: Daily Planet Gazette",
+    "viaLine": "ஆதாரம் Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "gu": {
+   "dir": "ltr",
+   "title": "સરકારે રાજધાની માટે નવી મેટ્રો લાઇનની જાહેરાત કરી",
+   "paragraphs": [
+    "સરકારે રવિવારે નવી મેટ્રો લાઇનની જાહેરાત કરી, જે 2028 સુધીમાં એરપોર્ટને શહેરના કેન્દ્ર સાથે જોડશે.",
+    "અધિકારીઓએ કહ્યું કે સ્ટેશનોમાંથી મળતી જાહેરાત આવક પ્રોજેક્ટના ખર્ચમાં મદદ કરશે."
+   ],
+   "adWord": "જાહેરાત આવક",
+   "chrome": {
+    "byline": "લેખક: Rohan Mehta",
+    "photoCredit": "ફોટો: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "સ્ત્રોત: Daily Planet Gazette",
+    "viaLine": "મુજબ Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "kn": {
+   "dir": "ltr",
+   "title": "ರಾಜಧಾನಿಗೆ ಹೊಸ ಮೆಟ್ರೋ ಮಾರ್ಗವನ್ನು ಸರ್ಕಾರ ಘೋಷಿಸಿದೆ",
+   "paragraphs": [
+    "2028ರ ವೇಳೆಗೆ ವಿಮಾನ ನಿಲ್ದಾಣವನ್ನು ನಗರ ಕೇಂದ್ರದೊಂದಿಗೆ ಸಂಪರ್ಕಿಸುವ ಹೊಸ ಮೆಟ್ರೋ ಮಾರ್ಗವನ್ನು ಸರ್ಕಾರ ಭಾನುವಾರ ಘೋಷಿಸಿದೆ.",
+    "ನಿಲ್ದಾಣಗಳಿಂದ ಬರುವ ಜಾಹೀರಾತು ಆದಾಯ ಯೋಜನೆಯ ವೆಚ್ಚಕ್ಕೆ ನೆರವಾಗಲಿದೆ ಎಂದು ಅಧಿಕಾರಿಗಳು ತಿಳಿಸಿದ್ದಾರೆ."
+   ],
+   "adWord": "ಜಾಹೀರಾತು",
+   "chrome": {
+    "byline": "ಲೇಖಕ: Rohan Mehta",
+    "photoCredit": "ಫೋಟೋ: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "ಮೂಲ: Daily Planet Gazette",
+    "viaLine": "ಮೂಲ Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "pa": {
+   "dir": "ltr",
+   "title": "ਸਰਕਾਰ ਨੇ ਰਾਜਧਾਨੀ ਲਈ ਨਵੀਂ ਮੈਟਰੋ ਲਾਈਨ ਦਾ ਐਲਾਨ ਕੀਤਾ",
+   "paragraphs": [
+    "ਸਰਕਾਰ ਨੇ ਐਤਵਾਰ ਨੂੰ ਨਵੀਂ ਮੈਟਰੋ ਲਾਈਨ ਦਾ ਐਲਾਨ ਕੀਤਾ, ਜੋ 2028 ਤੱਕ ਹਵਾਈ ਅੱਡੇ ਨੂੰ ਸ਼ਹਿਰ ਦੇ ਕੇਂਦਰ ਨਾਲ ਜੋੜੇਗੀ।",
+    "ਅਧਿਕਾਰੀਆਂ ਨੇ ਕਿਹਾ ਕਿ ਸਟੇਸ਼ਨਾਂ ਤੋਂ ਮਿਲਣ ਵਾਲੀ ਇਸ਼ਤਿਹਾਰ ਆਮਦਨ ਪ੍ਰੋਜੈਕਟ ਦੇ ਖਰਚੇ ਵਿੱਚ ਮਦਦ ਕਰੇਗੀ।"
+   ],
+   "adWord": "ਇਸ਼ਤਿਹਾਰ",
+   "chrome": {
+    "byline": "ਲੇਖਕ: Rohan Mehta",
+    "photoCredit": "ਫੋਟੋ: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "ਸਰੋਤ: Daily Planet Gazette",
+    "viaLine": "ਸਰੋਤ Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ur": {
+   "dir": "rtl",
+   "title": "حکومت نے دارالحکومت کے لیے نئی میٹرو لائن کا اعلان کر دیا",
+   "paragraphs": [
+    "حکومت نے اتوار کو نئی میٹرو لائن کا اعلان کیا جو 2028 تک ہوائی اڈے کو شہر کے مرکز سے جوڑے گی۔",
+    "حکام نے کہا کہ اسٹیشنوں سے حاصل ہونے والی اشتہار آمدنی منصوبے کے اخراجات پورے کرنے میں مدد دے گی۔"
+   ],
+   "adWord": "اشتہار",
+   "chrome": {
+    "byline": "تحریر: Rohan Mehta",
+    "photoCredit": "تصویر: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "ماخذ: Daily Planet Gazette",
+    "viaLine": "بحوالہ Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ml": {
+   "dir": "ltr",
+   "title": "തലസ്ഥാനത്തിനായി പുതിയ മെട്രോ ലൈൻ സർക്കാർ പ്രഖ്യാപിച്ചു",
+   "paragraphs": [
+    "2028-ഓടെ വിമാനത്താവളത്തെ നഗരമധ്യവുമായി ബന്ധിപ്പിക്കുന്ന പുതിയ മെട്രോ ലൈൻ സർക്കാർ ഞായറാഴ്ച പ്രഖ്യാപിച്ചു.",
+    "സ്റ്റേഷനുകളിൽ നിന്നുള്ള പരസ്യ വരുമാനം പദ്ധതിച്ചെലവിന് സഹായകമാകുമെന്ന് ഉദ്യോഗസ്ഥർ അറിയിച്ചു."
+   ],
+   "adWord": "പരസ്യ",
+   "chrome": {
+    "byline": "എഴുത്ത്: Rohan Mehta",
+    "photoCredit": "ഫോട്ടോ: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "ഉറവിടം: Daily Planet Gazette",
+    "viaLine": "ഉറവിടം Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ar": {
+   "dir": "rtl",
+   "title": "الحكومة تعلن عن خط مترو جديد للعاصمة",
+   "paragraphs": [
+    "أعلنت الحكومة يوم الأحد عن خط مترو جديد سيربط المطار بوسط المدينة بحلول عام 2028.",
+    "وقال مسؤولون إن عائدات الإعلانات في المحطات ستساهم في تمويل المشروع."
+   ],
+   "adWord": "الإعلانات",
+   "chrome": {
+    "byline": "بقلم: Rohan Mehta",
+    "photoCredit": "صورة: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "المصدر: Daily Planet Gazette",
+    "viaLine": "نقلا عن Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "fr": {
+   "dir": "ltr",
+   "title": "Le gouvernement dévoile une nouvelle ligne de métro pour la capitale",
+   "paragraphs": [
+    "Le gouvernement a dévoilé dimanche une nouvelle ligne de métro qui reliera l'aéroport au centre-ville d'ici 2028.",
+    "Selon les responsables, les recettes de publicité dans les stations aideront à financer le projet.",
+    "Par ailleurs, le chantier débute en 2027."
+   ],
+   "adWord": "publicité",
+   "chrome": {
+    "byline": "Par Rohan Mehta",
+    "photoCredit": "Photo: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Source: Daily Planet Gazette",
+    "viaLine": "via Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "de": {
+   "dir": "ltr",
+   "title": "Regierung stellt neue U-Bahn-Linie für die Hauptstadt vor",
+   "paragraphs": [
+    "Die Regierung hat am Sonntag eine neue U-Bahn-Linie vorgestellt, die den Flughafen bis 2028 mit der Innenstadt verbinden soll.",
+    "Die Einnahmen aus der Werbung in den Bahnhöfen sollen das Projekt mitfinanzieren, sagten Beamte.",
+    "Von der Leyen lobte den Plan ausdrücklich."
+   ],
+   "adWord": "Werbung",
+   "chrome": {
+    "byline": "Von Rohan Mehta",
+    "photoCredit": "Foto: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Quelle: Daily Planet Gazette",
+    "viaLine": "via Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "es": {
+   "dir": "ltr",
+   "title": "El Gobierno presenta una nueva línea de metro para la capital",
+   "paragraphs": [
+    "El Gobierno presentó el domingo una nueva línea de metro que conectará el aeropuerto con el centro de la ciudad en 2028.",
+    "Los ingresos por publicidad en las estaciones ayudarán a financiar el proyecto, dijeron los funcionarios.",
+    "Por ahora, no hay fecha definida."
+   ],
+   "adWord": "publicidad",
+   "chrome": {
+    "byline": "Por Rohan Mehta",
+    "photoCredit": "Foto: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Fuente: Daily Planet Gazette",
+    "viaLine": "vía Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "pt": {
+   "dir": "ltr",
+   "title": "Governo apresenta nova linha de metrô para a capital",
+   "paragraphs": [
+    "O governo apresentou no domingo uma nova linha de metrô que ligará o aeroporto ao centro da cidade até 2028.",
+    "A receita de publicidade nas estações ajudará a financiar o projeto, disseram autoridades.",
+    "Por isso, o plano avança."
+   ],
+   "adWord": "publicidade",
+   "chrome": {
+    "byline": "Por Rohan Mehta",
+    "photoCredit": "Foto: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Fonte: Daily Planet Gazette",
+    "viaLine": "via Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ru": {
+   "dir": "ltr",
+   "title": "Правительство представило новую линию метро для столицы",
+   "paragraphs": [
+    "Правительство в воскресенье представило новую линию метро, которая к 2028 году соединит аэропорт с центром города.",
+    "Чиновники заявили, что доходы от рекламы на станциях помогут финансировать проект."
+   ],
+   "adWord": "рекламы",
+   "chrome": {
+    "byline": "Автор: Rohan Mehta",
+    "photoCredit": "Фото: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Источник: Daily Planet Gazette",
+    "viaLine": "по данным Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "zh": {
+   "dir": "ltr",
+   "title": "政府公布首都新地铁线路",
+   "paragraphs": [
+    "政府周日公布了一条新的地铁线路，预计到2028年将机场与市中心连接起来。",
+    "官员表示，车站的广告收入将有助于为该项目提供资金。"
+   ],
+   "adWord": "广告",
+   "chrome": {
+    "byline": "作者: Rohan Mehta",
+    "photoCredit": "图片: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "来源: Daily Planet Gazette",
+    "viaLine": "据Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ja": {
+   "dir": "ltr",
+   "title": "政府、首都の新しい地下鉄路線を発表",
+   "paragraphs": [
+    "政府は日曜日、2028年までに空港と市中心部を結ぶ新しい地下鉄路線を発表した。",
+    "当局者は、駅の広告収入が事業費の一部に充てられると述べた。"
+   ],
+   "adWord": "広告",
+   "chrome": {
+    "byline": "記者: Rohan Mehta",
+    "photoCredit": "写真: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "出典: Daily Planet Gazette",
+    "viaLine": "取材Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "ko": {
+   "dir": "ltr",
+   "title": "정부, 수도 신규 지하철 노선 발표",
+   "paragraphs": [
+    "정부는 일요일 2028년까지 공항과 도심을 잇는 신규 지하철 노선을 발표했다.",
+    "당국자들은 역사 내 광고 수입이 사업비 마련에 도움이 될 것이라고 말했다."
+   ],
+   "adWord": "광고",
+   "chrome": {
+    "byline": "기자: Rohan Mehta",
+    "photoCredit": "사진: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "출처: Daily Planet Gazette",
+    "viaLine": "제공 Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "id": {
+   "dir": "ltr",
+   "title": "Pemerintah umumkan jalur metro baru untuk ibu kota",
+   "paragraphs": [
+    "Pemerintah pada Minggu mengumumkan jalur metro baru yang akan menghubungkan bandara dengan pusat kota pada 2028.",
+    "Pejabat mengatakan pendapatan iklan di stasiun akan membantu membiayai proyek tersebut.",
+    "Di Jakarta, proyek dimulai tahun depan."
+   ],
+   "adWord": "iklan",
+   "chrome": {
+    "byline": "Oleh Rohan Mehta",
+    "photoCredit": "Foto: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Sumber: Daily Planet Gazette",
+    "viaLine": "via Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "tr": {
+   "dir": "ltr",
+   "title": "Hükümet başkent için yeni bir metro hattı açıkladı",
+   "paragraphs": [
+    "Hükümet pazar günü, 2028'e kadar havalimanını şehir merkezine bağlayacak yeni bir metro hattı açıkladı.",
+    "Yetkililer, istasyonlardaki reklam gelirlerinin projenin finansmanına katkı sağlayacağını söyledi."
+   ],
+   "adWord": "reklam",
+   "chrome": {
+    "byline": "Yazan: Rohan Mehta",
+    "photoCredit": "Fotoğraf: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Kaynak: Daily Planet Gazette",
+    "viaLine": "aktaran Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  },
+  "it": {
+   "dir": "ltr",
+   "title": "Il governo presenta una nuova linea della metropolitana per la capitale",
+   "paragraphs": [
+    "Il governo ha presentato domenica una nuova linea della metropolitana che collegherà l'aeroporto al centro città entro il 2028.",
+    "Secondo i funzionari, gli introiti della pubblicità nelle stazioni aiuteranno a finanziare il progetto.",
+    "Da domani iniziano i lavori preliminari."
+   ],
+   "adWord": "pubblicità",
+   "chrome": {
+    "byline": "Di Rohan Mehta",
+    "photoCredit": "Foto: Kiran Rao / Daily Planet Gazette",
+    "sourceLine": "Fonte: Daily Planet Gazette",
+    "viaLine": "via Daily Planet Gazette",
+    "readMore": "Read more: https://dailyplanet-gazette.example/story/12345"
+   }
+  }
+ }
+}

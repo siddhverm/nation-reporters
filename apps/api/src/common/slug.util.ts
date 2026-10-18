@@ -8,7 +8,8 @@ export function slugifyTitle(title: string, maxLen = 60): string {
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+|-+$/g, '')
-    .slice(0, maxLen);
+    .slice(0, maxLen)
+    .replace(/-+$/g, '');
   if (latin.length >= 4) return latin;
   const hash = createHash('sha256').update(title).digest('hex').slice(0, 12);
   return `story-${hash}`;

@@ -1,5 +1,6 @@
 import { stripLeakedPageCss, stripSyndicationLinkbacks, stripWireHeadlinePrefix } from './editorial-sanitize';
 import { KNOWN_SYNDICATION_OUTLET_LABELS } from './known-syndication-outlets';
+import { isAttributionLine, SOURCE_LABELS } from './attribution.util';
 
 /** Feed/source context for stripping outlet names and domains from syndicated text. */
 export type PublisherSanitizeOptions = {
@@ -108,19 +109,29 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(Published\s+by\s*:\s*[^\n]+)/gi, '\n$1\n');
   t = t.replace(/(Updated\s+(?:Mon|Tue|Wed|Thu|Fri|Sat|Sun)[^\n]+IST)/gi, '\n$1\n');
   // विज्ञापन (Advertisement) labels
-  t = t.replace(/(विज्ञापन\d*)/gu, '\n$1\n');
+  // Bhaskar glues a counter to the label ("विज्ञापन7"); the bare word is ordinary prose ("विज्ञापन आय").
+  t = t.replace(/(विज्ञापन\d+)/gu, '\n$1\n');
   // Dainik Bhaskar footer breadcrumb that appears as inline suffix
   t = t.replace(/Hindi\s*News.*?Dainik\s*Bhaskar[^\n]*/gi, '');
   t = t.replace(/National.*?Breaking\s*News.*?Headlines.*?Dainik\s*Bhaskar[^\n]*/gi, '');
   // Multi-language "by author" / attribution separators
   t = t.replace(/(By\s+[A-Z][a-zA-Z\s]{2,30}(?:,\s*[A-Z][a-zA-Z\s]{2,20})?)\s*\|/g, '\n$1\n');
-  t = t.replace(/(Reporter\s*:?\s*[A-Z][^\n]{2,40})/gi, '\n$1\n');
+  // "Reporter: John Smith, ANI." — remove only the name (and wire tag), never the sentence that follows.
+  t = t.replace(
+    /\b(?:Staff\s+Reporter|Reporter|Correspondent)\s*:\s*\p{Lu}[\p{L}.'’-]*(?:\s+\p{Lu}[\p{L}.'’-]*){0,3}(?:\s*,\s*(?:ANI|PTI|AFP|AP|Reuters|IANS|UNI)\b)?\.?/gu,
+    '\n',
+  );
   // Bengali: প্রতিবেদক, আপডেট; Tamil: நிருபர்; Marathi: वार्ताहर; Gujarati: રિપોર્ટર
   t = t.replace(/(প্রতিবেদক\s*:\s*[^\n]+)/gu, '\n$1\n');
   t = t.replace(/(வெளியிட்டது|புதுப்பிக்கப்பட்டது)\s*:/gu, '\n$&\n');
   t = t.replace(/(وكالات|بقلم)\s*/gu, '\n$1 ');
   // Strip "Advertisement" / ad labels in common languages (avoid \b for accented chars)
-  t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама|广告|広告|광고|İlan|Iklan)\s*/gi, ' ');
+  // Ad labels in other languages are ordinary words ("publicidad", "广告收入", "광고"); standalone label
+  // lines are dropped by isBoilerplateLine, so only the English label glued to the previous word is split here.
+  t = t.replace(/(?<=[a-z0-9.!?])Advertisem(?:ent)?(?=[A-Z\s]|$)/g, '\n');
+  // An ad label that closes (or opens) the whole text, e.g. "…croissance. Publicité".
+  t = t.replace(AD_LABEL_AT_END, '');
+  t = t.replace(AD_LABEL_AT_START, '');
   // TOI footer: copyright, syndication, follow us
   t = t.replace(/Copyright\s*©\s*\d{4}\s*Bennett[^\n]*/gi, '');
   t = t.replace(/For\s+reprint\s+rights\s*:\s*Times\s+Syndication[^\n]*/gi, '');
@@ -156,7 +167,7 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   // Australian Fairfax / Nine newsletter promos and bylines
   t = t.replace(/\b(Sign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition)\b/gi, '\n$1\n');
   t = t.replace(/(\breporter\s+at\s+[A-Z][^\n.]{2,80}\.?)/gi, '\n$1\n');
-  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, '\n$&\n');
+  // (standalone "Advertisement" lines are handled by isBoilerplateLine)
   // Amar Ujala footer chrome — split mashed block at recognizable boundaries
   t = t.replace(/\bLink\s*Copied\b/gi, '\nLink Copied\n');
   t = t.replace(/(फोटो\s*:\s*[^\n।]{0,80})/gu, '\n$1\n');
@@ -295,6 +306,20 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Whole-label match that works for every script. JS `\b` is ASCII-only, so it never matches around
+ * Devanagari/Arabic/CJK labels (a native-script outlet name was never stripped). CJK/Thai labels get no
+ * boundary (no spaces between words); Latin labels are bounded by Latin letters; other scripts by any letter/mark.
+ */
+function labelRegex(label: string, extra = ''): RegExp {
+  const first = label.codePointAt(0) ?? 0;
+  const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0e00-\u0e7f]/u.test(String.fromCodePoint(first));
+  const isLatin = /[A-Za-z0-9\u00c0-\u024f]/.test(String.fromCodePoint(first));
+  const cls = isLatin ? '[A-Za-z0-9\\u00c0-\\u024f]' : '[\\p{L}\\p{M}\\p{N}]';
+  const body = escapeRegExp(label);
+  return new RegExp(isCjk ? body : `(?<!${cls})${body}(?!${cls})`, `giu${extra}`);
+}
+
 const INDIAN_DESK_SECTIONS =
   'Entertainment|Sports|World|India|Business|Tech|Lifestyle|Auto|Crime|National|Political|Bollywood|Cinema|Education|Health|Science|Movies|Web|TV|News|City|Metro|Opinion|Viral|Trending|Live|Breaking|Video|Photos?|Market|Economy';
 const INDIAN_BUREAU_CITIES =
@@ -328,7 +353,7 @@ function shouldStripOutletPhrase(label: string): boolean {
 }
 
 function stripSectionOutletCrumbs(text: string): string {
-  return text.replace(SECTION_OUTLET_CRUMB, ' ').replace(/\s{2,}/g, ' ').trim();
+  return text.replace(SECTION_OUTLET_CRUMB, ' ').replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 /** Split glued desk tokens before regex passes (DeskNew Delhi, ,UPDATED). */
@@ -393,11 +418,11 @@ function stripIndianEnglishDeskChrome(text: string): string {
     ),
     '',
   );
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 /** Labels derived from feed source name + URL hostname + known outlets (longest first). */
-function collectSourceLabels(opts?: PublisherSanitizeOptions): string[] {
+export function collectSourceLabels(opts?: PublisherSanitizeOptions): string[] {
   const labels = new Set<string>();
   const name = (opts?.sourceName ?? '').trim();
   if (name.length > 2) {
@@ -437,16 +462,77 @@ function stripSourceAttribution(text: string, opts?: PublisherSanitizeOptions): 
     t = t.replace(new RegExp(`\\b(?:Source|Via)\\s*:\\s*${esc}\\b[^.\\n]{0,80}\\.?`, 'gi'), '');
     t = t.replace(new RegExp(`\\b${esc}\\s+(?:${INDIAN_DESK_SECTIONS})\\s+Desk\\b`, 'gi'), '');
     if (shouldStripOutletPhrase(label)) {
-      t = t.replace(new RegExp(`\\b${esc}\\b`, 'gi'), ' ');
+      t = t.replace(labelRegex(label), ' ');
     } else if (label.length >= 5) {
-      t = t.replace(new RegExp(`\\b${esc}\\b`, 'gi'), (match, offset, full) => {
+      t = t.replace(labelRegex(label), (match, offset, full) => {
         const before = full.slice(Math.max(0, offset - 36), offset).toLowerCase();
         if (/reporter\s+at\s*$|according\s+to\s*$|\bvia\s*$|source:\s*$/.test(before)) return '';
         return match;
       });
     }
   }
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
+}
+
+const AD_LABEL_WORDS = 'Advertisement|Publicité|Werbung|Publicidad|Publicidade|Pubblicità|Реклама|广告|広告|광고|İlan|Reklam|Iklan';
+const AD_LABEL_AT_END = new RegExp(`(?<=[.!?।。！？؟])\\s*(?:${AD_LABEL_WORDS})\\s*$`, 'iu');
+const AD_LABEL_AT_START = new RegExp(`^\\s*(?:${AD_LABEL_WORDS})\\s+(?=\\p{Lu})`, 'u');
+
+/** Dangling words left in front of a removed outlet name ("… via", "… 据", "… के अनुसार"). */
+const DANGLING_ATTRIBUTION_WORDS = [
+  ...SOURCE_LABELS, 'via', 'vía', 'by', 'के अनुसार', 'नुसार', 'মতে', 'ప్రకారం', 'படி', 'મુજબ', 'ಪ್ರಕಾರ', 'ਮੁਤਾਬਕ',
+  'ਅਨੁਸਾਰ', 'بحوالہ', 'نقلا عن', 'selon', 'laut', 'según', 'segundo', 'по данным', '据', '據', '取材', '제공', 'aktaran',
+  'menurut', 'secondo',
+]
+  .sort((a, b) => b.length - a.length)
+  .map(escapeRegExp)
+  .join('|');
+const DANGLING_TAIL = new RegExp(`(?:[\\s|\\-–—:,;(\\[（]|(?<![\\p{L}\\p{N}])(?:${DANGLING_ATTRIBUTION_WORDS})(?![\\p{L}\\p{N}]))+$`, 'iu');
+
+/**
+ * Remove the outlet name/domain (and the connective left in front of it) from a short free-text field
+ * (headline, SEO title/description, social caption) WITHOUT applying line-level boilerplate rules.
+ * Used when the full sanitizer would empty a field: the raw value must never be put back with the outlet in it.
+ */
+const labelKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+export function scrubSourceLabels(text: string, opts: PublisherSanitizeOptions = {}): string {
+  let t = stripSourceAttribution(text ?? '', opts);
+  // Hashtags that name the outlet (#DailyPlanetGazette) are not matched by the spaced-name rules above.
+  const keys = collectSourceLabels(opts).map(labelKey).filter((k) => k.length >= 2);
+  if (keys.length) {
+    t = t.replace(/#[\p{L}\p{N}_]+/gu, (tag) => {
+      const k = labelKey(tag);
+      return keys.some((label) => (label.length >= 4 ? k.includes(label) : k === label)) ? ' ' : tag;
+    });
+  }
+  t = t.replace(/\(\s*\)|\[\s*\]|（\s*）/g, ' ');
+  t = t.replace(DANGLING_TAIL, '');
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
+}
+
+
+/** Drop hashtags that name the outlet (#NDTV, #DailyPlanetGazette, #dailyplanet-gazette.example …). */
+export function sanitizeHashtags(tags: readonly string[] | null | undefined, opts: PublisherSanitizeOptions = {}): string[] {
+  const keys = collectSourceLabels(opts).map(labelKey).filter((k) => k.length >= 2);
+  return (tags ?? []).filter((tag) => {
+    const k = labelKey(tag);
+    if (!k) return false;
+    return !keys.some((label) => (label.length >= 4 ? k.includes(label) : k === label));
+  });
+}
+
+/** Remove the outlet name/domain from a URL slug ("ndtv-metro-line-1234" → "metro-line-1234"). */
+export function stripSourceFromSlug(slug: string, opts: PublisherSanitizeOptions = {}): string {
+  let out = slug.toLowerCase().replace(/\.+/g, '-');
+  const labels = collectSourceLabels(opts)
+    .map((l) => l.toLowerCase().normalize('NFKD').replace(/[\u0300-\u036f]/g, '').replace(/[^a-z0-9]+/g, '-').replace(/^-+|-+$/g, ''))
+    .filter((l) => l.length >= 4)
+    .sort((a, b) => b.length - a.length);
+  for (const label of labels) {
+    out = out.split(label).join('-');
+  }
+  return out.replace(/-{2,}/g, '-').replace(/^-+|-+$/g, '');
 }
 
 /** Inline newsletter promos, ad labels, desk chrome, and AU/UK bylines. */
@@ -460,9 +546,8 @@ function stripInlinePublisherChrome(text: string): string {
     /\b(?:[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?\s+)?reporter\s+at\s+[A-Z][A-Za-z0-9\s.&'-]{2,60}\.?/gi,
     '',
   );
-  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, ' ');
+  t = t.replace(/(?<=[a-z0-9.!?])Advertisem(?:ent)?(?=[A-Z\s]|$)/g, ' ');
   t = t.replace(/\bMorning\s+Edition\b/gi, ' ');
-  t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad|Publicidade|Реклама)\s*/gi, ' ');
   t = t.replace(/\b(Photo\s*:|Photos\s*:|Image\s*:|Pic\s*:|Picture\s*:|Caption\s*:)\s*[^\n.]{0,80}/gi, '');
   t = t.replace(/\b(Follow us on|Subscribe to|Subscribe for|Get our newsletter)\b[^\n.]*/gi, '');
   t = t.replace(/\bImage\s+notice\s*:\s*[^\n.]*/gi, '');
@@ -482,7 +567,7 @@ function stripInlinePublisherChrome(text: string): string {
     '',
   );
   t = stripSourcePageChromeInline(t);
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string[] = []): boolean {
@@ -502,7 +587,7 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
       return true;
     }
     if (t.length < 90 && /^reporter\s+at\s+/i.test(low) && norm.includes(ln)) return true;
-    if (t.length < 90 && !/[.!?।]/.test(t) && ln.length >= 8 && norm.includes(ln)) return true;
+    if (t.length < 90 && !/[.!?।。！？؟]/.test(t) && ln.length >= 8 && norm.includes(ln)) return true;
   }
   if (/\{\s*(?:margin|padding|box-sizing)\s*:/i.test(t)) return true;
   if (/\*,\s*:after|:before\s*\{|-webkit-box-sizing/i.test(t)) return true;
@@ -616,7 +701,9 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   // Arabic reporter attribution
   if (/^(مراسل|مراسلنا|بقلم|كتب)/.test(t) && t.length < 100) return true;
   // French "Par [Name]" / German "Von [Name]" / Spanish "Por [Name]" bylines
-  if (/^(Par|Von|Por|By|Di|Da)\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖÙÚÛÜ]/i.test(t) && t.length < 80) return true;
+  // Multilingual byline / photo credit / source lines (replaces a case-insensitive Par|Von|Por|By|Di|Da rule
+  // that also deleted real sentences such as "By next year…", "Par ailleurs…", "Di Jakarta…", "Da domani…").
+  if (isAttributionLine(t)) return true;
   // Gujarati reporter attribution
   if (/^(પ્રતિનિધિ|સંવાદદાતા|અહેવાલ)/.test(t) && t.length < 100) return true;
   // Punjabi reporter attribution
@@ -627,7 +714,7 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   if (/^(Reporter|Correspondent|Staff Reporter|Special Correspondent|ANI|PTI|AFP|AP|Reuters)\s*[:|,]/i.test(t)) return true;
   if (/^by\s+[A-Z][a-z]+(\s+[A-Z][a-z]+){0,3}$/.test(t)) return true;
   if (/^according to\s+/i.test(low)) return true;
-  if (/^Advertisem/i.test(t)) return true;
+  if (/^Advertisem(?:ent)?s?\s*$/i.test(t)) return true;
   if (/\breporter\s+at\s+[A-Z]/i.test(t) && t.length < 100) return true;
   if (
     /^(Brisbane\s+Times|Sydney\s+Morning\s+Herald|The\s+Age|WAtoday|Perth\s+Now|Canberra\s+Times|Fairfax|nine\.com\.au)/i.test(
@@ -686,9 +773,14 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   return false;
 }
 
+/** CJK scripts carry ~3x the meaning per character and have no spaces: scale length thresholds. */
+function scaledMin(text: string, latinMin: number): number {
+  return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(text) ? Math.ceil(latinMin / 3) : latinMin;
+}
+
 function splitSentences(text: string): string[] {
   return text
-    .split(/(?<=[.!?।])\s+/)
+    .split(/(?<=[.!?।؟])\s+|(?<=[。！？])\s*/u)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
@@ -718,12 +810,12 @@ export function buildReaderSummaryFromPlainText(
   let paragraphs = cleaned
     .split(/\n\s*\n+/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 40 && !isBoilerplateLine(p, normalizeForCompare(headline ?? ''), sourceLabels));
+    .filter((p) => p.length > scaledMin(p, 40) && !isBoilerplateLine(p, normalizeForCompare(headline ?? ''), sourceLabels));
 
   if (paragraphs.length <= 1 && cleaned.length > 120) {
     const flat = cleaned.replace(/\s+/g, ' ').trim();
     const sents = splitSentences(flat).filter(
-      (s) => s.length > 25 && !isBoilerplateLine(s, normalizeForCompare(headline ?? ''), sourceLabels),
+      (s) => s.length > scaledMin(s, 25) && !isBoilerplateLine(s, normalizeForCompare(headline ?? ''), sourceLabels),
     );
     if (sents.length >= 1) paragraphs = sents;
   }
@@ -756,6 +848,7 @@ export function buildReaderSummaryFromPlainText(
       cut.lastIndexOf('? '),
       cut.lastIndexOf('! '),
       cut.lastIndexOf('।'),
+      cut.lastIndexOf('。'),
     );
     summary = last > Math.min(minChars, 80) ? cut.slice(0, last + 1).trim() : `${cut.trim()}…`;
   }
@@ -774,7 +867,7 @@ export function splitStoryBodies(
   const paragraphs = cleaned
     .split(/\n\s*\n+/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 30 && !isBoilerplateLine(p, normalizeForCompare(headline ?? ''), sourceLabels));
+    .filter((p) => p.length > scaledMin(p, 30) && !isBoilerplateLine(p, normalizeForCompare(headline ?? ''), sourceLabels));
 
   const bodyShort = paragraphs.slice(0, 3).join('\n\n').slice(0, 2200).trim();
   const bodyMedium = paragraphs.join('\n\n').slice(0, 12000).trim();

@@ -68,3 +68,8 @@ export function withUiLanguagePath(path: string, lang?: string): string {
   const tail = params.toString();
   return tail ? `${pathname}?${tail}` : pathname;
 }
+
+/** Right-to-left scripts among the supported languages. */
+export function isRtlLanguage(code: string | null | undefined): boolean {
+  return ['ar', 'ur', 'fa', 'he'].includes(normalizeUiLanguage(code));
+}

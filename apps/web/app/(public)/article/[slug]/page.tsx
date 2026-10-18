@@ -4,7 +4,8 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
-import { getArticleImage, getBodyImageCredit, getPreferredArticleImage } from '@/lib/news-image';
+import { getArticleImage, getImageAlt } from '@/lib/news-image';
+import { isRtlLanguage } from '@/lib/ui-language';
 import {
   htmlToPlainText,
   rssPlainLine,
@@ -736,8 +737,7 @@ export default function ArticlePage() {
   const teaserForSeo = (displaySummary || excerptText).trim();
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
-  const sourceImageUrl = getPreferredArticleImage(article) ?? null;
-  const imageCredit = getBodyImageCredit(article.body);
+  const articleLang = (article.language ?? 'en').toLowerCase().split(/[-_]/)[0] || 'en';
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
   const proseText = (text: string) =>
     safeArticleText(stripFeedBoilerplateWithTitle(text, titleText, sanitizeCtx));
@@ -792,23 +792,16 @@ export default function ArticlePage() {
       </div>
 
       <main className="max-w-3xl mx-auto px-4 py-8">
-        {/* Schema.org */}
-        <script type="application/ld+json" dangerouslySetInnerHTML={{ __html: JSON.stringify({
-          '@context': 'https://schema.org', '@type': 'NewsArticle',
-          headline: titleText,
-          description: showSummaryBlock ? displaySummary : (article.bodyShort ?? article.seoDescription ?? titleText),
-          datePublished: article.publishedAt,
-          publisher: { '@type': 'Organization', name: 'Nation Reporters', url: 'https://nationreporters.com' },
-        }) }} />
+        {/* Schema.org JSON-LD + OG/Twitter tags are rendered server-side in layout.tsx */}
 
         {/* Article card */}
-        <article className="bg-white rounded-2xl shadow-sm overflow-hidden">
+        <article lang={articleLang} dir={isRtlLanguage(articleLang) ? 'rtl' : 'ltr'} className="bg-white rounded-2xl shadow-sm overflow-hidden">
           {/* Hero image */}
           <div className="relative overflow-hidden">
             <div className="h-64 md:h-80 relative">
               <Image
-                src={getArticleImage(article.slug, undefined, 'hero', sourceImageUrl)}
-                alt={titleText} fill className="object-cover" unoptimized priority />
+                src={getArticleImage(article.slug, undefined, 'hero')}
+                alt={getImageAlt(titleText, articleLang)} fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
               <div className="absolute bottom-3 left-4">
                 <span className="bg-brand text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">
@@ -816,11 +809,6 @@ export default function ArticlePage() {
                 </span>
               </div>
             </div>
-            {sourceImageUrl && imageCredit && (
-              <p className="text-[10px] text-gray-400 px-3 py-1 bg-gray-50 text-right italic">
-                📷 {imageCredit}
-              </p>
-            )}
           </div>
 
           <div className="p-6">
@@ -840,7 +828,7 @@ export default function ArticlePage() {
               <div className="flex items-center gap-2 text-sm text-gray-500">
                 <Clock className="h-4 w-4" />
                 {article.publishedAt
-                  ? new Date(article.publishedAt).toLocaleDateString('en-IN', {
+                  ? new Date(article.publishedAt).toLocaleDateString(articleLang === 'en' ? 'en-IN' : articleLang, {
                       weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
                       hour: '2-digit', minute: '2-digit',
                     })

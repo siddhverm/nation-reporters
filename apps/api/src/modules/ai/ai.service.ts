@@ -3,7 +3,6 @@ import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from './gemini.client';
 import {
-  fetchArticleOgImage,
   fetchArticlePlainText,
   MIN_SOURCE_ARTICLE_PLAIN_CHARS,
   rssBodyLooksLikeTitleOnly,
@@ -22,16 +21,17 @@ import { translatePrompt } from './prompts/translate.prompt';
 import { Platform } from '@prisma/client';
 import { PublishingService } from '../publishing/publishing.service';
 import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../common/editorial-sanitize';
-import { stripPublisherFeedBoilerplate } from '../../common/reader-summary.util';
 import {
-  isWeakStoryImageUrl,
-  normalizeImageUrl,
-  persistArticleImage,
-  s3ConfigFromEnv,
-} from '../../common/mirror-external-image.util';
+  sanitizeHashtags,
+  scrubSourceLabels,
+  stripPublisherFeedBoilerplate,
+  stripSourceFromSlug,
+} from '../../common/reader-summary.util';
+import { StoryImageService } from './story-image.service';
 
 type ProcessIngestedOptions = {
   language?: string;
+  /** @deprecated publisher images are no longer used; every story gets a generated picture. */
   imageUrl?: string;
   sourceVideoUrl?: string;
   forceAutoPublish?: boolean;
@@ -60,6 +60,7 @@ export class AiService {
     private readonly gemini: GeminiClient,
     private readonly prisma: PrismaService,
     private readonly config: ConfigService,
+    private readonly storyImages: StoryImageService,
     @Inject(forwardRef(() => PublishingService))
     private readonly publishing: PublishingService,
   ) {
@@ -183,7 +184,14 @@ export class AiService {
         (seoRaw.seoDescription ?? '').trim().length >= 40
           ? seoRaw.seoDescription
           : this.clipExcerpt(readerSummary, 155) ?? seoRaw.seoDescription;
-      const seo = { ...seoRaw, seoDescription: seoDescription ?? seoRaw.seoDescription };
+      // AI-written SEO fields can name the outlet (the model sees the source text): scrub them before storing.
+      const seo = {
+        ...seoRaw,
+        seoTitle: scrubSourceLabels(seoRaw.seoTitle ?? '', publisherSanitize) || rewrite.title,
+        seoDescription: scrubSourceLabels(seoDescription ?? seoRaw.seoDescription ?? '', publisherSanitize),
+        slug: stripSourceFromSlug(seoRaw.slug ?? '', publisherSanitize) || `story-${Date.now().toString(36)}`,
+        hashtags: sanitizeHashtags(seoRaw.hashtags, publisherSanitize),
+      };
 
       // 4. Captions (fallback so publishing still works if this call fails)
       let captions: Record<string, string>;
@@ -191,7 +199,9 @@ export class AiService {
         const { data } = await this.gemini.generateJson<Record<string, string>>(
           captionsPrompt(rewrite.title, readerSummary, language),
         );
-        captions = data;
+        captions = Object.fromEntries(
+          Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? scrubSourceLabels(v, publisherSanitize) : v]),
+        ) as Record<string, string>;
       } catch (capErr) {
         this.logger.warn(`Caption generation failed, using fallbacks: ${(capErr as Error).message}`);
         captions = this.buildFallbackSocialCaptions(rewrite.title, readerSummary);
@@ -292,52 +302,28 @@ export class AiService {
         },
       });
 
-      let storyImageUrl = options.imageUrl ?? null;
-      if (
-        (!storyImageUrl || isWeakStoryImageUrl(storyImageUrl)) &&
-        this.fetchSourceArticle &&
-        ingested.sourceUrl
-      ) {
-        try {
-          const og = await fetchArticleOgImage(
-            ingested.sourceUrl,
-            {
-              timeoutMs: Math.min(this.fetchSourceTimeoutMs, 12_000),
-              maxBytes: 400_000,
+      // Picture: always an original generated image (never the publisher's photo). If generation is
+      // unavailable the web app renders its deterministic generated fallback artwork for this slug.
+      const generated = await this.storyImages.generateForArticle({
+        id: article.id,
+        slug: article.slug,
+        title: rewrite.title,
+        summary: readerSummary,
+        category: categorySlug,
+        language,
+      });
+      if (generated) {
+        await this.prisma.article.update({
+          where: { id: article.id },
+          data: {
+            body: {
+              ...(article.body as object),
+              imageUrl: generated.url,
+              imageAlt: generated.alt,
+              imageGenerated: true,
             },
-            { acceptLanguage: acceptLanguageHeaderForLocale(langForFetch) },
-          );
-          const ogNorm = normalizeImageUrl(og, ingested.sourceUrl);
-          if (ogNorm && !isWeakStoryImageUrl(ogNorm)) {
-            storyImageUrl = ogNorm;
-          } else if (!storyImageUrl && ogNorm) {
-            storyImageUrl = ogNorm;
-          }
-        } catch {
-          /* keep RSS image */
-        }
-      }
-
-      if (storyImageUrl) {
-        const storedUrl = await persistArticleImage(
-          this.prisma,
-          s3ConfigFromEnv((k) => this.config.get(k)),
-          article.id,
-          storyImageUrl,
-          ingested.sourceUrl,
-        );
-        if (storedUrl) {
-          await this.prisma.article.update({
-            where: { id: article.id },
-            data: {
-              body: {
-                ...(article.body as object),
-                imageUrl: storedUrl,
-                imageCredit: 'Story image',
-              },
-            },
-          });
-        }
+          },
+        });
       }
 
       if (options.sourceVideoUrl) {

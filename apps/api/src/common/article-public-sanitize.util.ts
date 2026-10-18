@@ -1,4 +1,5 @@
-import { sanitizePublisherStoryText } from './reader-summary.util';
+import { sanitizeHashtags, sanitizePublisherStoryText, scrubSourceLabels, stripSourceFromSlug } from './reader-summary.util';
+import { buildImageAlt, storyImagePath } from './story-image.util';
 
 type ProvenanceLike = {
   sourceName?: string | null;
@@ -13,6 +14,11 @@ type PublicArticleLike = {
   seoTitle?: string | null;
   seoDescription?: string | null;
   body?: unknown;
+  slug?: string | null;
+  language?: string | null;
+  mediaAssets?: unknown;
+  hashtags?: string[] | null;
+  seoSlug?: string | null;
   provenance?: ProvenanceLike;
   [key: string]: unknown;
 };
@@ -50,11 +56,12 @@ function cleanField(
 ): string {
   const raw = (text ?? '').trim();
   if (!raw) return '';
-  const cleaned = sanitizePublisherStoryText(raw, opts).trim();
+  // Final scrub removes what is left once the outlet is gone ("… 2028. Source:", "… via", outlet hashtags).
+  const cleaned = scrubSourceLabels(sanitizePublisherStoryText(raw, opts), opts).trim();
   if (cleaned) return cleaned;
   // Sanitizer emptied the field. Never put chrome back; only keep short real headlines.
   if (looksLikePublisherChrome(raw)) return '';
-  return raw.length <= 120 ? raw : '';
+  return raw.length <= 120 ? scrubSourceLabels(raw, opts) : '';
 }
 
 /** Walk TipTap/ProseMirror text nodes and strip publisher chrome in place. */
@@ -64,7 +71,20 @@ function sanitizeTipTapBody(
 ): unknown {
   if (!body || typeof body !== 'object') return body;
 
-  const walk = (node: Record<string, unknown>): Record<string, unknown> => {
+  const plainOf = (n: unknown): string => {
+    if (!n || typeof n !== 'object') return '';
+    const o = n as Record<string, unknown>;
+    if (typeof o.text === 'string') return o.text;
+    return Array.isArray(o.content) ? (o.content as unknown[]).map(plainOf).join('') : '';
+  };
+
+  const walk = (node: Record<string, unknown>): Record<string, unknown> | null => {
+    // A paragraph/heading whose whole text is publisher chrome (byline, credit, "Source: X", "Read more: URL",
+    // outlet name…) is removed instead of being left in the document.
+    if ((node.type === 'paragraph' || node.type === 'heading') && Array.isArray(node.content)) {
+      const joined = plainOf(node).trim();
+      if (joined && !sanitizePublisherStoryText(joined, opts).trim()) return null;
+    }
     const next: Record<string, unknown> = { ...node };
     if (typeof next.text === 'string' && next.text.trim()) {
       const cleaned = sanitizePublisherStoryText(next.text, opts).trim();
@@ -87,6 +107,7 @@ function sanitizeTipTapBody(
     if (Array.isArray(next.content)) {
       next.content = (next.content as Record<string, unknown>[])
         .map((child) => walk(child))
+        .filter((child): child is Record<string, unknown> => child !== null)
         .filter((child) => {
           if (typeof child.text === 'string' && !child.text.trim() && !child.content) return false;
           return true;
@@ -95,7 +116,57 @@ function sanitizeTipTapBody(
     return next;
   };
 
-  return walk(body as Record<string, unknown>);
+  return walk(body as Record<string, unknown>) ?? body;
+}
+
+type MediaLike = { id?: string; type?: string; url?: string | null; s3Key?: string | null; scanStatus?: string | null };
+
+/**
+ * Public view of media: publisher images/videos (s3Key "external/…", external URLs, mirrored source images) and
+ * storage keys are never exposed. Every story exposes exactly one image: the same-origin generated picture URL,
+ * which the web app serves from storage or replaces with generated fallback artwork.
+ */
+export function publicMediaAssets(
+  assets: unknown[],
+  image?: { url: string; alt: string },
+): Array<Record<string, unknown>> {
+  const out: Array<Record<string, unknown>> = [];
+  let imageDone = false;
+  for (const raw of assets as MediaLike[]) {
+    if (raw?.type === 'IMAGE') {
+      if (image && !imageDone) {
+        out.push({ id: raw.id, type: 'IMAGE', url: image.url, alt: image.alt, scanStatus: 'generated' });
+        imageDone = true;
+      }
+      continue;
+    }
+    if (raw?.type === 'VIDEO') {
+      if (String(raw.s3Key ?? '').startsWith('external/') || raw.scanStatus === 'external') continue;
+      out.push({ id: raw.id, type: 'VIDEO', url: raw.url });
+      continue;
+    }
+    out.push({ id: raw?.id, type: raw?.type, url: raw?.url });
+  }
+  return out;
+}
+
+/** Replace any publisher image URL/credit stored in the TipTap doc with the generated image reference. */
+function withGeneratedImageBody(body: unknown, image: { url: string; alt: string }): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const { imageCredit: _credit, imageSource: _source, ...rest } = body as Record<string, unknown>;
+  return { ...rest, imageUrl: image.url, imageAlt: image.alt, imageGenerated: true };
+}
+
+/** Internal editorial/workflow fields that anonymous readers must never receive. */
+const INTERNAL_FIELDS = [
+  'ingestedArticleId', 'riskScore', 'riskFlags', 'riskAssessment', 'authorId', 'editorId',
+  'versions', 'provenance',
+] as const;
+
+export function stripInternalFields<T extends Record<string, unknown>>(article: T): Omit<T, (typeof INTERNAL_FIELDS)[number]> {
+  const copy: Record<string, unknown> = { ...article };
+  for (const k of INTERNAL_FIELDS) delete copy[k];
+  return copy as Omit<T, (typeof INTERNAL_FIELDS)[number]>;
 }
 
 /**
@@ -123,8 +194,15 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
         caption: c?.caption != null ? cleanField(c.caption, opts) || '' : c.caption,
       }))
     : socialCaptions;
+  const slug = typeof article.slug === 'string' ? article.slug : '';
+  const language = typeof article.language === 'string' ? article.language : 'en';
+  const image = slug ? { url: storyImagePath(slug), alt: buildImageAlt(title, language) } : undefined;
+  const mediaAssets = article.mediaAssets;
+  const cleanBody = article.body !== undefined ? sanitizeTipTapBody(article.body, opts) : article.body;
   return {
     ...rest,
+    ...(image ? { image } : {}),
+    ...(Array.isArray(mediaAssets) ? { mediaAssets: publicMediaAssets(mediaAssets, image) } : {}),
     ...(captions !== undefined ? { socialCaptions: captions } : {}),
     title,
     excerpt: article.excerpt != null ? cleanField(article.excerpt, opts) || null : article.excerpt,
@@ -136,20 +214,50 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
       article.seoDescription != null
         ? cleanField(article.seoDescription, opts) || null
         : article.seoDescription,
-    body: article.body !== undefined ? sanitizeTipTapBody(article.body, opts) : article.body,
+    ...(Array.isArray(article.hashtags) ? { hashtags: sanitizeHashtags(article.hashtags, opts) } : {}),
+    ...(typeof article.seoSlug === 'string' ? { seoSlug: stripSourceFromSlug(article.seoSlug, opts) || slug } : {}),
+    body: image ? withGeneratedImageBody(cleanBody, image) : cleanBody,
   } as Omit<T, 'provenance'>;
 }
 
-/** Lightweight list/card sanitize (title + excerpt). Known outlets apply without provenance. */
-export function sanitizeArticleListItem<T extends { title?: string | null; excerpt?: string | null }>(
-  item: T,
-): T {
-  const title = cleanField(item.title, {}) || '';
+/**
+ * Lightweight list/card sanitize (title + excerpt) plus the generated image reference.
+ * Known outlets apply without provenance. Raw media rows (publisher URLs, storage keys) are removed.
+ */
+export function sanitizeArticleListItem<
+  T extends {
+    title?: string | null; excerpt?: string | null; slug?: string | null; language?: string | null;
+    provenance?: ProvenanceLike; mediaAssets?: unknown;
+  },
+>(item: T): Omit<T, 'provenance'> & { image?: { url: string; alt: string } } {
+  const opts = { sourceName: item.provenance?.sourceName, sourceUrl: item.provenance?.sourceUrl };
+  const title = cleanField(item.title, opts) || '';
   // Prefer empty over chrome when title was outlet desk junk.
   const safeTitle = title || (looksLikePublisherChrome(item.title ?? '') ? '' : (item.title ?? ''));
   const excerpt =
     item.excerpt != null
-      ? cleanField(item.excerpt, { headline: safeTitle }) || null
+      ? cleanField(item.excerpt, { ...opts, headline: safeTitle }) || null
       : item.excerpt;
-  return { ...item, title: safeTitle, excerpt };
+  const { mediaAssets, provenance: _prov, ...rest } = item;
+  const image = item.slug
+    ? { url: storyImagePath(item.slug), alt: buildImageAlt(safeTitle, item.language) }
+    : undefined;
+  return {
+    ...rest,
+    title: safeTitle,
+    excerpt,
+    ...(Array.isArray(mediaAssets) ? { mediaAssets: publicMediaAssets(mediaAssets) } : {}),
+    ...(image ? { image } : {}),
+  } as unknown as Omit<T, 'provenance'> & { image?: { url: string; alt: string } };
+}
+
+/**
+ * Clean one free-text field (headline, caption, SEO text, social excerpt) for any public channel
+ * (social posts, feeds). Uses the feed's own outlet name/domain when known.
+ */
+export function sanitizeTextForPublic(
+  text: string | null | undefined,
+  opts: { headline?: string; sourceName?: string | null; sourceUrl?: string | null } = {},
+): string {
+  return cleanField(text, opts);
 }

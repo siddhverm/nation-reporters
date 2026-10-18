@@ -6,6 +6,21 @@ import MeiliSearch from 'meilisearch';
 import { Injectable } from '@nestjs/common';
 import { ArticleStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
+import { sanitizeArticleListItem } from '../../common/article-public-sanitize.util';
+
+/** Meilisearch filter values are quoted strings: strip anything that could break out of the quotes. */
+const filterValue = (v: string) => v.replace(/["\\\r\n]/g, '').slice(0, 64);
+
+/** Only public, source-free fields leave the search endpoint (Meili documents may hold more). */
+function publicHit(h: Record<string, any>) {
+  const item = sanitizeArticleListItem({
+    title: h.title, excerpt: h.excerpt, slug: h.slug, language: h.language,
+  });
+  return {
+    id: h.id, title: item.title, excerpt: item.excerpt, slug: h.slug, language: h.language,
+    category: h.category ?? undefined, publishedAt: h.publishedAt, image: item.image,
+  };
+}
 
 @Injectable()
 class SearchService {
@@ -27,13 +42,15 @@ class SearchService {
     try {
       const result = await this.meili.index('articles').search(q, {
         filter: [
-          options.category ? `category = "${options.category}"` : null,
-          options.lang ? `language = "${options.lang}"` : null,
+          options.category ? `category = "${filterValue(options.category)}"` : null,
+          options.lang ? `language = "${filterValue(options.lang)}"` : null,
         ].filter(Boolean) as string[],
         page: options.page ?? 1,
         hitsPerPage: 20,
       });
-      if (result.hits.length > 0 || result.totalHits > 0) return result;
+      if (result.hits.length > 0 || result.totalHits > 0) {
+        return { ...result, hits: result.hits.map((h) => publicHit(h as Record<string, any>)) };
+      }
     } catch (e) {
       this.logger.warn(`Meilisearch unavailable: ${(e as Error).message} — using DB fallback`);
     }
@@ -76,7 +93,7 @@ class SearchService {
       }),
     ]);
 
-    return { hits, totalHits, page, hitsPerPage: take };
+    return { hits: hits.map((h) => publicHit(h)), totalHits, page, hitsPerPage: take };
   }
 
   async indexArticle(article: {

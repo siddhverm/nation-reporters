@@ -11,7 +11,6 @@ import { AiService } from '../../ai/ai.service';
 import { ArticleStatus } from '@prisma/client';
 import { PublishingService } from '../../publishing/publishing.service';
 import {
-  fetchArticleOgImage,
   fetchArticlePlainText,
   fetchArticleTitleAndText,
   isAllowedArticleFetchUrl,
@@ -32,13 +31,7 @@ import {
   splitStoryBodies,
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
-import {
-  isWeakStoryImageUrl,
-  normalizeImageUrl,
-  persistArticleImage,
-  pickStrongestImageUrl,
-  s3ConfigFromEnv,
-} from '../../../common/mirror-external-image.util';
+import { StoryImageService } from '../../ai/story-image.service';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
 
 type CategorySlug =
@@ -90,6 +83,7 @@ export class IngestionCronService {
     private readonly provenance: ProvenanceService,
     private readonly ai: AiService,
     private readonly publishing: PublishingService,
+    private readonly storyImages: StoryImageService,
   ) {
     this.maxPerCategory = Number(this.config.get('INGESTION_MAX_PER_CATEGORY') ?? 20);
     this.maxItemsPerSource = Number(this.config.get('INGESTION_MAX_ITEMS_PER_SOURCE') ?? 28);
@@ -168,12 +162,9 @@ export class IngestionCronService {
     });
 
     let articleId: string | undefined;
-    const imageUrl =
-      fetched.ogImage && !isWeakStoryImageUrl(fetched.ogImage) ? fetched.ogImage : undefined;
     try {
       const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
         language: lang,
-        imageUrl,
         forceAutoPublish: true,
         allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
       });
@@ -185,7 +176,7 @@ export class IngestionCronService {
     }
 
     if (!articleId) {
-      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang }, imageUrl);
+      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang });
       if (!ok) throw new Error('Failed to publish article');
       const published = await this.prisma.article.findFirst({
         where: { ingestedArticleId: ingestedArticle.id },
@@ -337,80 +328,6 @@ export class IngestionCronService {
     }
   }
 
-  private extractImage(item: any): string | null {
-    const link = typeof item.link === 'string' ? item.link : item.link?.href ?? item.guid;
-    const fromMediaGroup = item['media:group']?.['media:content'];
-    const groupUrls = Array.isArray(fromMediaGroup)
-      ? fromMediaGroup
-          .filter((m: { $?: { type?: string; url?: string } }) =>
-            !m?.$?.type || String(m.$.type).startsWith('image'))
-          .map((m: { $?: { url?: string } }) => m?.$?.url)
-      : [fromMediaGroup?.$?.url];
-
-    return pickStrongestImageUrl(
-      [
-        item['media:content']?.$.url,
-        item['media:thumbnail']?.$.url,
-        ...groupUrls,
-        item.enclosure?.type?.startsWith('image') ? item.enclosure.url : null,
-        item['ht:image']?.['$']?.url,
-        ...this.extractImgCandidatesFromHtml(item.content ?? item['content:encoded'] ?? item.summary ?? ''),
-      ],
-      link,
-    );
-  }
-
-  private extractImgCandidatesFromHtml(html: string): string[] {
-    if (!html || typeof html !== 'string') return [];
-    const out: string[] = [];
-    const re = /<img[^>]+src=["']([^"']+)["']/gi;
-    let m: RegExpExecArray | null;
-    while ((m = re.exec(html)) !== null) {
-      if (m[1]) out.push(m[1]);
-      if (out.length >= 8) break;
-    }
-    return out;
-  }
-
-  /**
-   * Prefer a real story photo: strong RSS media first, else publisher og:image/twitter:image.
-   * Avoids logos / icons that often appear as the first feed enclosure.
-   */
-  private async resolveStoryImage(
-    item: any,
-    sourceUrl: string,
-    sourceLang: string,
-  ): Promise<string | null> {
-    const fromRss = this.extractImage(item);
-    if (fromRss && !isWeakStoryImageUrl(fromRss)) return fromRss;
-
-    if (this.fetchSourceArticle && sourceUrl && isAllowedArticleFetchUrl(sourceUrl)) {
-      try {
-        const og = await fetchArticleOgImage(
-          sourceUrl,
-          { timeoutMs: Math.min(this.fetchSourceTimeoutMs, 12_000), maxBytes: 400_000 },
-          { acceptLanguage: acceptLanguageHeaderForLocale(sourceLang) },
-        );
-        const ogNorm = normalizeImageUrl(og, sourceUrl);
-        if (ogNorm && !isWeakStoryImageUrl(ogNorm)) {
-          if (fromRss && fromRss !== ogNorm) {
-            this.logger.log(
-              `Ingestion: replaced weak RSS image with og:image for ${sourceUrl.slice(0, 64)}`,
-            );
-          }
-          return ogNorm;
-        }
-        if (ogNorm && !fromRss) return ogNorm;
-      } catch (e) {
-        this.logger.warn(
-          `Ingestion og:image fetch failed ${sourceUrl.slice(0, 64)}: ${(e as Error).message}`,
-        );
-      }
-    }
-
-    return fromRss;
-  }
-
   private extractVideo(item: any): string | null {
     const mediaUrl = item['media:content']?.$.url ?? item.enclosure?.url;
     const mediaType = item['media:content']?.$.type ?? item.enclosure?.type ?? '';
@@ -455,7 +372,6 @@ export class IngestionCronService {
         resolveArticleLanguage(feedLangHint, { title: titlePlain, body }),
       );
       const hash = crypto.createHash('sha256').update(item.link ?? item.title ?? '').digest('hex');
-      const imageUrl = await this.resolveStoryImage(item, item.link ?? '', langForEnrichFetch);
       const sourceVideoUrl = this.extractVideo(item);
 
       const isDuplicate = await this.dedup.isDuplicate(hash, body, articleLang);
@@ -483,12 +399,11 @@ export class IngestionCronService {
 
         let publishedOk = false;
         if (this.aiQuotaExhausted) {
-          publishedOk = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
+          publishedOk = await this.publishRaw(ingestedArticle, source);
         } else {
           try {
             const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
               language: articleLang,
-              imageUrl: imageUrl ?? undefined,
               sourceVideoUrl: sourceVideoUrl ?? undefined,
               forceAutoPublish: true,
               allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
@@ -504,7 +419,7 @@ export class IngestionCronService {
             this.logger.warn(
               `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — publishing raw RSS/source text`,
             );
-            publishedOk = await this.publishRaw(ingestedArticle, source, imageUrl ?? undefined);
+            publishedOk = await this.publishRaw(ingestedArticle, source);
             if (!publishedOk) {
               this.logger.warn(`Raw publish failed after AI error: ${titlePlain.slice(0, 50)}`);
             }
@@ -683,7 +598,6 @@ export class IngestionCronService {
       publishedAt: Date | null;
     },
     source: { name: string; language?: string | null },
-    imageUrl?: string,
   ): Promise<boolean> {
     const adminUser =
       (await this.prisma.user.findFirst({ where: { role: 'ADMIN' } }))
@@ -746,30 +660,6 @@ export class IngestionCronService {
       sourceUrl: ingestedArticle.sourceUrl || null,
     };
 
-    let resolvedImageUrl = imageUrl ?? null;
-    if (
-      (!resolvedImageUrl || isWeakStoryImageUrl(resolvedImageUrl)) &&
-      this.fetchSourceArticle &&
-      ingestedArticle.sourceUrl &&
-      isAllowedArticleFetchUrl(ingestedArticle.sourceUrl)
-    ) {
-      try {
-        const og = await fetchArticleOgImage(
-          ingestedArticle.sourceUrl,
-          { timeoutMs: Math.min(this.fetchSourceTimeoutMs, 12_000), maxBytes: 400_000 },
-          { acceptLanguage: acceptLanguageHeaderForLocale(langForRawFetch) },
-        );
-        const ogNorm = normalizeImageUrl(og, ingestedArticle.sourceUrl);
-        if (ogNorm && !isWeakStoryImageUrl(ogNorm)) {
-          resolvedImageUrl = ogNorm;
-        } else if (!resolvedImageUrl && ogNorm) {
-          resolvedImageUrl = ogNorm;
-        }
-      } catch {
-        /* keep RSS image if any */
-      }
-    }
-
     plainLead = stripPublisherFeedBoilerplate(plainLead, displayTitle, sanitizeOpts);
     rawBodyForArticle = stripPublisherFeedBoilerplate(rawBodyForArticle, displayTitle, sanitizeOpts);
     plainLead = stripSyndicationLinkbacks(plainLead);
@@ -799,7 +689,6 @@ export class IngestionCronService {
         bodyMedium: bodyMedium || undefined,
         body: {
           type: 'doc',
-          ...(resolvedImageUrl && { imageUrl: resolvedImageUrl, imageCredit: 'Story image' }),
           aiVideo: {
             title: displayTitle,
             summary: readerSummary || '',
@@ -824,26 +713,28 @@ export class IngestionCronService {
       },
     });
 
-    if (resolvedImageUrl) {
-      const storedUrl = await persistArticleImage(
-        this.prisma,
-        s3ConfigFromEnv((k) => this.config.get(k)),
-        article.id,
-        resolvedImageUrl,
-        ingestedArticle.sourceUrl,
-      );
-      if (storedUrl) {
-        await this.prisma.article.update({
-          where: { id: article.id },
-          data: {
-            body: {
-              ...(article.body as object),
-              imageUrl: storedUrl,
-              imageCredit: 'Story image',
-            },
+    // Picture: always an original generated image (never the publisher's photo); the web app renders its
+    // generated fallback artwork when generation is unavailable.
+    const generated = await this.storyImages.generateForArticle({
+      id: article.id,
+      slug: article.slug,
+      title: displayTitle,
+      summary: excerpt,
+      category: this.detectCategorySlug(displayTitle, source.name) ?? 'india',
+      language: lang,
+    });
+    if (generated) {
+      await this.prisma.article.update({
+        where: { id: article.id },
+        data: {
+          body: {
+            ...(article.body as object),
+            imageUrl: generated.url,
+            imageAlt: generated.alt,
+            imageGenerated: true,
           },
-        });
-      }
+        },
+      });
     }
 
     if (ingestedArticle.sourceUrl) {

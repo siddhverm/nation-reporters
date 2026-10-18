@@ -13,3 +13,4 @@ coverage
 
 # one-time OAuth helper scripts
 get-youtube-token.js
+apps/web/e2e/out

@@ -1,6 +1,6 @@
 import {
   Controller, Get, Post, Patch, Body, Param,
-  Query, UseGuards, HttpCode, BadRequestException,
+  Query, UseGuards, HttpCode, BadRequestException, Req,
 } from '@nestjs/common';
 import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ArticleStatus, Role } from '@prisma/client';
@@ -8,6 +8,7 @@ import { ArticlesService } from './articles.service';
 import { PublishingService } from '../publishing/publishing.service';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
+import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
 import { CurrentUser } from '../../common/decorators/current-user.decorator';
@@ -20,10 +21,12 @@ export class ArticlesController {
     private readonly publishing: PublishingService,
   ) {}
 
-  // ── Public read endpoints (no auth required) ──────────────────────────────
+  // ── Read endpoints: anonymous readers get PUBLISHED, source-free stories only; a valid CMS token gets all ──
 
   @Get()
+  @UseGuards(OptionalJwtAuthGuard)
   findAll(
+    @Req() req: { user?: unknown },
     @Query('status') status?: ArticleStatus,
     @Query('categoryId') categoryId?: string,
     @Query('authorId') authorId?: string,
@@ -43,7 +46,7 @@ export class ArticlesController {
       page,
       limit,
       omitBody: omitBody === 'true',
-    });
+    }, req.user ? 'staff' : 'public');
   }
 
   @Get('country-feed')
@@ -57,11 +60,15 @@ export class ArticlesController {
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.svc.findOne(id);
+  @UseGuards(OptionalJwtAuthGuard)
+  findOne(@Param('id') id: string, @Req() req: { user?: unknown }) {
+    return this.svc.findOne(id, req.user ? 'staff' : 'public');
   }
 
+  // Version history is an editorial tool: staff only.
   @Get(':id/versions')
+  @UseGuards(JwtAuthGuard)
+  @ApiBearerAuth()
   versions(@Param('id') id: string) {
     return this.svc.findOne(id).then((a) => a.versions);
   }
