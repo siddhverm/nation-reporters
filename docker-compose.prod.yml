@@ -51,6 +51,8 @@ services:
     environment:
       NEXT_PUBLIC_API_URL: https://nationreporters.com/api/v1
       API_PROXY_TARGETS: http://api:3001/api/v1,https://nationreporters.com/api/v1
+      # Shown on /copyright (read at request time). Set COPYRIGHT_EMAIL in the server .env next to this file.
+      COPYRIGHT_EMAIL: ${COPYRIGHT_EMAIL:-}
     depends_on:
       - api
     restart: unless-stopped

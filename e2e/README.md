@@ -7,6 +7,8 @@
 3. Browser matrix (headless Chrome, screenshots at 390x844 and 1280x800 into `apps/web/e2e/out/`):
    `cd apps/web && npm i --no-save puppeteer-core && node e2e/browser-matrix.js`
 
+The fake API serves a mirrored source image (en, ar, ja, kn, fr, it, tr, mr), an AI-generated image (hi, zh, ta, ru, te, de) or none (fallback artwork) and the matrix asserts the right note per case (source -> only the copyright note; generated -> only the AI label), no source domain/URL anywhere (HTML, OG, JSON-LD, network, API) and the staff takedown (`replace-with-generated`).
+
 The browser matrix also checks the "Illustration (AI-generated)" line, the small-font image-copyright note, key points, the /copyright page (COPYRIGHT_EMAIL; set `EXPECT_COPYRIGHT_EMAIL` to match the email you started the web with) and the footer link in all 23 languages.
 
 Unit tests: `npm test --workspace=@nation-reporters/api` and `npm test --workspace=@nation-reporters/web`.
