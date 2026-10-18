@@ -11,6 +11,7 @@ import {
 } from './reader-summary.util';
 import { sanitizeArticleForPublicResponse } from './article-public-sanitize.util';
 import { slugifyTitle } from './slug.util';
+import { measureOverlap, overlapTooHigh } from './text-overlap.util';
 import { languageDisplayName } from '../modules/ai/prompts/lang-names';
 import { rewritePrompt } from '../modules/ai/prompts/rewrite.prompt';
 import { seoPrompt } from '../modules/ai/prompts/seo.prompt';
@@ -162,5 +163,13 @@ describe.each(LANGS)('language %s', (code) => {
     expect(out.excerpt).toMatch(/[\p{L}\p{N}.!?।。！？؟\u06d4)”"']$/u);
     expect(out.seoDescription).toMatch(/[\p{L}\p{N}.!?।。！？؟\u06d4)”"']$/u);
     expect(out.excerpt).toContain(norm(fx.paragraphs[0]).slice(0, 15));
+  });
+
+  test('A12 copy-safety: a verbatim copy of the story is flagged, an unrelated text is not (all scripts)', () => {
+    const source = `${fx.title}\n${fx.paragraphs.join('\n')}`;
+    const copy = measureOverlap(fx.paragraphs.join(' '), source);
+    expect(overlapTooHigh(copy)).toBe(true);
+    const other = fixtures.languages[code === 'en' ? 'fr' : 'en'];
+    expect(overlapTooHigh(measureOverlap(other.paragraphs.join(' '), source))).toBe(false);
   });
 });

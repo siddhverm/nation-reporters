@@ -119,6 +119,21 @@ function sanitizeTipTapBody(
   return walk(body as Record<string, unknown>) ?? body;
 }
 
+/** body.keyPoints (bullet summary): clean every bullet like any other public text; drop empties. */
+function withCleanKeyPoints(
+  body: unknown,
+  opts: { headline?: string; sourceName?: string | null; sourceUrl?: string | null },
+): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const kp = (body as Record<string, unknown>).keyPoints;
+  if (!Array.isArray(kp)) return body;
+  const cleaned = kp
+    .filter((x): x is string => typeof x === 'string')
+    .map((x) => cleanField(x, { ...opts, headline: undefined }))
+    .filter((x) => x.length >= 8);
+  return { ...(body as Record<string, unknown>), keyPoints: cleaned };
+}
+
 type MediaLike = { id?: string; type?: string; url?: string | null; s3Key?: string | null; scanStatus?: string | null };
 
 /**
@@ -198,7 +213,10 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
   const language = typeof article.language === 'string' ? article.language : 'en';
   const image = slug ? { url: storyImagePath(slug), alt: buildImageAlt(title, language) } : undefined;
   const mediaAssets = article.mediaAssets;
-  const cleanBody = article.body !== undefined ? sanitizeTipTapBody(article.body, opts) : article.body;
+  const cleanBody = withCleanKeyPoints(
+    article.body !== undefined ? sanitizeTipTapBody(article.body, opts) : article.body,
+    opts,
+  );
   return {
     ...rest,
     ...(image ? { image } : {}),

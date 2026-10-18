@@ -22,6 +22,8 @@ import {
   withUiLanguagePath,
 } from '@/lib/ui-language';
 import { useUiLanguage } from '@/lib/use-ui-language';
+import StoryImageNotice from '@/components/news/StoryImageNotice';
+import { getNotices } from '@/lib/ui-notices';
 
 interface Article {
   id: string;
@@ -738,6 +740,9 @@ export default function ArticlePage() {
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
   const articleLang = (article.language ?? 'en').toLowerCase().split(/[-_]/)[0] || 'en';
+  const keyPointList: string[] = Array.isArray(article.body?.keyPoints)
+    ? (article.body.keyPoints as unknown[]).filter((k): k is string => typeof k === 'string' && k.trim().length >= 8).slice(0, 8)
+    : [];
   const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
   const proseText = (text: string) =>
     safeArticleText(stripFeedBoilerplateWithTitle(text, titleText, sanitizeCtx));
@@ -810,6 +815,9 @@ export default function ArticlePage() {
               </div>
             </div>
           </div>
+          <div className="px-6 pt-1">
+            <StoryImageNotice lang={articleLang} />
+          </div>
 
           <div className="p-6">
 
@@ -819,8 +827,17 @@ export default function ArticlePage() {
 
             {showSummaryBlock && (
               <div className="mb-4 border-l-4 border-brand pl-4">
-                <p className="text-xs font-semibold uppercase tracking-wide text-brand mb-1">Summary</p>
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand mb-1">{getNotices(articleLang).inBrief}</p>
                 <p className="text-gray-600 text-base leading-relaxed italic">{proseText(displaySummary)}</p>
+              </div>
+            )}
+
+            {keyPointList.length > 0 && (
+              <div data-testid="key-points" className="mb-5 rounded-xl bg-gray-50 p-4">
+                <p className="text-xs font-semibold uppercase tracking-wide text-brand mb-2">{getNotices(articleLang).keyPoints}</p>
+                <ul className="list-disc space-y-1.5 pl-5 text-gray-700 text-[15px] leading-relaxed">
+                  {keyPointList.map((k, i) => <li key={i}>{k}</li>)}
+                </ul>
               </div>
             )}
 

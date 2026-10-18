@@ -52,3 +52,14 @@ describe('public image/media sanitization', () => {
     expect(publicMediaAssets(article.mediaAssets).some((m) => m.type === 'IMAGE')).toBe(false);
   });
 });
+
+describe('key points (bullet summary) are cleaned like any public text', () => {
+  it('removes outlet names/labels from bullets and drops empties', () => {
+    const out = sanitizeArticleForPublicResponse({
+      title: 'Metro line', slug: 'metro-line', language: 'en',
+      body: { type: 'doc', content: [], keyPoints: ['The line opens in 2028 — via Daily Planet Gazette', 'Daily Planet Gazette', 'It costs 12,500 crore rupees.'] },
+      provenance: { sourceName: 'Daily Planet Gazette', sourceUrl: 'https://dailyplanet-gazette.example/a' },
+    } as never) as any;
+    expect(out.body.keyPoints).toEqual(['The line opens in 2028', 'It costs 12,500 crore rupees.']);
+  });
+});

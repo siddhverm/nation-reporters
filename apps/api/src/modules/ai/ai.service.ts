@@ -13,6 +13,8 @@ import {
   resolveArticleLanguage,
 } from './language-resolution.util';
 import { rewritePrompt } from './prompts/rewrite.prompt';
+import { assessRewrite, limitsFromEnv, normalizeKeyPoints, type QualityLimits, type RewriteAssessment, type RewriteDraft } from './rewrite-quality.util';
+import { parseReadingLevel, type ReadingLevel } from '../../common/reading-level';
 import { tagPrompt } from './prompts/tag.prompt';
 import { captionsPrompt } from './prompts/captions.prompt';
 import { seoPrompt } from './prompts/seo.prompt';
@@ -38,6 +40,22 @@ type ProcessIngestedOptions = {
   allowedCategories?: string[];
 };
 
+/** The model kept copying the source (or returned nothing usable) — the caller must NOT publish source text. */
+export class RewriteRejectedError extends Error {
+  constructor(
+    message: string,
+    public readonly assessment: RewriteAssessment | null,
+  ) {
+    super(message);
+    this.name = 'RewriteRejectedError';
+  }
+}
+
+type RewriteResult = {
+  title: string; summary: string; keyPoints: string[]; short: string; medium: string; long: string;
+  podcastScript: string; language: string;
+};
+
 const PUBLISH_CATEGORY_SLUGS = [
   'india',
   'world',
@@ -55,6 +73,10 @@ export class AiService {
   private readonly fetchSourceArticle: boolean;
   private readonly fetchSourceTimeoutMs: number;
   private readonly fetchSourceMaxBytes: number;
+  private readonly readingLevel: ReadingLevel;
+  private readonly maxLongWords: number;
+  private readonly maxRewriteAttempts: number;
+  private readonly qualityLimits: QualityLimits;
 
   constructor(
     private readonly gemini: GeminiClient,
@@ -68,6 +90,72 @@ export class AiService {
     this.fetchSourceArticle = !['0', 'false', 'no', 'off'].includes(flag);
     this.fetchSourceTimeoutMs = Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000);
     this.fetchSourceMaxBytes = Number(this.config.get('FETCH_SOURCE_MAX_BYTES') ?? 1_000_000);
+    this.readingLevel = parseReadingLevel(this.config.get<string>('READING_LEVEL'));
+    this.maxLongWords = Number(this.config.get('REWRITE_MAX_LONG_WORDS') ?? 700) || 700;
+    this.maxRewriteAttempts = Math.min(4, Math.max(1, Number(this.config.get('REWRITE_MAX_ATTEMPTS') ?? 2) || 2));
+    this.qualityLimits = limitsFromEnv((k) => this.config.get<string>(k));
+  }
+
+  /**
+   * Rewrite with a copy-safety gate: drafts whose phrasing overlaps the source too much (n-gram / verbatim run)
+   * or that drop the source's numbers are regenerated with a stricter prompt. If copying persists, throws
+   * RewriteRejectedError so the source text is never published.
+   */
+  async rewriteWithQualityGate(
+    title: string,
+    body: string,
+    language: string,
+  ): Promise<{ data: RewriteResult; tokensUsed: number; assessment: RewriteAssessment; attempts: number; needsReview: boolean }> {
+    let retryReason: 'too_similar' | 'missing_facts' | null = null;
+    let missingNumbers: string[] = [];
+    let tokens = 0;
+    let last: { data: RewriteResult; assessment: RewriteAssessment } | null = null;
+    // Words of the source bound the body length: a short item must not be padded into a long article.
+    const sourceWords = body.split(/\s+/).filter(Boolean).length;
+    const maxLongWords = Math.max(150, Math.min(this.maxLongWords, Math.round(sourceWords * 0.9) + 60));
+
+    for (let attempt = 1; attempt <= this.maxRewriteAttempts; attempt++) {
+      const { data: raw, tokensUsed } = await this.gemini.generateJson<Partial<RewriteResult> & { keyPoints?: unknown }>(
+        rewritePrompt(title, body, language, {
+          readingLevel: this.readingLevel,
+          maxLongWords,
+          retryReason,
+          missingNumbers,
+        }),
+      );
+      tokens += tokensUsed;
+      const data: RewriteResult = {
+        title: String(raw.title ?? '').trim(),
+        summary: String(raw.summary ?? '').trim(),
+        keyPoints: normalizeKeyPoints(raw.keyPoints),
+        short: String(raw.short ?? '').trim(),
+        medium: String(raw.medium ?? '').trim(),
+        long: String(raw.long ?? '').trim(),
+        podcastScript: String(raw.podcastScript ?? '').trim(),
+        language: String(raw.language ?? language),
+      };
+      const assessment = assessRewrite(data as RewriteDraft, title, body, this.qualityLimits);
+      last = { data, assessment };
+      if (assessment.ok) {
+        return { data, tokensUsed: tokens, assessment, attempts: attempt, needsReview: false };
+      }
+      this.logger.warn(
+        `rewrite attempt ${attempt}/${this.maxRewriteAttempts} rejected: ${assessment.problems.join(',')}` +
+          (assessment.worstField ? ` (field=${assessment.worstField} overlap=${assessment.worst?.ratio.toFixed(2)} run=${assessment.worst?.longestRun})` : ''),
+      );
+      retryReason = assessment.problems.includes('too_similar') ? 'too_similar' : 'missing_facts';
+      missingNumbers = assessment.numbers.missing;
+    }
+
+    const a = last!.assessment;
+    if (a.problems.includes('empty') || a.problems.includes('too_similar')) {
+      throw new RewriteRejectedError(
+        `rewrite rejected after ${this.maxRewriteAttempts} attempts: ${a.problems.join(',')}`,
+        a,
+      );
+    }
+    // Only facts are missing: original wording is safe, but a human should check it before it goes live.
+    return { data: last!.data, tokensUsed: tokens, assessment: a, attempts: this.maxRewriteAttempts, needsReview: true };
   }
 
   async processIngestedArticle(ingestedArticleId: string, options: ProcessIngestedOptions = {}) {
@@ -129,11 +217,11 @@ export class AiService {
       // Always publish under the feed's language — never let AI or script detection override.
       const language = feedLangHint;
 
-      // 1. Rewrite (short / medium / long + multilingual reader summary)
-      const { data: rewriteRaw, tokensUsed: rwTokens } = await this.gemini.generateJson<{
-        title: string; short: string; medium: string; long: string;
-        summary: string; podcastScript: string; language: string;
-      }>(rewritePrompt(titlePlain || ingested.sourceTitle, bodyForRewrite, language));
+      // 1. Rewrite: simple-language headline, "in brief" summary, key points and full-coverage body,
+      //    in original wording (quality gate rejects copied phrasing / lost numbers).
+      const {
+        data: rewriteRaw, tokensUsed: rwTokens, needsReview: factsNeedReview,
+      } = await this.rewriteWithQualityGate(titlePlain || ingested.sourceTitle, bodyForRewrite, language);
 
       const headlineForStrip = titlePlain || ingested.sourceTitle;
       const stripRewritten = (t: string) =>
@@ -146,19 +234,14 @@ export class AiService {
         long: stripRewritten(rewriteRaw.long),
         summary: stripRewritten(rewriteRaw.summary),
         podcastScript: stripRewritten(rewriteRaw.podcastScript),
+        keyPoints: rewriteRaw.keyPoints
+          .map((k) => scrubSourceLabels(stripRewritten(k), publisherSanitize))
+          .filter((k) => k.length >= 8),
         language: rewriteRaw.language,
       };
 
       const readerSummary = stripPublisherFeedBoilerplate(
-        this.ensureReaderSummary(
-          rewrite.summary,
-          rewrite.short,
-          rewrite.medium,
-          rewrite.long,
-          bodyForRewrite.length,
-          language,
-          rewrite.title,
-        ),
+        this.finalizeInBrief(rewrite.summary, rewrite.short, rewrite.medium, rewrite.long, language, rewrite.title),
         rewrite.title,
         publisherSanitize,
       );
@@ -239,7 +322,8 @@ export class AiService {
       const policyAutoApprove = await this.checkAutoApprove(
         risk.score, risk.confidence, categorySlug,
       );
-      const autoApprove = options.forceAutoPublish ? true : policyAutoApprove;
+      // Facts missing from the rewrite (numbers dropped) → a human checks it before it goes live.
+      const autoApprove = factsNeedReview ? false : options.forceAutoPublish ? true : policyAutoApprove;
 
       if (
         options.allowedCategories?.length &&
@@ -291,6 +375,7 @@ export class AiService {
           body: {
             type: 'doc',
             content: docContent,
+            ...(rewrite.keyPoints.length ? { keyPoints: rewrite.keyPoints } : {}),
             aiVideo: {
               title: rewrite.title,
               narration: rewrite.podcastScript,
@@ -398,9 +483,11 @@ export class AiService {
       return article;
     } catch (err) {
       this.logger.error(`AI processing failed for ${ingestedArticleId}`, err);
+      // Rewrite rejected / quota: keep the row RAW so it can be rewritten later; never leave source text public.
+      const retryable = err instanceof RewriteRejectedError || /429|quota|too many requests/i.test((err as Error)?.message ?? '');
       await this.prisma.ingestedArticle.update({
         where: { id: ingestedArticleId },
-        data: { status: 'SKIPPED' },
+        data: { status: retryable ? 'RAW' : 'SKIPPED' },
       });
       throw err;
     }
@@ -441,6 +528,38 @@ export class AiService {
     const mapped = map[v];
     if (mapped && allowed.includes(mapped)) return mapped;
     return 'world';
+  }
+
+  /**
+   * "In brief": 2-3 complete sentences. Uses the model's summary when it is usable, otherwise the first
+   * sentences of its own short version (never source text).
+   */
+  private finalizeInBrief(
+    summary: string | undefined,
+    shortBody: string | undefined,
+    mediumBody: string | undefined,
+    longBody: string | undefined,
+    targetLang: string,
+    headline?: string,
+  ): string {
+    const clean = (t: string) => this.trimTrailingSummaryEllipsis(this.stripLeadingLatinLabel(t, targetLang));
+    const head = (headline ?? '').trim();
+    const usable = (t: string) =>
+      t.length >= 60 && !this.summaryLooksTeaserIncomplete(t) && !(head && this.isSummaryEchoOfHeadline(t, head));
+    const firstSentences = (t: string, n: number) =>
+      this.splitSentencesForTeaser(t).slice(0, n).join(' ').trim();
+    const limit = (t: string) => {
+      const sentences = this.splitSentencesForTeaser(t);
+      const three = sentences.slice(0, 3).join(' ').trim();
+      return (three.length >= 60 ? three : t).slice(0, 700).trim();
+    };
+    const own = clean((summary ?? '').trim());
+    if (usable(own)) return limit(own);
+    for (const body of [shortBody, mediumBody, longBody]) {
+      const cand = clean(firstSentences((body ?? '').trim(), 3));
+      if (usable(cand)) return limit(cand);
+    }
+    return limit(own || clean(firstSentences((shortBody ?? mediumBody ?? longBody ?? '').trim(), 2)));
   }
 
   /**
@@ -723,7 +842,8 @@ export class AiService {
     const short = (shortText ?? '').trim();
     const summary = (summaryText ?? '').trim();
 
-    const preferred = long.length >= 2400 ? [long] : [medium, long, short, summary];
+    // The long version is the full-coverage body; the shorter versions are only used if it is missing.
+    const preferred = long.length >= 200 ? [long] : [medium, long, short, summary];
     const paragraphs = preferred
       .flatMap((value) => value.split(/\n\s*\n/))
       .map((p) => p.trim())

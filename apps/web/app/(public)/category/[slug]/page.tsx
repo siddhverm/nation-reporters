@@ -10,6 +10,7 @@ import { fetchCategoryArticlesForUiLanguage } from '@/lib/fetch-articles-for-lan
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
 import { withUiLanguagePath } from '@/lib/ui-language';
+import StoryImageNotice from '@/components/news/StoryImageNotice';
 import { useUiLanguage } from '@/lib/use-ui-language';
 
 interface Article {
@@ -163,6 +164,7 @@ export default function CategoryPage() {
                   className="group block rounded-xl overflow-hidden relative h-72">
                   <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero))} alt={safeArticleText(hero.title, 'Article')}
                     fill className="object-cover" unoptimized />
+<StoryImageNotice variant="overlay" />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
                     <span className={`inline-block ${accent} text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded mb-2`}>
@@ -189,6 +191,7 @@ export default function CategoryPage() {
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                       <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')}
                         fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" />
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>

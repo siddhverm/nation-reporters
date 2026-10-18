@@ -12,6 +12,7 @@ export default async function sitemap(): Promise<MetadataRoute.Sitemap> {
   const now = new Date();
   const base: MetadataRoute.Sitemap = [
     { url: SITE_URL, lastModified: now, changeFrequency: 'hourly', priority: 1 },
+    { url: `${SITE_URL}/copyright`, lastModified: now, changeFrequency: 'yearly', priority: 0.2 },
     ...SECTIONS.map((s) => ({
       url: s === 'world' ? `${SITE_URL}/world` : `${SITE_URL}/category/${s}`,
       lastModified: now,

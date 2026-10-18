@@ -1,5 +1,6 @@
 import Link from 'next/link';
 import Image from 'next/image';
+import FooterCopyrightLink from './FooterCopyrightLink';
 
 const SECTIONS = ['India', 'World', 'Politics', 'Business', 'Sports', 'Entertainment', 'Technology'];
 const MORE = [
@@ -112,14 +113,16 @@ export function Footer() {
               &nbsp;|&nbsp; GST: 27AALCC1533E1ZX
             </p>
             <p className="max-w-2xl text-[11px] leading-relaxed text-slate-400 mt-1">
-              Some stories are AI-assisted summaries based on third-party source feeds. Original copyrights and trademarks
-              remain with their respective owners. Each story includes source attribution and links for reference.
+              Stories are short AI-assisted summaries written in our own words. Story pictures are AI-generated illustrations.
+              Original copyrights and trademarks remain with their respective owners. See our copyright &amp; complaints page to
+              report a concern or request removal.
             </p>
           </div>
           <div className="flex gap-5">
             <Link href="/privacy" className="hover:text-slate-300 transition-colors">Privacy Policy</Link>
             <Link href="/terms"   className="hover:text-slate-300 transition-colors">Terms of Use</Link>
             <Link href="/contact" className="hover:text-slate-300 transition-colors">Contact Us</Link>
+            <FooterCopyrightLink />
           </div>
         </div>
       </div>

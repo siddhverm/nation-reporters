@@ -64,7 +64,7 @@ for (const [lang, f] of Object.entries<any>(fx.languages)) {
     ingestedArticleId: `ing-${i}`, podcastScript: null, bodyShort: f.paragraphs[0],
     publishedAt: new Date(Date.UTC(2026, 9, 18, 6, 0, 0) - i * 3600_000), createdAt: new Date(Date.UTC(2026, 9, 18, 5, 0, 0) - i * 3600_000), updatedAt: new Date(),
     body: {
-      type: 'doc', imageUrl: `https://cdn.${domain}/photos/${i}.jpg`, imageCredit: `Photo: ${photographer} / ${outlet}`,
+      type: 'doc', keyPoints: f.paragraphs.slice(0, 2), imageUrl: `https://cdn.${domain}/photos/${i}.jpg`, imageCredit: `Photo: ${photographer} / ${outlet}`,
       content: [c.byline, c.photoCredit, ...f.paragraphs, c.sourceLine, c.viaLine, c.readMore].map(txt),
     },
     provenance: { sourceName: outlet, sourceUrl: `https://${domain}/story/${i}` },

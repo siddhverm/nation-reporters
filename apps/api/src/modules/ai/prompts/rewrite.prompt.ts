@@ -1,37 +1,65 @@
 import { languageDisplayName } from './lang-names';
+import { READING_LEVEL_GUIDANCE, type ReadingLevel } from '../../../common/reading-level';
 
-export function rewritePrompt(title: string, body: string, targetLang: string) {
+export type RewritePromptOptions = {
+  readingLevel?: ReadingLevel;
+  /** Upper bound for the full-coverage body, in words (CJK: roughly characters / 2). */
+  maxLongWords?: number;
+  /** Second attempt after a draft was too close to the source / dropped facts. */
+  retryReason?: 'too_similar' | 'missing_facts' | null;
+  /** Numbers from the source that the previous draft dropped (shown to the model on retry). */
+  missingNumbers?: string[];
+};
+
+/** JSON keys the model must return. Exported so tests and the parser stay in sync with the prompt. */
+export const REWRITE_JSON_KEYS = ['title', 'summary', 'keyPoints', 'short', 'medium', 'long', 'podcastScript', 'language'] as const;
+
+/**
+ * Simplify-and-summarise prompt: original wording, plain language, full coverage of the news
+ * (what / who / when / where / why it matters / what next) without copying the source and without naming it.
+ */
+export function rewritePrompt(title: string, body: string, targetLang: string, opts: RewritePromptOptions = {}) {
   const langName = languageDisplayName(targetLang);
   const code = targetLang.toLowerCase();
+  const level = READING_LEVEL_GUIDANCE[opts.readingLevel ?? 'simple'];
+  const maxLong = Math.max(200, Math.round(opts.maxLongWords ?? 700));
+  const retry =
+    opts.retryReason === 'too_similar'
+      ? `\nPREVIOUS ATTEMPT REJECTED: it reused phrases from the source. Rebuild every sentence from the facts with a different structure and different words; do not reuse any run of more than 4 consecutive words from the source (names, numbers, dates and quotes' meaning excepted).\n`
+      : opts.retryReason === 'missing_facts'
+        ? `\nPREVIOUS ATTEMPT REJECTED: it dropped facts. Every number, name, date, place and amount in the source must appear in your output${opts.missingNumbers?.length ? ` (missing: ${opts.missingNumbers.slice(0, 12).join(', ')})` : ''}.\n`
+        : '';
   return `
-You are a senior journalist at Nation Reporters (nationreporters.com), a digital news network.
-Your editorial voice is: factual, direct, authoritative, accessible to general audiences.
-Do NOT copy-paste or paraphrase the source. Write original editorial copy in your own words from the facts given.
-Never include "Read more", "Read on", "Continue reading", bare source URLs, or any line that only sends readers to the publisher site — attribution is handled elsewhere; every field must read as a finished Nation Reporters story.
-Never include original publisher reporter names, author bylines (e.g. "लेखक:", "By John Smith", "reporter at Brisbane Times"), newsletter promos (e.g. "Sign up for our Morning Edition"), advertisement labels, image credits, share buttons, timestamps, or "according to [outlet]" attribution — write as original Nation Reporters reporting.
-Do not start the headline with wire-service prefixes such as "JUST IN:", "BREAKING:", or "UPDATE:" unless those words are essential to the meaning; prefer a clear standalone headline.
+You are an editor at Nation Reporters, a digital news network. Your job is to SIMPLIFY the news below and write a clear summary that still covers the FULL story, so a reader who only reads your version understands everything important.
 
-Target output language: ${langName} (language code: ${code}).
-The server chose this code from the article text and feed metadata — you MUST use it for every field even if the source snippet is in another language.
-You MUST write every field (title, short, medium, long, summary, podcastScript) entirely in ${langName}.
-If the source mixes another language (e.g. English phrases in a Tamil story), translate those parts into ${langName} in your output.
-Do not default to English unless ${code} is en.
+${level}
+Neutral, factual tone. No opinion, no sensational words, no advice.
+
+COPYRIGHT AND ORIGINALITY (strict):
+- Write in your own words and your own sentence structure. Never copy sentences or long phrases from the source; never lightly reword sentence by sentence either. Understand the facts, then explain them fresh.
+- Do not reproduce quotes at length. Report what someone said in one short paraphrase; a quote of at most 8 words is allowed.
+- Never name or hint at the original publisher, website, reporter, photographer or agency. Never write "according to <outlet>", "via", "source:", "reported by", bylines, image credits, newsletter promos, ads, "Read more", or URLs. Present the story as Nation Reporters' own explanation.
+- Do not start the headline with wire prefixes such as "BREAKING:", "JUST IN:" or "UPDATE:".
+
+FACTS (strict):
+- Keep EVERY number, amount, percentage, date, time, place and person/organisation name from the source. Do not round, drop or change them. Never invent facts, causes, quotes or numbers that are not in the source.
+- Cover: WHAT happened, WHO is involved, WHEN, WHERE, WHY it matters, and WHAT happens next (only if the source says; otherwise say it is not yet known).
+${retry}
+LANGUAGE:
+- Target output language: ${langName} (code: ${code}). Write EVERY text field entirely in ${langName}, even if the source is in another language; translate any foreign phrases. Do not use English unless the target is English. Use ${langName}'s natural script and punctuation.
 
 Source article:
 Title: ${title}
 Body: ${body}
 
-Produce a JSON response with these keys:
-- "title": rewritten headline (punchy, under 70 chars)
-- "short": complete self-contained article covering all key facts in ~250 words
-- "medium": complete article with context and background in ~550 words
-- "long": FULL comprehensive article in ~1400 words. Cover every important fact, quote, context, implication, and background detail from the source. Separate paragraphs with a blank line. Do not truncate or skip facts — this is the authoritative version.
-- "summary": reader-facing digest in ${langName}. MUST NOT repeat the headline — provide NEW information in every sentence. MUST cover: who, what, when, where, why, and significance. At least 5 full sentences. Minimum 500 characters; aim for 700–1000 characters when the source article is substantive. Use concrete specifics (names, numbers, dates, places) from the source. Write as finished prose — no teasers, no ellipsis, no "read more". End with a completed sentence. When ${code} is not "en", write entirely in ${langName} — no English scene-setters or labels at the start.
-- "podcastScript": engaging podcast narration in ${langName} with intro, body covering all key facts, and outro (conversational broadcast tone, 150–200 words)
-- "language": "${targetLang}"
-
-IMPORTANT: Use ALL facts and details from the source body — do not discard information. If the source is long, the "long" and "medium" fields should reflect that depth.
-All fields (title, short, medium, long, summary, podcastScript) must be written entirely in ${langName}.
-Never fabricate quotes, statistics, or facts not present in the source.
+Return ONE JSON object with exactly these keys:
+- "title": simple, clear headline in ${langName}, under 70 characters, states the main fact. Not a copy of the source headline.
+- "summary": the "In brief" paragraph: exactly 2 or 3 sentences (about 250-450 characters) that give the whole story in miniature (what, who, when, where, why it matters). New wording, not the headline repeated. Complete sentences, no ellipsis.
+- "keyPoints": array of 5 to 8 short bullet strings (each one sentence, under 160 characters) that together cover what, who, when, where, why it matters and what next, including all key numbers, names and dates. No bullet markers inside the strings.
+- "short": about 100 words, a self-contained mini version in short sentences.
+- "medium": about 250 words with context, in short paragraphs separated by a blank line.
+- "long": the full-coverage version, at most ${maxLong} words. SHORT paragraphs (2-3 sentences each) separated by a blank line. Cover every important fact, development and implication in the source; leave nothing important out.
+- "podcastScript": conversational narration in ${langName}, 120-180 words: intro, the key facts, outro.
+- "language": "${code}"
 `.trim();
 }

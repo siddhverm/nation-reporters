@@ -10,6 +10,10 @@ const GENERATED = new Set(['en', 'hi', 'ar', 'zh', 'ta', 'ru']);
 const SHOT_LANGS = new Set(['en', 'hi', 'ar', 'ur', 'zh', 'ja', 'ta', 'kn', 'ru', 'fr']);
 const LEAK = new RegExp(`${fx.outlet}|${fx.domain}|dailyplanet|rohan\\s*mehta|kiran\\s*rao|youtube\\.com/(?:watch|embed)|/api/image`, 'i');
 const LANGS = Object.keys(fx.languages);
+// load the web notices dictionary (TS) without a build step
+const ts = require(require.resolve('typescript', { paths: [path.resolve(__dirname, '../../..')] }));
+const NOTICES = (() => { const m = { exports: {} }; new Function('module', 'exports', ts.transpileModule(fs.readFileSync(path.resolve(__dirname, '../lib/ui-notices.ts'), 'utf8'), { compilerOptions: { module: 'commonjs', target: 'es2019' } }).outputText)(m, m.exports); return m.exports; })();
+const EXPECT_EN_NOTE = '* We do not own the copyright of this image. Image belongs to its original owner; removed on request.';
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 const get = async (p) => (await fetch(API + p)).json();
 
@@ -55,6 +59,12 @@ const get = async (p) => (await fetch(API + p)).json();
         h1: h1?.textContent, imgSrc: img?.getAttribute('src'), imgAlt: img?.getAttribute('alt'), imgLoaded: !!img && img.complete && img.naturalWidth > 0,
         text: document.body.innerText, html: document.documentElement.outerHTML, title: document.title,
         credit: /📷/.test(document.body.innerText),
+        notice: document.querySelector('article [data-testid="story-image-notice"]')?.innerText || '',
+        noticeLang: document.querySelector('article [data-testid="story-image-notice"]')?.getAttribute('lang'),
+        noticeNote: document.querySelector('article [data-testid="image-copyright-note"]')?.innerText || '',
+        noticeFont: parseFloat(getComputedStyle(document.querySelector('article [data-testid="image-copyright-note"]') || document.body).fontSize),
+        keyPoints: [...document.querySelectorAll('article [data-testid="key-points"] li')].map((x) => x.innerText),
+        keyPointsLabel: document.querySelector('article [data-testid="key-points"] p')?.textContent || '',
         scrollW: document.documentElement.scrollWidth, clientW: document.documentElement.clientWidth,
       };
     });
@@ -67,6 +77,10 @@ const get = async (p) => (await fetch(API + p)).json();
     r.noLeakDom = !LEAK.test(dom.text) && !LEAK.test(dom.html) && !dom.credit;
     const okHost = (u) => /^(http:\/\/localhost:(3010|4010|3001|3005)\/|https:\/\/fonts\.(googleapis|gstatic)\.com\/|data:|blob:)/.test(u);
     r.noLeakNet = !reqs.some((u) => LEAK.test(u) || !okHost(u));
+    const N = NOTICES.NOTICES[lang];
+    r.illustrationLine = dom.notice.includes(N.illustration) && dom.noticeLang === lang;
+    r.copyrightNote = dom.noticeNote === N.imageCopyright && dom.noticeFont <= 11 && (lang !== 'en' || dom.noticeNote === EXPECT_EN_NOTE);
+    r.keyPoints = dom.keyPoints.length === 2 && dom.keyPointsLabel.trim() === N.keyPoints;
     r.noHScroll = dom.scrollW <= dom.clientW + 1;
     // ---- home page in this UI language (cards use generated images)
     const home = await browser.newPage();
@@ -82,7 +96,21 @@ const get = async (p) => (await fetch(API + p)).json();
     }, slug);
     r.homeCard = hd.card && !!hd.img && hd.img.startsWith('/story-image/') && hd.loaded;
     r.homeNoLeak = !LEAK.test(hd.text) && !LEAK.test(hd.html) && !hreq.some((u) => LEAK.test(u) || !okHost(u));
+    r.homeBadge = hd.html.includes('data-testid="story-image-badge"') && hd.html.includes('data-testid="story-image-notice"') && hd.text.includes(N.illustration);
     r.homeNoSourceImg = hd.imgs.every((s) => !s || s.startsWith('/') || s.startsWith(WEB));
+    // ---- /copyright page in this UI language + footer link
+    const cp = await browser.newPage();
+    await cp.setViewport({ width: 1280, height: 800 });
+    await cp.goto(`${WEB}/copyright?lang=${lang}`, { waitUntil: 'networkidle0' });
+    await cp.waitForSelector('[data-testid="copyright-page"]');
+    const cd = await cp.evaluate(() => {
+      const root = document.querySelector('[data-testid="copyright-page"]');
+      const foot = [...document.querySelectorAll('footer a')].find((a) => a.getAttribute('href') === '/copyright');
+      return { lang: root.getAttribute('lang'), dir: root.getAttribute('dir'), h1: root.querySelector('h1').innerText, statement: root.querySelector('[data-testid="copyright-statement"]').innerText, email: root.querySelector('[data-testid="copyright-email"]').getAttribute('href'), text: root.innerText, html: document.documentElement.outerHTML, footer: foot?.innerText || null };
+    });
+    r.copyrightPage = cd.lang === lang && cd.dir === (rtl ? 'rtl' : 'ltr') && cd.h1 === N.cpTitle && cd.statement === N.imageCopyright && cd.text.includes(N.cpAi) && cd.text.includes(N.cpHow) && cd.email === `mailto:${process.env.EXPECT_COPYRIGHT_EMAIL ?? 'copyright@example.com'}` && !LEAK.test(cd.html);
+    r.footerLink = cd.footer === N.copyrightLink;
+    await cp.close();
     // ---- screenshots
     if (SHOT_LANGS.has(lang)) {
       for (const [w, h] of [[390, 844], [1280, 800]]) {

@@ -32,6 +32,8 @@ import {
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
 import { StoryImageService } from '../../ai/story-image.service';
+import { heldPlaceholderText, parseRawFallbackMode } from '../../../common/held-story';
+import { scrubSourceLabels } from '../../../common/reader-summary.util';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
 
 type CategorySlug =
@@ -75,6 +77,9 @@ export class IngestionCronService {
   private readonly skipAiIngestion: boolean;
   /** Set when Gemini returns 429/quota — raw publish for the rest of this run. */
   private aiQuotaExhausted = false;
+  /** DRAFT stories held this run because the AI rewrite was unavailable/rejected. */
+  private heldThisRun = 0;
+  private readonly maxHeldDraftsPerRun: number;
 
   constructor(
     private readonly config: ConfigService,
@@ -93,6 +98,7 @@ export class IngestionCronService {
     this.fetchSourceArticle = !['0', 'false', 'no', 'off'].includes(fetchFlag);
     this.fetchSourceTimeoutMs = Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000);
     this.fetchSourceMaxBytes = Number(this.config.get('FETCH_SOURCE_MAX_BYTES') ?? 1_000_000);
+    this.maxHeldDraftsPerRun = Number(this.config.get('RAW_FALLBACK_MAX_DRAFTS_PER_RUN') ?? 30) || 30;
     const skipAi = (this.config.get<string>('INGESTION_SKIP_AI') ?? '').toLowerCase();
     this.skipAiIngestion = ['1', 'true', 'yes', 'on'].includes(skipAi);
   }
@@ -104,7 +110,7 @@ export class IngestionCronService {
   async ingestSingleUrl(
     url: string,
     language: string,
-  ): Promise<{ articleId: string }> {
+  ): Promise<{ articleId: string; held?: boolean }> {
     if (!isAllowedArticleFetchUrl(url)) {
       throw new Error('URL not allowed');
     }
@@ -162,6 +168,7 @@ export class IngestionCronService {
     });
 
     let articleId: string | undefined;
+    let held = false;
     try {
       const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
         language: lang,
@@ -176,18 +183,19 @@ export class IngestionCronService {
     }
 
     if (!articleId) {
+      // Safe fallback: either a held DRAFT or a source-free placeholder — never the source text.
       const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang });
-      if (!ok) throw new Error('Failed to publish article');
+      held = !ok;
       const published = await this.prisma.article.findFirst({
         where: { ingestedArticleId: ingestedArticle.id },
         orderBy: { createdAt: 'desc' },
         select: { id: true },
       });
-      if (!published) throw new Error('Published article not found');
+      if (!published) throw new Error('Failed to create article (AI rewrite unavailable)');
       articleId = published.id;
     }
 
-    return { articleId };
+    return { articleId, held };
   }
 
   /**
@@ -252,8 +260,9 @@ export class IngestionCronService {
   async runScheduledIngestion() {
     this.logger.log('Scheduled ingestion started');
     this.aiQuotaExhausted = this.skipAiIngestion;
+    this.heldThisRun = 0;
     if (this.skipAiIngestion) {
-      this.logger.log('INGESTION_SKIP_AI enabled — publishing fetched RSS/source text without Gemini');
+      this.logger.log('INGESTION_SKIP_AI enabled — skipping Gemini; stories use the safe held fallback (RAW_FALLBACK_MODE)');
     }
     const sources = await this.prisma.ingestedSource.findMany({ where: { isActive: true } });
     const sorted = this.sortSourcesForIngestion(sources as IngestedSourceRow[]);
@@ -589,6 +598,13 @@ export class IngestionCronService {
   }
 
   // Publish raw RSS content directly when AI is unavailable
+  /**
+   * Fallback when the AI rewrite is unavailable or rejected (quota, outage, copy-safety gate).
+   * The source body is NEVER copied into a story. RAW_FALLBACK_MODE:
+   *  - "draft" (default): hold a DRAFT for an editor / later rewrite — nothing public is created;
+   *  - "placeholder": publish only a translated "summary is being prepared" notice under the headline.
+   * Returns true only when something public was published (so section quotas are not consumed by drafts).
+   */
   private async publishRaw(
     ingestedArticle: {
       id: string;
@@ -599,6 +615,11 @@ export class IngestionCronService {
     },
     source: { name: string; language?: string | null },
   ): Promise<boolean> {
+    const mode = parseRawFallbackMode(this.config.get<string>('RAW_FALLBACK_MODE'));
+    if (mode === 'draft' && this.heldThisRun >= this.maxHeldDraftsPerRun) {
+      this.logger.warn(`publishRaw: held-draft cap (${this.maxHeldDraftsPerRun}) reached this run — leaving item RAW`);
+      return false;
+    }
     const adminUser =
       (await this.prisma.user.findFirst({ where: { role: 'ADMIN' } }))
       ?? (await this.prisma.user.findFirst({ where: { role: 'AI_BOT' } }));
@@ -606,160 +627,92 @@ export class IngestionCronService {
       this.logger.error('publishRaw: no ADMIN or AI_BOT user — run prisma db seed on the server');
       return false;
     }
+    const existing = await this.prisma.article.findFirst({
+      where: { ingestedArticleId: ingestedArticle.id },
+      select: { id: true },
+    });
+    if (existing) return false;
 
+    const sanitizeOpts = { sourceName: source.name, sourceUrl: ingestedArticle.sourceUrl || null };
     const displayTitle = stripWireHeadlinePrefix(
       stripSyndicationLinkbacks(
         this.rssPlainLine(ingestedArticle.sourceTitle) ||
           ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       ),
     );
+    const title = scrubSourceLabels(displayTitle, sanitizeOpts) || displayTitle;
     const slug = await resolveUniqueArticleSlug(
       async (base) => Boolean(
         await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } }),
       ),
-      displayTitle,
+      title,
       ingestedArticle.id,
     );
-
-    let rawBodyForArticle = ingestedArticle.body;
-    let plainLead = this.stripHtmlToPlain(rawBodyForArticle, true).trim();
-    const feedPlaceholder = /\(No body text in feed item\.\)/i.test(plainLead);
-    const langHint = resolveSourceFeedLanguage(source);
-    const langForRawFetch = resolveArticleLanguage(langHint, {
-      title: displayTitle,
-      body: rawBodyForArticle,
-    });
-    const needSourceFetch =
-      this.fetchSourceArticle &&
-      !!ingestedArticle.sourceUrl &&
-      isAllowedArticleFetchUrl(ingestedArticle.sourceUrl) &&
-      (plainLead.length < 400 ||
-        feedPlaceholder ||
-        rssBodyLooksLikeTitleOnly(plainLead, displayTitle));
-    if (needSourceFetch) {
-      try {
-        const fetched = await fetchArticlePlainText(
-          ingestedArticle.sourceUrl,
-          { timeoutMs: this.fetchSourceTimeoutMs, maxBytes: this.fetchSourceMaxBytes },
-          { acceptLanguage: acceptLanguageHeaderForLocale(langForRawFetch) },
-        );
-        if (fetched && fetched.length >= MIN_SOURCE_ARTICLE_PLAIN_CHARS) {
-          plainLead = fetched;
-          rawBodyForArticle = fetched;
-          this.logger.log(`publishRaw: using source page body (${fetched.length}c) for ${displayTitle.slice(0, 48)}`);
-        }
-      } catch (e) {
-        this.logger.warn(`publishRaw source fetch failed: ${(e as Error).message}`);
-      }
-    }
-
-    const lang = normalizeLanguageCode(langHint);
-    const sanitizeOpts = {
-      headline: displayTitle,
-      sourceName: source.name,
-      sourceUrl: ingestedArticle.sourceUrl || null,
-    };
-
-    plainLead = stripPublisherFeedBoilerplate(plainLead, displayTitle, sanitizeOpts);
-    rawBodyForArticle = stripPublisherFeedBoilerplate(rawBodyForArticle, displayTitle, sanitizeOpts);
-    plainLead = stripSyndicationLinkbacks(plainLead);
-    rawBodyForArticle = stripSyndicationLinkbacks(rawBodyForArticle);
-
-    const readerSummary = buildReaderSummaryFromPlainText(rawBodyForArticle || plainLead, displayTitle, {
-      sourceName: source.name,
-      sourceUrl: ingestedArticle.sourceUrl || null,
-    });
-    const { bodyShort, bodyMedium, paragraphs } = splitStoryBodies(
-      rawBodyForArticle || plainLead,
-      displayTitle,
-      { sourceName: source.name, sourceUrl: ingestedArticle.sourceUrl || null },
-    );
-    const excerpt = readerSummary || bodyShort.slice(0, 1200) || displayTitle;
-    // Map source name to category
+    const lang = normalizeLanguageCode(resolveSourceFeedLanguage(source));
+    const placeholder = heldPlaceholderText(lang);
     const category =
-      (await this.detectCategory(displayTitle, source.name))
+      (await this.detectCategory(title, source.name))
       ?? (await this.prisma.category.findFirst({ where: { slug: 'india' } }));
     if (!category) return false;
 
+    const publish = mode === 'placeholder';
     const article = await this.prisma.article.create({
       data: {
-        title: displayTitle,
+        title,
         slug,
-        bodyShort: bodyShort || undefined,
-        bodyMedium: bodyMedium || undefined,
         body: {
           type: 'doc',
-          aiVideo: {
-            title: displayTitle,
-            summary: readerSummary || '',
-            language: lang,
-            status: 'ready_for_tts_video_generation',
-          },
-          content:
-            paragraphs.length > 0
-              ? paragraphs.map((text) => ({
-                  type: 'paragraph' as const,
-                  content: [{ type: 'text' as const, text }],
-                }))
-              : this.rawHtmlToDocContent(rawBodyForArticle, sanitizeOpts),
+          heldForRewrite: true,
+          content: [{ type: 'paragraph', content: [{ type: 'text', text: placeholder }] }],
         },
-        excerpt,
-        status: ArticleStatus.PUBLISHED,
+        excerpt: placeholder,
+        status: publish ? ArticleStatus.PUBLISHED : ArticleStatus.DRAFT,
         language: lang,
-        categoryId: category?.id,
+        categoryId: category.id,
         authorId: adminUser.id,
-        publishedAt: ingestedArticle.publishedAt ?? new Date(),
+        ...(publish ? { publishedAt: new Date() } : {}),
         ingestedArticleId: ingestedArticle.id,
       },
     });
 
-    // Picture: always an original generated image (never the publisher's photo); the web app renders its
-    // generated fallback artwork when generation is unavailable.
-    const generated = await this.storyImages.generateForArticle({
-      id: article.id,
-      slug: article.slug,
-      title: displayTitle,
-      summary: excerpt,
-      category: this.detectCategorySlug(displayTitle, source.name) ?? 'india',
-      language: lang,
-    });
-    if (generated) {
-      await this.prisma.article.update({
-        where: { id: article.id },
-        data: {
-          body: {
-            ...(article.body as object),
-            imageUrl: generated.url,
-            imageAlt: generated.alt,
-            imageGenerated: true,
-          },
-        },
-      });
-    }
-
+    // Internal provenance only (never returned to readers).
     if (ingestedArticle.sourceUrl) {
       await this.provenance
         .record({
           articleId: article.id,
           sourceUrl: ingestedArticle.sourceUrl,
-          sourceTitle: displayTitle,
+          sourceTitle: title,
           sourceName: source.name,
           fetchedAt: new Date(),
-          attributionNote: 'Ingested via RSS; internal record only.',
+          attributionNote: 'Held without rewrite (AI unavailable or rejected); internal record only.',
         })
         .catch((err) =>
-          this.logger.warn(`Provenance for raw article ${article.id}: ${(err as Error).message}`),
+          this.logger.warn(`Provenance for held article ${article.id}: ${(err as Error).message}`),
         );
     }
 
-    await this.publishing.publishToSocialOnly(article.id).catch((err) => {
-      this.logger.warn(`Social publish failed for raw fallback ${article.id}: ${(err as Error).message}`);
-    });
+    if (!publish) {
+      this.heldThisRun++;
+      this.logger.warn(`held as DRAFT (no AI rewrite): ${title.slice(0, 60)}`);
+      // The ingested row stays RAW so the story can be rewritten later.
+      return false;
+    }
 
-    await this.prisma.ingestedArticle.update({
-      where: { id: ingestedArticle.id },
-      data: { status: 'PUBLISHED' },
+    // Placeholder pages still get a generated picture and appear in feeds, but no social posts.
+    const generated = await this.storyImages.generateForArticle({
+      id: article.id,
+      slug: article.slug,
+      title,
+      summary: null,
+      category: this.detectCategorySlug(title, source.name) ?? 'india',
+      language: lang,
     });
+    if (generated) {
+      await this.prisma.article.update({
+        where: { id: article.id },
+        data: { body: { ...(article.body as object), imageUrl: generated.url, imageAlt: generated.alt, imageGenerated: true } },
+      });
+    }
     return true;
   }
 
