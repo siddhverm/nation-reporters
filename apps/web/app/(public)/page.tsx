@@ -3,7 +3,7 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, ChevronRight, Flame, Globe } from 'lucide-react';
-import { getArticleImage, getPreferredArticleImage, LOGO_FALLBACK } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage, imageOriginOf, LOGO_FALLBACK } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
@@ -77,7 +77,7 @@ function ArticleCard({ a }: { a: Article }) {
         <Image src={imgSrc}
           alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized
           onError={() => setImgError(true)} />
-        <StoryImageNotice variant="badge" />
+        <StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
       </div>
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
@@ -240,7 +240,7 @@ export default function HomePage() {
               className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
               <Image src={getArticleImage(displayArticles[0].slug, undefined, 'hero', getPreferredArticleImage(displayArticles[0]))}
                 alt={safeArticleText(displayArticles[0].title, 'Article')} fill className="object-cover" unoptimized priority />
-<StoryImageNotice variant="overlay" />
+<StoryImageNotice variant="overlay" origin={imageOriginOf(displayArticles[0])} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
                 <span className="bg-signal text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded mb-2 inline-block">Top Story</span>
@@ -264,7 +264,7 @@ export default function HomePage() {
                   <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
                     <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
                       alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
-<StoryImageNotice variant="badge" />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-3">{safeArticleText(a.title)}</h3>
@@ -302,7 +302,7 @@ export default function HomePage() {
                   <div className="relative h-36 overflow-hidden">
                     <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a))}
                       alt={safeArticleText(a.title, 'Article')} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
-<StoryImageNotice variant="badge" />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                   </div>
                   <div className="p-3">
                     <h3 className="font-bold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
@@ -348,7 +348,7 @@ export default function HomePage() {
                     className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
                     <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero))}
                       alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
-<StoryImageNotice variant="overlay" />
+<StoryImageNotice variant="overlay" origin={imageOriginOf(hero)} />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 p-4">
                       <span className={`inline-block ${meta.color} text-white text-[10px] font-black uppercase px-2 py-0.5 rounded mb-1`}>Top</span>
@@ -373,7 +373,7 @@ export default function HomePage() {
                   <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                     <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero))}
                       alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
-<StoryImageNotice variant="badge" />
+<StoryImageNotice variant="badge" origin={imageOriginOf(hero)} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="font-bold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(hero.title)}</h3>

@@ -20,7 +20,7 @@ const article = {
 
 describe('public image/media sanitization', () => {
   const out = sanitizeArticleForPublicResponse(article as never) as any;
-  it('never exposes publisher image URL, credit, storage keys or source video', () => {
+  it('never exposes the publisher image URL/domain, credit, storage keys or source video', () => {
     const json = JSON.stringify(out);
     expect(json).not.toMatch(/dailyplanet|youtube|external\/|source-image|source-video|Photo:/i);
     expect(out.body.imageUrl).toBe('/story-image/floods-hit-city');
@@ -35,7 +35,7 @@ describe('public image/media sanitization', () => {
   });
   it('every article gets an image reference even when it has no stored asset', () => {
     const bare = sanitizeArticleForPublicResponse({ ...article, mediaAssets: [], body: undefined } as never) as any;
-    expect(bare.image).toEqual({ url: '/story-image/floods-hit-city', alt: 'Illustration for: Floods hit city' });
+    expect(bare.image).toEqual({ url: '/story-image/floods-hit-city', alt: 'Illustration for: Floods hit city', origin: 'generated' });
   });
   it('list items drop raw media rows and carry the image reference', () => {
     const item = sanitizeArticleListItem({ title: 'Daily Planet Gazette: Floods hit city', excerpt: 'Heavy rain flooded roads.', slug: article.slug, language: 'en', provenance: article.provenance, mediaAssets: article.mediaAssets } as never) as any;

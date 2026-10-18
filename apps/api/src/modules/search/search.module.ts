@@ -14,7 +14,7 @@ const filterValue = (v: string) => v.replace(/["\\\r\n]/g, '').slice(0, 64);
 /** Only public, source-free fields leave the search endpoint (Meili documents may hold more). */
 function publicHit(h: Record<string, any>) {
   const item = sanitizeArticleListItem({
-    title: h.title, excerpt: h.excerpt, slug: h.slug, language: h.language,
+    title: h.title, excerpt: h.excerpt, slug: h.slug, language: h.language, imageOrigin: h.imageOrigin,
   });
   return {
     id: h.id, title: item.title, excerpt: item.excerpt, slug: h.slug, language: h.language,
@@ -73,7 +73,7 @@ class SearchService {
             ],
           }),
         },
-        select: { id: true, title: true, slug: true, excerpt: true, publishedAt: true, language: true },
+        select: { id: true, title: true, slug: true, excerpt: true, publishedAt: true, language: true, imageOrigin: true },
         skip: (page - 1) * take,
         take,
         orderBy: { publishedAt: 'desc' },
@@ -98,7 +98,7 @@ class SearchService {
 
   async indexArticle(article: {
     id: string; title: string; excerpt?: string | null; slug: string;
-    category?: string | null; language: string; publishedAt?: Date | null;
+    category?: string | null; language: string; publishedAt?: Date | null; imageOrigin?: string | null;
   }) {
     try {
       return await this.meili.index('articles').addDocuments([article]);

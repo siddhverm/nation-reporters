@@ -27,7 +27,10 @@ import { slugifyTitle } from '../src/common/slug.util';
 
 const fx = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../test-fixtures/news-fixtures.json'), 'utf8'));
 const { outlet, domain, reporter, photographer } = fx;
-const GENERATED = new Set(['en', 'hi', 'ar', 'zh', 'ta', 'ru']); // these get a "generated" image; others must fall back
+// Image cases (23 languages): a MIRRORED SOURCE image, an AI-GENERATED image, or neither (web renders fallback artwork).
+const SOURCE = new Set(['en', 'ar', 'ja', 'kn', 'fr', 'it', 'tr', 'mr']);
+const GENERATED = new Set(['hi', 'zh', 'ta', 'ru', 'te', 'de']);
+const originOf = (lang: string): 'source' | 'generated' | null => (SOURCE.has(lang) ? 'source' : GENERATED.has(lang) ? 'generated' : null);
 
 function png(w: number, h: number, rgb: [number, number, number]): Buffer {
   const raw = Buffer.alloc((w * 3 + 1) * h);
@@ -61,7 +64,7 @@ for (const [lang, f] of Object.entries<any>(fx.languages)) {
     excerpt: `${f.paragraphs[0]} ${c.sourceLine}`,
     seoTitle: `${f.title} | ${outlet}`, seoDescription: `${f.paragraphs[0]} ${c.viaLine}`, seoSlug: `${slug}-${domain}`,
     hashtags: [`#${outlet.replace(/\s+/g, '')}`, '#news'],
-    ingestedArticleId: `ing-${i}`, podcastScript: null, bodyShort: f.paragraphs[0],
+    ingestedArticleId: `ing-${i}`, podcastScript: null, imageOrigin: originOf(lang), bodyShort: f.paragraphs[0],
     publishedAt: new Date(Date.UTC(2026, 9, 18, 6, 0, 0) - i * 3600_000), createdAt: new Date(Date.UTC(2026, 9, 18, 5, 0, 0) - i * 3600_000), updatedAt: new Date(),
     body: {
       type: 'doc', keyPoints: f.paragraphs.slice(0, 2), imageUrl: `https://cdn.${domain}/photos/${i}.jpg`, imageCredit: `Photo: ${photographer} / ${outlet}`,
@@ -74,6 +77,7 @@ for (const [lang, f] of Object.entries<any>(fx.languages)) {
       { id: `m-${i}-1`, type: 'IMAGE', url: `https://cdn.${domain}/photos/${i}.jpg`, s3Key: `external/${id}/source-image`, scanStatus: 'external' },
       { id: `m-${i}-2`, type: 'VIDEO', url: `https://www.youtube.com/watch?v=src${i}`, s3Key: `external/${id}/source-video`, scanStatus: 'external' },
       ...(GENERATED.has(lang) ? [{ id: `m-${i}-3`, type: 'IMAGE', url: `/story-image/${slug}`, s3Key: `generated/images/${id}.png`, scanStatus: 'generated' }] : []),
+      ...(SOURCE.has(lang) ? [{ id: `m-${i}-4`, type: 'IMAGE', url: `/story-image/${slug}`, s3Key: `source-mirror/images/${id}.jpg`, scanStatus: 'source_mirrored' }] : []),
     ],
   });
 }
@@ -81,7 +85,8 @@ rows.push({
   ...rows[0], id: '00000000-0000-4000-8000-ffffffffffff', slug: 'secret-draft-story', status: 'DRAFT', title: 'SECRET DRAFT never public',
 });
 
-const PNG_BYTES = png(640, 360, [30, 90, 160]);
+const PNG_GENERATED = png(640, 360, [30, 90, 160]);
+const PNG_SOURCE = png(640, 360, [150, 70, 40]); // visually different "photo" that was mirrored into our storage
 
 const matches = (r: any, where: any = {}): boolean =>
   Object.entries(where).every(([k, v]: [string, any]) => {
@@ -125,9 +130,20 @@ const prisma: any = {
 };
 
 class FakeImages {
-  async readGeneratedImage(idOrSlug: string) {
-    const r = rows.find((x) => (x.slug === idOrSlug || x.id === idOrSlug) && x.status === 'PUBLISHED' && GENERATED.has(x.language));
-    return r ? { buffer: PNG_BYTES, mimeType: 'image/png' } : null;
+  async readStoryImage(idOrSlug: string) {
+    const r = rows.find((x) => (x.slug === idOrSlug || x.id === idOrSlug) && x.status === 'PUBLISHED');
+    if (!r || !r.mediaAssets.some((m: any) => ['generated', 'source_mirrored'].includes(m.scanStatus))) return null;
+    return r.imageOrigin === 'source' ? { buffer: PNG_SOURCE, mimeType: 'image/png', origin: 'source' } : { buffer: PNG_GENERATED, mimeType: 'image/png', origin: 'generated' };
+  }
+  /** Takedown: drop the mirrored source image, flip to generated (mirrors the real service's contract). */
+  async replaceWithGenerated(idOrSlug: string) {
+    const r = rows.find((x) => x.slug === idOrSlug || x.id === idOrSlug);
+    if (!r) return { found: false, removedAssets: 0, deletedObjects: 0, generated: false };
+    const before = r.mediaAssets.length;
+    r.mediaAssets = r.mediaAssets.filter((m: any) => m.scanStatus !== 'source_mirrored' && !String(m.s3Key).startsWith('external/') || m.type !== 'IMAGE');
+    r.mediaAssets.push({ id: `${r.id}-gen`, type: 'IMAGE', url: `/story-image/${r.slug}`, s3Key: `generated/images/${r.id}.png`, scanStatus: 'generated' });
+    r.imageOrigin = 'generated';
+    return { found: true, articleId: r.id, slug: r.slug, removedAssets: before - r.mediaAssets.length + 1, deletedObjects: 1, generated: true, origin: 'generated' };
   }
 }
 

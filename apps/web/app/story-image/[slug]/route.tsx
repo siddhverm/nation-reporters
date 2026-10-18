@@ -9,7 +9,8 @@ const SLUG_RE = /^[\p{L}\p{N}\p{M}_-]{1,200}$/u;
 
 /**
  * Story image for a slug.
- *  1. the generated picture stored by the API (never a publisher image),
+ *  1. the picture stored by the API in OUR storage: a mirrored source image (IMAGE_MODE=source_first, validated and
+ *     metadata-stripped by the API) or an AI-generated one — never a hotlinked/proxied publisher URL,
  *  2. otherwise deterministic generated fallback artwork (PNG, no text, seeded by the slug), so every story
  *     — and every og:image — resolves to an image even without an image-generation key.
  * The fallback is cached only briefly so a real generated image replaces it as soon as it exists.
@@ -23,18 +24,23 @@ export async function GET(_req: NextRequest, { params }: { params: { slug: strin
   }
   if (!SLUG_RE.test(slug)) return new NextResponse('Not found', { status: 404 });
 
-  const upstream = await serverApiFetch(`/articles/${encodeURIComponent(slug)}/image`);
+  // no-store: never let Next's data cache pin an old picture (a takedown must take effect immediately).
+  const upstream = await serverApiFetch(`/articles/${encodeURIComponent(slug)}/image`, { cache: 'no-store' });
   if (upstream) {
     const type = (upstream.headers.get('content-type') ?? '').split(';')[0].trim().toLowerCase();
     if (/^image\/(png|jpeg|webp)$/.test(type)) {
       const buf = await upstream.arrayBuffer();
       if (buf.byteLength > 1000) {
+        const origin = upstream.headers.get('x-image-origin') === 'source' ? 'source' : 'generated';
         return new NextResponse(buf, {
           headers: {
             'Content-Type': type,
-            'Cache-Control': 'public, max-age=86400, stale-while-revalidate=604800',
+            // Source pictures are cached briefly so a takedown (replace-with-generated) takes effect quickly.
+            'Cache-Control': origin === 'source'
+              ? 'public, max-age=3600'
+              : 'public, max-age=86400, stale-while-revalidate=604800',
             'X-Content-Type-Options': 'nosniff',
-            'X-Story-Image': 'generated',
+            'X-Story-Image': origin,
           },
         });
       }

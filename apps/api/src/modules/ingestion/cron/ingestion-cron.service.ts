@@ -32,6 +32,7 @@ import {
   stripPublisherFeedBoilerplate,
 } from '../../../common/reader-summary.util';
 import { StoryImageService } from '../../ai/story-image.service';
+import { pickStrongestImageUrl } from '../../../common/mirror-external-image.util';
 import { heldPlaceholderText, parseRawFallbackMode } from '../../../common/held-story';
 import { scrubSourceLabels } from '../../../common/reader-summary.util';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
@@ -172,6 +173,7 @@ export class IngestionCronService {
     try {
       const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
         language: lang,
+        imageUrl: fetched.ogImage ?? undefined,
         forceAutoPublish: true,
         allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
       });
@@ -184,7 +186,7 @@ export class IngestionCronService {
 
     if (!articleId) {
       // Safe fallback: either a held DRAFT or a source-free placeholder — never the source text.
-      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang });
+      const ok = await this.publishRaw(ingestedArticle, { name: 'Manual URL Ingest', language: lang }, fetched.ogImage ?? undefined);
       held = !ok;
       const published = await this.prisma.article.findFirst({
         where: { ingestedArticleId: ingestedArticle.id },
@@ -337,6 +339,43 @@ export class IngestionCronService {
     }
   }
 
+  /** Strongest usable image URL from the feed item itself (no network). Used only server-side to mirror the file. */
+  private extractImage(item: any): string | null {
+    const link = typeof item.link === 'string' ? item.link : item.link?.href ?? item.guid;
+    const fromMediaGroup = item['media:group']?.['media:content'];
+    const groupUrls = Array.isArray(fromMediaGroup)
+      ? fromMediaGroup
+          .filter((m: { $?: { type?: string; url?: string } }) =>
+            !m?.$?.type || String(m.$.type).startsWith('image'))
+          .map((m: { $?: { url?: string } }) => m?.$?.url)
+      : [fromMediaGroup?.$?.url];
+    const mediaContent = item['media:content'];
+    const mediaIsImage = !mediaContent?.$?.type || String(mediaContent.$.type).startsWith('image');
+    return pickStrongestImageUrl(
+      [
+        mediaIsImage ? mediaContent?.$?.url : null,
+        item['media:thumbnail']?.$?.url,
+        ...groupUrls,
+        item.enclosure?.type?.startsWith('image') ? item.enclosure.url : null,
+        item['ht:image']?.['$']?.url,
+        ...this.extractImgCandidatesFromHtml(item.content ?? item['content:encoded'] ?? item.summary ?? ''),
+      ],
+      link,
+    );
+  }
+
+  private extractImgCandidatesFromHtml(html: string): string[] {
+    if (!html || typeof html !== 'string') return [];
+    const out: string[] = [];
+    const re = /<img[^>]+src=["']([^"']+)["']/gi;
+    let m: RegExpExecArray | null;
+    while ((m = re.exec(html)) !== null) {
+      if (m[1]) out.push(m[1]);
+      if (out.length >= 8) break;
+    }
+    return out;
+  }
+
   private extractVideo(item: any): string | null {
     const mediaUrl = item['media:content']?.$.url ?? item.enclosure?.url;
     const mediaType = item['media:content']?.$.type ?? item.enclosure?.type ?? '';
@@ -382,6 +421,7 @@ export class IngestionCronService {
       );
       const hash = crypto.createHash('sha256').update(item.link ?? item.title ?? '').digest('hex');
       const sourceVideoUrl = this.extractVideo(item);
+      const rssImageUrl = this.extractImage(item) ?? undefined;
 
       const isDuplicate = await this.dedup.isDuplicate(hash, body, articleLang);
       if (isDuplicate) continue;
@@ -408,12 +448,13 @@ export class IngestionCronService {
 
         let publishedOk = false;
         if (this.aiQuotaExhausted) {
-          publishedOk = await this.publishRaw(ingestedArticle, source);
+          publishedOk = await this.publishRaw(ingestedArticle, source, rssImageUrl);
         } else {
           try {
             const article = await this.ai.processIngestedArticle(ingestedArticle.id, {
               language: articleLang,
               sourceVideoUrl: sourceVideoUrl ?? undefined,
+              imageUrl: rssImageUrl,
               forceAutoPublish: true,
               allowedCategories: ['india', 'world', 'politics', 'business', 'sports', 'entertainment', 'tech'],
             });
@@ -428,7 +469,7 @@ export class IngestionCronService {
             this.logger.warn(
               `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — publishing raw RSS/source text`,
             );
-            publishedOk = await this.publishRaw(ingestedArticle, source);
+            publishedOk = await this.publishRaw(ingestedArticle, source, rssImageUrl);
             if (!publishedOk) {
               this.logger.warn(`Raw publish failed after AI error: ${titlePlain.slice(0, 50)}`);
             }
@@ -614,6 +655,7 @@ export class IngestionCronService {
       publishedAt: Date | null;
     },
     source: { name: string; language?: string | null },
+    imageUrl?: string,
   ): Promise<boolean> {
     const mode = parseRawFallbackMode(this.config.get<string>('RAW_FALLBACK_MODE'));
     if (mode === 'draft' && this.heldThisRun >= this.maxHeldDraftsPerRun) {
@@ -698,19 +740,24 @@ export class IngestionCronService {
       return false;
     }
 
-    // Placeholder pages still get a generated picture and appear in feeds, but no social posts.
-    const generated = await this.storyImages.generateForArticle({
+    // Placeholder pages still get a picture (mirrored source image or generated, per IMAGE_MODE) and appear in feeds, but no social posts.
+    const sourceImageUrl = await this.storyImages.resolveSourceImageUrl(imageUrl, ingestedArticle.sourceUrl, lang);
+    const picture = await this.storyImages.attachStoryImage({
       id: article.id,
       slug: article.slug,
       title,
       summary: null,
       category: this.detectCategorySlug(title, source.name) ?? 'india',
       language: lang,
+      sourceImageUrl,
+      feedLink: ingestedArticle.sourceUrl,
     });
-    if (generated) {
+    if (picture) {
       await this.prisma.article.update({
         where: { id: article.id },
-        data: { body: { ...(article.body as object), imageUrl: generated.url, imageAlt: generated.alt, imageGenerated: true } },
+        data: {
+          body: { ...(article.body as object), imageUrl: picture.url, imageAlt: picture.alt, imageGenerated: picture.origin === 'generated', imageOrigin: picture.origin },
+        },
       });
     }
     return true;

@@ -19,7 +19,8 @@ export type PublicArticle = {
   publishedAt?: string | null;
   updatedAt?: string | null;
   hashtags?: string[] | null;
-  image?: { url: string; alt: string } | null;
+  image?: { url: string; alt: string; origin?: string } | null;
+  imageOrigin?: string | null;
 };
 
 export function ogLocale(lang: string | null | undefined): string {

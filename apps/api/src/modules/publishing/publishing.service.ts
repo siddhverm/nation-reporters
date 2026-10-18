@@ -136,7 +136,7 @@ export class PublishingService {
       excerpt: sanitizeTextForPublic(excerptForPublish, { ...sopts, headline: cleanTitle }) || cleanTitle,
       // Use canonical slug used by web route. seoSlug can be non-unique / unsuffixed.
       url: `${this.publicWebBaseUrl}/article/${article.slug}`,
-      // Public, source-free generated picture (or generated fallback artwork) for every story.
+      // Our own /story-image/<slug> URL: serves the mirrored source image (IMAGE_MODE=source_first) or the generated one — never a publisher URL.
       imageUrl: `${this.publicWebBaseUrl}/story-image/${encodeURIComponent(article.slug)}`,
       videoUrl: videoAsset?.url,
       caption: caption?.caption ? sanitizeTextForPublic(caption.caption, sopts) || undefined : undefined,

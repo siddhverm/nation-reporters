@@ -1,5 +1,6 @@
 import { sanitizeHashtags, sanitizePublisherStoryText, scrubSourceLabels, stripSourceFromSlug } from './reader-summary.util';
 import { buildImageAlt, storyImagePath } from './story-image.util';
+import { type ImageOrigin, originFromValue } from './image-mode';
 
 type ProvenanceLike = {
   sourceName?: string | null;
@@ -17,6 +18,7 @@ type PublicArticleLike = {
   slug?: string | null;
   language?: string | null;
   mediaAssets?: unknown;
+  imageOrigin?: string | null;
   hashtags?: string[] | null;
   seoSlug?: string | null;
   provenance?: ProvenanceLike;
@@ -137,20 +139,20 @@ function withCleanKeyPoints(
 type MediaLike = { id?: string; type?: string; url?: string | null; s3Key?: string | null; scanStatus?: string | null };
 
 /**
- * Public view of media: publisher images/videos (s3Key "external/…", external URLs, mirrored source images) and
- * storage keys are never exposed. Every story exposes exactly one image: the same-origin generated picture URL,
- * which the web app serves from storage or replaces with generated fallback artwork.
+ * Public view of media: publisher images/videos (s3Key "external/…", external URLs) and storage keys are never
+ * exposed. Every story exposes exactly one image: the same-origin /story-image/<slug> URL plus its origin
+ * ('source' = mirrored in our storage, 'generated' = AI / fallback artwork) — never a source URL or domain.
  */
 export function publicMediaAssets(
   assets: unknown[],
-  image?: { url: string; alt: string },
+  image?: { url: string; alt: string; origin?: ImageOrigin },
 ): Array<Record<string, unknown>> {
   const out: Array<Record<string, unknown>> = [];
   let imageDone = false;
   for (const raw of assets as MediaLike[]) {
     if (raw?.type === 'IMAGE') {
       if (image && !imageDone) {
-        out.push({ id: raw.id, type: 'IMAGE', url: image.url, alt: image.alt, scanStatus: 'generated' });
+        out.push({ id: raw.id, type: 'IMAGE', url: image.url, alt: image.alt, origin: image.origin ?? 'generated', scanStatus: image.origin === 'source' ? 'source_mirrored' : 'generated' });
         imageDone = true;
       }
       continue;
@@ -165,11 +167,11 @@ export function publicMediaAssets(
   return out;
 }
 
-/** Replace any publisher image URL/credit stored in the TipTap doc with the generated image reference. */
-function withGeneratedImageBody(body: unknown, image: { url: string; alt: string }): unknown {
+/** Replace any publisher image URL/credit stored in the TipTap doc with our own image reference + origin. */
+function withStoryImageBody(body: unknown, image: { url: string; alt: string; origin: ImageOrigin }): unknown {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
-  const { imageCredit: _credit, imageSource: _source, ...rest } = body as Record<string, unknown>;
-  return { ...rest, imageUrl: image.url, imageAlt: image.alt, imageGenerated: true };
+  const { imageCredit: _credit, imageSource: _source, sourceImageRemoved: _removed, ...rest } = body as Record<string, unknown>;
+  return { ...rest, imageUrl: image.url, imageAlt: image.alt, imageGenerated: image.origin === 'generated', imageOrigin: image.origin };
 }
 
 /** Internal editorial/workflow fields that anonymous readers must never receive. */
@@ -211,7 +213,8 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
     : socialCaptions;
   const slug = typeof article.slug === 'string' ? article.slug : '';
   const language = typeof article.language === 'string' ? article.language : 'en';
-  const image = slug ? { url: storyImagePath(slug), alt: buildImageAlt(title, language) } : undefined;
+  const origin = originFromValue(article.imageOrigin);
+  const image = slug ? { url: storyImagePath(slug), alt: buildImageAlt(title, language, origin), origin } : undefined;
   const mediaAssets = article.mediaAssets;
   const cleanBody = withCleanKeyPoints(
     article.body !== undefined ? sanitizeTipTapBody(article.body, opts) : article.body,
@@ -234,7 +237,8 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
         : article.seoDescription,
     ...(Array.isArray(article.hashtags) ? { hashtags: sanitizeHashtags(article.hashtags, opts) } : {}),
     ...(typeof article.seoSlug === 'string' ? { seoSlug: stripSourceFromSlug(article.seoSlug, opts) || slug } : {}),
-    body: image ? withGeneratedImageBody(cleanBody, image) : cleanBody,
+    body: image ? withStoryImageBody(cleanBody, image) : cleanBody,
+    ...(image ? { imageOrigin: image.origin } : {}),
   } as Omit<T, 'provenance'>;
 }
 
@@ -245,9 +249,9 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
 export function sanitizeArticleListItem<
   T extends {
     title?: string | null; excerpt?: string | null; slug?: string | null; language?: string | null;
-    provenance?: ProvenanceLike; mediaAssets?: unknown;
+    provenance?: ProvenanceLike; mediaAssets?: unknown; imageOrigin?: string | null;
   },
->(item: T): Omit<T, 'provenance'> & { image?: { url: string; alt: string } } {
+>(item: T): Omit<T, 'provenance'> & { image?: { url: string; alt: string; origin: ImageOrigin }; imageOrigin?: ImageOrigin } {
   const opts = { sourceName: item.provenance?.sourceName, sourceUrl: item.provenance?.sourceUrl };
   const title = cleanField(item.title, opts) || '';
   // Prefer empty over chrome when title was outlet desk junk.
@@ -257,16 +261,22 @@ export function sanitizeArticleListItem<
       ? cleanField(item.excerpt, { ...opts, headline: safeTitle }) || null
       : item.excerpt;
   const { mediaAssets, provenance: _prov, ...rest } = item;
+  const origin = originFromValue(item.imageOrigin);
+  // Defence in depth: list payloads normally carry no body, but if one is present never let a source image URL/credit through.
+  const maybeBody = (rest as { body?: unknown }).body;
+  if (maybeBody && typeof maybeBody === 'object' && !Array.isArray(maybeBody) && item.slug) {
+    (rest as { body?: unknown }).body = withStoryImageBody(maybeBody, { url: storyImagePath(item.slug), alt: buildImageAlt(safeTitle, item.language, origin), origin });
+  }
   const image = item.slug
-    ? { url: storyImagePath(item.slug), alt: buildImageAlt(safeTitle, item.language) }
+    ? { url: storyImagePath(item.slug), alt: buildImageAlt(safeTitle, item.language, origin), origin }
     : undefined;
   return {
     ...rest,
     title: safeTitle,
     excerpt,
     ...(Array.isArray(mediaAssets) ? { mediaAssets: publicMediaAssets(mediaAssets) } : {}),
-    ...(image ? { image } : {}),
-  } as unknown as Omit<T, 'provenance'> & { image?: { url: string; alt: string } };
+    ...(image ? { image, imageOrigin: origin } : {}),
+  } as unknown as Omit<T, 'provenance'> & { image?: { url: string; alt: string; origin: ImageOrigin }; imageOrigin?: ImageOrigin };
 }
 
 /**

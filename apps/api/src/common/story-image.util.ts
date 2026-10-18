@@ -1,7 +1,9 @@
 /**
- * Generated story images (feature B): prompt building, provider call, alt text.
- * No publisher image is ever fetched, mirrored or displayed — each story gets an original generated picture,
- * or the web app's deterministic generated fallback artwork when generation is unavailable.
+ * Story images: AI-generation prompt building, provider call, alt text.
+ * IMAGE_MODE=generated_only: no publisher image is ever fetched; each story gets an original generated picture,
+ * or the web app's deterministic fallback artwork. IMAGE_MODE=source_first (default): the source image is first
+ * mirrored into our own storage (see StoryImageService / source-image pipeline) and this generator is the fallback.
+ * Either way the public URL is always our own /story-image/<slug>.
  */
 import { languageDisplayName } from '../modules/ai/prompts/lang-names';
 
@@ -67,11 +69,11 @@ export function buildStoryImagePrompt(input: StoryImageInput): string {
 }
 
 /** Descriptive alt text in the story language: the (already sanitized) headline is the most accurate description. */
-export function buildImageAlt(title: string, language?: string | null): string {
+export function buildImageAlt(title: string, language?: string | null, origin: 'source' | 'generated' = 'generated'): string {
   const t = promptText(title, 140);
   const lang = (language ?? 'en').toLowerCase().split(/[-_]/)[0];
-  // The label is intentionally short; screen readers read the headline in the story language.
-  const label = lang === 'en' ? 'Illustration for: ' : '';
+  // Source pictures: alt text is simply the headline. Generated ones get a short "Illustration for:" label in English.
+  const label = lang === 'en' && origin === 'generated' ? 'Illustration for: ' : '';
   return `${label}${t}`.trim();
 }
 

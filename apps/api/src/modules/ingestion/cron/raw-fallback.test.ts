@@ -22,7 +22,7 @@ function make(env: Record<string, string> = {}) {
     ingestedArticle: { update: jest.fn() },
   };
   const provenance: any = { record: jest.fn().mockResolvedValue(undefined) };
-  const images: any = { generateForArticle: jest.fn().mockResolvedValue(null) };
+  const images: any = { generateForArticle: jest.fn().mockResolvedValue(null), resolveSourceImageUrl: jest.fn().mockResolvedValue(null), attachStoryImage: jest.fn().mockResolvedValue(null) };
   const publishing: any = { publishToSocialOnly: jest.fn().mockResolvedValue(undefined), publishArticle: jest.fn() };
   const config: any = { get: (k: string) => env[k] };
   const svc: any = new IngestionCronService(config, prisma, {} as any, provenance, {} as any, publishing, images);
@@ -56,7 +56,7 @@ describe('raw fallback when the AI rewrite is unavailable/rejected', () => {
     expect(created[0].bodyShort).toBeUndefined();
     expect(created[0].bodyMedium).toBeUndefined();
     expect(publishing.publishToSocialOnly).not.toHaveBeenCalled();
-    expect(images.generateForArticle).not.toHaveBeenCalled();
+    expect(images.attachStoryImage).not.toHaveBeenCalled();
     expect(provenance.record).toHaveBeenCalled(); // internal record only
   });
 
@@ -83,7 +83,7 @@ describe('raw fallback when the AI rewrite is unavailable/rejected', () => {
     expect(a.body.content[0].content[0].text).toBe(HELD_PLACEHOLDER.hi);
     expect(JSON.stringify(a)).not.toContain('ZEBRAQUILL');
     expect(a.title).not.toMatch(/Daily Planet/i); // outlet suffix scrubbed from the headline
-    expect(images.generateForArticle).toHaveBeenCalled();
+    expect(images.attachStoryImage).toHaveBeenCalled();
     expect(publishing.publishToSocialOnly).not.toHaveBeenCalled();
   });
 

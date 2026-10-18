@@ -90,6 +90,7 @@ export class ArticlesService {
       publishedAt: true,
       categoryId: true,
       language: true,
+      imageOrigin: true,
       // Only used server-side to strip this feed's outlet name from the text; removed before the response.
       provenance: { select: { sourceName: true, sourceUrl: true } },
     } satisfies Prisma.ArticleSelect;
@@ -187,6 +188,7 @@ export class ArticlesService {
       language: true,
       status: true,
       podcastScript: true,
+      imageOrigin: true,
       // Only used server-side to strip this feed's outlet name from the text; removed before the response.
       provenance: { select: { sourceName: true, sourceUrl: true } },
       // Cards use the generated story image (derived from the slug) — no image rows are selected.
@@ -409,8 +411,8 @@ export class ArticlesService {
   }
 
   private getCountryFeedRedisKey(cacheKey: string): string {
-    // v4: list payloads carry the generated image reference and no raw media rows / publisher URLs.
-    return `country-feed:v4:${cacheKey}`;
+    // v5: list payloads carry the story image reference + origin (source|generated) and no raw media rows / publisher URLs.
+    return `country-feed:v5:${cacheKey}`;
   }
 
   private async generateSlug(title: string): Promise<string> {

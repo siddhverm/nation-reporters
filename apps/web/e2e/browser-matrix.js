@@ -6,7 +6,10 @@ const WEB = process.env.WEB ?? 'http://localhost:3010', API = process.env.API ??
 const OUT = process.env.OUT ?? path.resolve(__dirname, 'out');
 fs.mkdirSync(OUT, { recursive: true });
 const fx = JSON.parse(fs.readFileSync(path.resolve(__dirname, '../../../test-fixtures/news-fixtures.json'), 'utf8'));
-const GENERATED = new Set(['en', 'hi', 'ar', 'zh', 'ta', 'ru']);
+// must match api/e2e/fake-api.ts: mirrored SOURCE image / AI-GENERATED image / neither (fallback artwork)
+const SOURCE = new Set(['en', 'ar', 'ja', 'kn', 'fr', 'it', 'tr', 'mr']);
+const GENERATED = new Set(['hi', 'zh', 'ta', 'ru', 'te', 'de']);
+const kindOf = (l) => (SOURCE.has(l) ? 'source' : GENERATED.has(l) ? 'generated' : 'fallback');
 const SHOT_LANGS = new Set(['en', 'hi', 'ar', 'ur', 'zh', 'ja', 'ta', 'kn', 'ru', 'fr']);
 const LEAK = new RegExp(`${fx.outlet}|${fx.domain}|dailyplanet|rohan\\s*mehta|kiran\\s*rao|youtube\\.com/(?:watch|embed)|/api/image`, 'i');
 const LANGS = Object.keys(fx.languages);
@@ -45,7 +48,7 @@ const get = async (p) => (await fetch(API + p)).json();
     const buf = Buffer.from(await og.arrayBuffer());
     r.ogFetch = og.status === 200 && /^image\/png/.test(og.headers.get('content-type')) && buf.length > 1000 && buf.slice(1, 4).toString() === 'PNG';
     r.imageKind = og.headers.get('x-story-image');
-    r.imageKindExpected = r.imageKind === (GENERATED.has(lang) ? 'generated' : 'fallback');
+    r.imageKindExpected = r.imageKind === kindOf(lang);
     // ---- rendered article page
     await page.goto(`${WEB}/article/${encodeURIComponent(slug)}`, { waitUntil: 'networkidle0' });
     await page.waitForSelector('h1', { timeout: 15000 });
@@ -60,6 +63,7 @@ const get = async (p) => (await fetch(API + p)).json();
         text: document.body.innerText, html: document.documentElement.outerHTML, title: document.title,
         credit: /📷/.test(document.body.innerText),
         notice: document.querySelector('article [data-testid="story-image-notice"]')?.innerText || '',
+        noticeOrigin: document.querySelector('article [data-testid="story-image-notice"]')?.getAttribute('data-origin'),
         noticeLang: document.querySelector('article [data-testid="story-image-notice"]')?.getAttribute('lang'),
         noticeNote: document.querySelector('article [data-testid="image-copyright-note"]')?.innerText || '',
         noticeFont: parseFloat(getComputedStyle(document.querySelector('article [data-testid="image-copyright-note"]') || document.body).fontSize),
@@ -70,6 +74,12 @@ const get = async (p) => (await fetch(API + p)).json();
     });
     r.lang = dom.lang === lang;
     r.dir = dom.dir === (rtl ? 'rtl' : 'ltr') && dom.direction === (rtl ? 'rtl' : 'ltr');
+    // public API contract: our URL + origin only
+    const apiArt = await get(`/articles/${encodeURIComponent(slug)}`);
+    const apiList = (await get(`/articles?language=${lang}&omitBody=true&limit=5&status=PUBLISHED`)).data[0];
+    const wantOrigin = SOURCE.has(lang) ? 'source' : 'generated';
+    const apiOk = [apiArt, apiList].every((x) => x.image?.url === `/story-image/${slug}` && x.image?.origin === wantOrigin && x.imageOrigin === wantOrigin)
+      && apiArt.body?.imageOrigin === wantOrigin && !LEAK.test(JSON.stringify([apiArt, apiList])) && !/source-mirror|s3Key|external\//i.test(JSON.stringify([apiArt, apiList]));
     r.heroImage = dom.imgSrc === `/story-image/${encodeURIComponent(slug)}` && dom.imgLoaded;
     r.alt = !!dom.imgAlt && dom.imgAlt.includes(dom.h1.slice(0, 12));
     r.translatedText = dom.text.includes(f.paragraphs[0].slice(0, 12)) || dom.text.includes(f.title.slice(0, 8));
@@ -78,8 +88,17 @@ const get = async (p) => (await fetch(API + p)).json();
     const okHost = (u) => /^(http:\/\/localhost:(3010|4010|3001|3005)\/|https:\/\/fonts\.(googleapis|gstatic)\.com\/|data:|blob:)/.test(u);
     r.noLeakNet = !reqs.some((u) => LEAK.test(u) || !okHost(u));
     const N = NOTICES.NOTICES[lang];
-    r.illustrationLine = dom.notice.includes(N.illustration) && dom.noticeLang === lang;
-    r.copyrightNote = dom.noticeNote === N.imageCopyright && dom.noticeFont <= 11 && (lang !== 'en' || dom.noticeNote === EXPECT_EN_NOTE);
+    const expOrigin = SOURCE.has(lang) ? 'source' : 'generated'; // fallback artwork counts as generated art
+    const hasAiLabel = dom.notice.includes(N.illustration);
+    const hasNote = dom.noticeNote.length > 0 || dom.notice.includes(N.imageCopyright);
+    r.noticeOrigin = dom.noticeOrigin === expOrigin;
+    // SOURCE: only the copyright note. GENERATED/FALLBACK: only the AI label.
+    r.illustrationLine = expOrigin === 'source' ? !hasAiLabel : hasAiLabel && dom.noticeLang === lang;
+    r.copyrightNote = expOrigin === 'source'
+      ? dom.noticeNote === N.imageCopyright && dom.noticeFont <= 11 && dom.noticeLang === lang && (lang !== 'en' || dom.noticeNote === EXPECT_EN_NOTE)
+      : !hasNote;
+    r.altOrigin = expOrigin === 'source' ? dom.imgAlt === dom.h1 : dom.imgAlt.includes(dom.h1.slice(0, 12));
+    r.apiOrigin = apiOk;
     r.keyPoints = dom.keyPoints.length === 2 && dom.keyPointsLabel.trim() === N.keyPoints;
     r.noHScroll = dom.scrollW <= dom.clientW + 1;
     // ---- home page in this UI language (cards use generated images)
@@ -96,7 +115,11 @@ const get = async (p) => (await fetch(API + p)).json();
     }, slug);
     r.homeCard = hd.card && !!hd.img && hd.img.startsWith('/story-image/') && hd.loaded;
     r.homeNoLeak = !LEAK.test(hd.text) && !LEAK.test(hd.html) && !hreq.some((u) => LEAK.test(u) || !okHost(u));
-    r.homeBadge = hd.html.includes('data-testid="story-image-badge"') && hd.html.includes('data-testid="story-image-notice"') && hd.text.includes(N.illustration);
+    // home: compact notice follows the origin too (source -> note only, generated -> AI label only)
+    r.homeBadge = hd.html.includes('data-testid="story-image-badge"') && hd.html.includes('data-testid="story-image-notice"')
+      && (SOURCE.has(lang)
+        ? hd.html.includes('data-origin="source"') && hd.text.includes(N.imageCopyright) && !hd.text.includes(N.illustration)
+        : hd.html.includes('data-origin="generated"') && hd.text.includes(N.illustration) && !hd.text.includes(N.imageCopyright));
     r.homeNoSourceImg = hd.imgs.every((s) => !s || s.startsWith('/') || s.startsWith(WEB));
     // ---- /copyright page in this UI language + footer link
     const cp = await browser.newPage();
@@ -142,11 +165,39 @@ const get = async (p) => (await fetch(API + p)).json();
     apiImageProxyGone: (await fetch(`${WEB}/api/image?url=http://localhost:4010/api/v1/articles`)).status === 404,
     storyImageBadSlug: (await fetch(`${WEB}/story-image/${encodeURIComponent('a b/../x')}`)).status === 404,
   };
+  // ---- takedown: staff-only endpoint swaps a mirrored source image to a generated one (run last: mutates the 'tr' row)
+  {
+    const tr = (await get('/articles?language=tr&omitBody=true&limit=1&status=PUBLISHED')).data[0];
+    const url = `${API}/articles/${encodeURIComponent(tr.slug)}/image/replace-with-generated`;
+    const before = (await get(`/articles/${encodeURIComponent(tr.slug)}`)).image.origin;
+    const kindBefore = (await fetch(`${WEB}/story-image/${encodeURIComponent(tr.slug)}`)).headers.get('x-story-image');
+    const anon = await fetch(url, { method: 'POST' });
+    const stillSource = (await get(`/articles/${encodeURIComponent(tr.slug)}`)).image.origin === 'source';
+    const staff = await fetch(url, { method: 'POST', headers: { authorization: 'Bearer staff' } });
+    const out = await staff.json();
+    const afterArt = await get(`/articles/${encodeURIComponent(tr.slug)}`);
+    const kindAfter = (await fetch(`${WEB}/story-image/${encodeURIComponent(tr.slug)}`)).headers.get('x-story-image');
+    const tp = await browser.newPage();
+    await tp.setViewport({ width: 1280, height: 800 });
+    await tp.goto(`${WEB}/article/${encodeURIComponent(tr.slug)}`, { waitUntil: 'networkidle0' });
+    await tp.waitForSelector('h1');
+    const dn = await tp.evaluate(() => ({ origin: document.querySelector('article [data-testid="story-image-notice"]')?.getAttribute('data-origin'), text: document.querySelector('article [data-testid="story-image-notice"]')?.innerText, note: !!document.querySelector('article [data-testid="image-copyright-note"]') }));
+    await tp.close();
+    results._site.takedown = {
+      before: before === 'source' && kindBefore === 'source',
+      anonymousRefused: [401, 403].includes(anon.status) && stillSource,
+      staffOk: staff.status === 200 && out.imageOrigin === 'generated' && out.removedSourceAssets >= 1 && !JSON.stringify(out).match(/source-mirror|s3Key|dailyplanet/i),
+      after: afterArt.image.origin === 'generated' && afterArt.body.imageOrigin === 'generated' && !/source-mirror|external\//i.test(JSON.stringify(afterArt)) && kindAfter === 'generated',
+      pageShowsAiLabelNotCopyright: dn.origin === 'generated' && dn.text === NOTICES.NOTICES.tr.illustration && !dn.note,
+    };
+  }
   fs.writeFileSync(path.join(OUT, 'results.json'), JSON.stringify(results, null, 1));
   await browser.close();
   const keys = Object.keys(results.en);
   let bad = 0;
   for (const [l, r] of Object.entries(results)) { if (l === '_site') continue; for (const k of keys) if (r[k] === false) { bad++; console.log('FAIL', l, k); } }
   console.log('site', JSON.stringify(results._site));
+  for (const [k, v] of Object.entries(results._site.takedown ?? {})) if (v === false) { bad++; console.log('FAIL takedown', k); }
+  for (const [k, v] of Object.entries(results._site)) if (v === false) { bad++; console.log('FAIL site', k); }
   console.log('failures', bad);
 })().catch((e) => { console.error(e); process.exit(1); });

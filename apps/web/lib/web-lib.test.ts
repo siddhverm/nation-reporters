@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getArticleImage, getImageAlt, getPreferredArticleImage, getStoryImageUrl, LOGO_FALLBACK } from './news-image';
+import { getArticleImage, getImageAlt, getPreferredArticleImage, getStoryImageUrl, imageOriginOf, LOGO_FALLBACK } from './news-image';
 import { articleJsonLd, articleSeo, ogLocale } from './seo';
 import { fallbackArtSpec, hashSeed } from './story-art';
 import { isRtlLanguage, normalizeUiLanguage } from './ui-language';
@@ -24,6 +24,24 @@ describe('news-image never surfaces a publisher image', () => {
   it('alt text is the headline', () => {
     expect(getImageAlt('Metro line', 'en')).toBe('Illustration for: Metro line');
     expect(getImageAlt('मेट्रो लाइन', 'hi')).toBe('मेट्रो लाइन');
+  });
+  it('alt text of a source image is simply the headline (no "Illustration for:")', () => {
+    expect(getImageAlt('Metro line', 'en', 'source')).toBe('Metro line');
+    expect(getImageAlt('Metro line', 'en', 'generated')).toBe('Illustration for: Metro line');
+  });
+  it('image origin: only an explicit "source" from the API counts; old rows are generated', () => {
+    expect(imageOriginOf({ image: { origin: 'source' } })).toBe('source');
+    expect(imageOriginOf({ imageOrigin: 'source' })).toBe('source');
+    expect(imageOriginOf({ body: { imageOrigin: 'source' } })).toBe('source');
+    expect(imageOriginOf({ image: { origin: 'generated' }, imageOrigin: 'source' })).toBe('generated');
+    expect(imageOriginOf({})).toBe('generated');
+    expect(imageOriginOf(null)).toBe('generated');
+    expect(imageOriginOf({ imageOrigin: 'https://cdn.example/x.jpg' })).toBe('generated');
+  });
+  it('a source-origin story still resolves to our own URL only (payload image URLs are ignored)', () => {
+    const a = { slug: 'metro', image: { url: 'https://cdn.dailyplanet-gazette.example/p.jpg', origin: 'source' }, body: { imageUrl: 'https://cdn.dailyplanet-gazette.example/p.jpg' }, mediaAssets: [{ type: 'IMAGE', url: 'https://cdn.dailyplanet-gazette.example/p.jpg' }] };
+    expect(getPreferredArticleImage(a as never)).toBe('/story-image/metro');
+    expect(getArticleImage('metro', undefined, 'hero', 'https://cdn.dailyplanet-gazette.example/p.jpg')).toBe('/story-image/metro');
   });
 });
 

@@ -1,5 +1,6 @@
 import * as cheerio from 'cheerio';
 import { acceptLanguageHeaderForLocale } from './language-resolution.util';
+import { safeFetchBytes, type SafeFetchOptions } from '../../common/safe-fetch.util';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -275,35 +276,31 @@ export async function fetchArticlePlainText(
   }
 }
 
-/** Prefer og:image / twitter:image from the publisher page when RSS has no usable image. */
+/**
+ * Prefer og:image / twitter:image from the publisher page when RSS has no usable image.
+ * Uses the SSRF-safe fetcher (validated + pinned DNS, http/https on 80/443, redirects re-validated).
+ */
 export async function fetchArticleOgImage(
   url: string,
   opts: { timeoutMs: number; maxBytes: number },
-  fetchOpts?: { acceptLanguage?: string },
+  fetchOpts?: { acceptLanguage?: string; safeFetch?: SafeFetchOptions },
 ): Promise<string | null> {
   if (!isAllowedArticleFetchUrl(url)) return null;
-  const ctrl = new AbortController();
-  const timer = setTimeout(() => ctrl.abort(), opts.timeoutMs);
   try {
-    const res = await fetch(url, {
-      signal: ctrl.signal,
-      redirect: 'follow',
+    const res = await safeFetchBytes(url, {
+      timeoutMs: opts.timeoutMs,
+      maxBytes: Math.min(opts.maxBytes, 400_000),
+      truncate: true,
       headers: {
         'User-Agent': randomUserAgent(),
         Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
         'Accept-Language': fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
-        'Cache-Control': 'no-cache',
       },
+      ...(fetchOpts?.safeFetch ?? {}),
     });
-    if (!res.ok) return null;
-    const max = Math.min(opts.maxBytes, 400_000);
-    const buf = await res.arrayBuffer();
-    const slice = buf.byteLength > max ? buf.slice(0, max) : buf;
-    const html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
+    const html = new TextDecoder('utf-8', { fatal: false }).decode(res.body);
     return extractOgImageFromHtml(html, url);
   } catch {
     return null;
-  } finally {
-    clearTimeout(timer);
   }
 }

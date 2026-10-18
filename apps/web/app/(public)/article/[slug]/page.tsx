@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
-import { getArticleImage, getImageAlt } from '@/lib/news-image';
+import { getArticleImage, getImageAlt, imageOriginOf } from '@/lib/news-image';
 import { isRtlLanguage } from '@/lib/ui-language';
 import {
   htmlToPlainText,
@@ -35,6 +35,8 @@ interface Article {
   };
   bodyShort?: string | null;
   bodyMedium?: string | null;
+  image?: { url?: string; alt?: string; origin?: string } | null;
+  imageOrigin?: string | null;
   excerpt: string | null;
   seoTitle: string | null;
   seoDescription: string | null;
@@ -740,6 +742,7 @@ export default function ArticlePage() {
   const seoExtra = teaserForSeo ? seoBodyFallback(article, teaserForSeo) : null;
 
   const articleLang = (article.language ?? 'en').toLowerCase().split(/[-_]/)[0] || 'en';
+  const imgOrigin = imageOriginOf(article);
   const keyPointList: string[] = Array.isArray(article.body?.keyPoints)
     ? (article.body.keyPoints as unknown[]).filter((k): k is string => typeof k === 'string' && k.trim().length >= 8).slice(0, 8)
     : [];
@@ -806,7 +809,7 @@ export default function ArticlePage() {
             <div className="h-64 md:h-80 relative">
               <Image
                 src={getArticleImage(article.slug, undefined, 'hero')}
-                alt={getImageAlt(titleText, articleLang)} fill className="object-cover" unoptimized priority />
+                alt={getImageAlt(titleText, articleLang, imgOrigin)} fill className="object-cover" unoptimized priority />
               <div className="absolute inset-0 bg-gradient-to-t from-black/40 to-transparent" />
               <div className="absolute bottom-3 left-4">
                 <span className="bg-brand text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded">
@@ -816,7 +819,7 @@ export default function ArticlePage() {
             </div>
           </div>
           <div className="px-6 pt-1">
-            <StoryImageNotice lang={articleLang} />
+            <StoryImageNotice lang={articleLang} origin={imgOrigin} />
           </div>
 
           <div className="p-6">

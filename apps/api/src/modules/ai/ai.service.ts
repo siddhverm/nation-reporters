@@ -33,7 +33,7 @@ import { StoryImageService } from './story-image.service';
 
 type ProcessIngestedOptions = {
   language?: string;
-  /** @deprecated publisher images are no longer used; every story gets a generated picture. */
+  /** Source item image (RSS media). Used only when IMAGE_MODE=source_first: mirrored into our storage, never stored or exposed as-is. */
   imageUrl?: string;
   sourceVideoUrl?: string;
   forceAutoPublish?: boolean;
@@ -387,25 +387,29 @@ export class AiService {
         },
       });
 
-      // Picture: always an original generated image (never the publisher's photo). If generation is
-      // unavailable the web app renders its deterministic generated fallback artwork for this slug.
-      const generated = await this.storyImages.generateForArticle({
+      // Picture (IMAGE_MODE): mirrored + validated source image when available (source_first), otherwise an original
+      // AI-generated image; if both fail the web app renders deterministic fallback artwork for this slug.
+      const sourceImageUrl = await this.storyImages.resolveSourceImageUrl(options.imageUrl, ingested.sourceUrl, language);
+      const picture = await this.storyImages.attachStoryImage({
         id: article.id,
         slug: article.slug,
         title: rewrite.title,
         summary: readerSummary,
         category: categorySlug,
         language,
+        sourceImageUrl,
+        feedLink: ingested.sourceUrl,
       });
-      if (generated) {
+      if (picture) {
         await this.prisma.article.update({
           where: { id: article.id },
           data: {
             body: {
               ...(article.body as object),
-              imageUrl: generated.url,
-              imageAlt: generated.alt,
-              imageGenerated: true,
+              imageUrl: picture.url,
+              imageAlt: picture.alt,
+              imageGenerated: picture.origin === 'generated',
+              imageOrigin: picture.origin,
             },
           },
         });

@@ -2,7 +2,7 @@ import type { Metadata } from 'next';
 import type { ReactNode } from 'react';
 import { serverApiJson } from '@/lib/server-api';
 import { articleJsonLd, articleSeo, ogLocale, type PublicArticle } from '@/lib/seo';
-import { getImageAlt } from '@/lib/news-image';
+import { getImageAlt, imageOriginOf } from '@/lib/news-image';
 
 export const dynamic = 'force-dynamic';
 
@@ -23,7 +23,7 @@ export async function generateMetadata({ params }: { params: { slug: string } })
   const article = await loadArticle(params.slug);
   if (!article) return { title: 'Nation Reporters', robots: { index: false } };
   const seo = articleSeo(article);
-  const alt = getImageAlt(article.title, seo.lang);
+  const alt = getImageAlt(article.title, seo.lang, imageOriginOf(article));
   return {
     title: seo.title,
     description: seo.description,
