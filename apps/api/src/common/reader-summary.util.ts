@@ -191,12 +191,13 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(?:Play\s*video){1,2}[^\n]{0,40}शेयर/gu, '');
   t = t.replace(/(\d+:\d{2})\s*(?:Play\s*video\s*){1,2}/gi, '\n$1\n');
   // HT (Hindustan Times) article-end chrome: video links end with -WATCH, puzzle section headers
-  t = t.replace(/([^\n]+-WATCH)\s*/g, '\n$1\n');
+  // (guarded: `[^\n]+-WATCH` is quadratic on one long line without the marker)
+  if (t.includes('-WATCH')) t = t.replace(/([^\n]+-WATCH)\s*/g, '\n$1\n');
   t = t.replace(/\bTired\s+of\s+too\s+many\s+ads\??/gi, '\n$&\n');
   t = t.replace(/\b(Daily\s*Puzzles?|Spelling\s*Bee\s*Today|Connections\s*Game\s*Today|Wordle\s*(?:Answer|Hint)\s*Today)\b/gi, '\n$1\n');
   t = t.replace(/\bGet\s+Latest\s+(?:News|Updates)\s+on\s+(?:HT|Hindustan\s*Times)[^\n]*/gi, '\n$&\n');
   // Hindi/regional desk attribution lines mashed inline
-  t = t.replace(/([ऀ-ॿ\w\s]*डेस्क\s*,[^\n।]{0,80}[।\n])/gu, '\n$1\n');
+  if (t.includes('डेस्क')) t = t.replace(/([ऀ-ॿ\w\s]*डेस्क\s*,[^\n।]{0,80}[।\n])/gu, '\n$1\n');
   // Known publisher name attribution lines (Hindi + regional)
   t = t.replace(/\b(अमर\s*उजाला|दैनिक\s*जागरण|नवभारत\s*टाइम्स|राजस्थान\s*पत्रिका|लाइव\s*हिंदुस्तान|आजतक|इंडिया\s*टुडे)\b/gu, '\n$&\n');
   // Bengali desk/reporter patterns
@@ -453,6 +454,8 @@ export function collectSourceLabels(opts?: PublisherSanitizeOptions): string[] {
 function stripSourceAttribution(text: string, opts?: PublisherSanitizeOptions): string {
   let t = text;
   for (const label of collectSourceLabels(opts)) {
+    // every rule below needs the label literally (case-insensitive): skip the ~10 regex builds/scans when it is absent
+    if (!t.toLowerCase().includes(label.toLowerCase())) continue;
     const esc = escapeRegExp(label);
     t = t.replace(new RegExp(`^\\s*${esc}\\s*\\.?\\s*$`, 'gim'), '');
     t = t.replace(new RegExp(`\\breporter\\s+at\\s+${esc}\\s*\\.?`, 'gi'), '');

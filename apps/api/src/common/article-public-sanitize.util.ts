@@ -325,6 +325,17 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
  * Lightweight list/card sanitize (title + excerpt) plus the generated image reference.
  * Known outlets apply without provenance. Raw media rows (publisher URLs, storage keys) are removed.
  */
+/** List cards show a few lines of teaser: bound the cleaning work per row (cut at a sentence / word boundary). */
+export const LIST_TEXT_MAX_CHARS = 1500;
+function capListText(text: string): string {
+  if (text.length <= LIST_TEXT_MAX_CHARS) return text;
+  const cut = text.slice(0, LIST_TEXT_MAX_CHARS);
+  const sentence = Math.max(cut.lastIndexOf('. '), cut.lastIndexOf('। '), cut.lastIndexOf('\n'));
+  if (sentence > LIST_TEXT_MAX_CHARS * 0.5) return cut.slice(0, sentence + 1);
+  const space = cut.lastIndexOf(' ');
+  return space > LIST_TEXT_MAX_CHARS * 0.5 ? cut.slice(0, space) : cut;
+}
+
 export function sanitizeArticleListItem<
   T extends {
     title?: string | null; excerpt?: string | null; slug?: string | null; language?: string | null;
@@ -339,7 +350,7 @@ export function sanitizeArticleListItem<
     headlineFromText(cleanField(item.excerpt, opts, true) || cleanField(itemRec.bodyShort, opts, true));
   const excerpt =
     item.excerpt != null
-      ? cleanField(item.excerpt, { ...opts, headline: safeTitle }, true) || null
+      ? cleanField(capListText(item.excerpt), { ...opts, headline: safeTitle }, true) || null
       : item.excerpt;
   const { mediaAssets, provenance: _prov, ...rest } = item;
   // Any other reader-visible text a list row may carry is cleaned the same way.
