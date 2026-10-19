@@ -1,3 +1,4 @@
+import { classifyAiError, shortReason } from '../common/gemini-models.util';
 import { containsSourceMention, filterSourceHashtags, scrubSourceMentions, sourceNameVariants } from '../common/source-scrub.util';
 import { assessStoryBody, looksTruncated, stripPageBoilerplate } from '../common/page-boilerplate.util';
 import { sanitizeHashtags } from '../common/reader-summary.util';
@@ -42,7 +43,7 @@ export function analyzeStory(row: StoryRow, extraNames: readonly string[] = []):
   return { needsRewrite: issues.length > 0, issues, plainBody };
 }
 
-export type RewriteOutcome = 'rewritten' | 'rewritten_needs_review' | 'drafted' | 'skipped' | 'retry_later' | 'would_rewrite';
+export type RewriteOutcome = 'rewritten' | 'rewritten_needs_review' | 'drafted' | 'skipped' | 'retry_later' | 'model_unavailable' | 'would_rewrite';
 export type Counts = Record<RewriteOutcome | 'scanned' | 'errors', number>;
 
 export type Deps = {
@@ -50,7 +51,7 @@ export type Deps = {
   loadSource: (row: StoryRow) => Promise<SourceMaterial>;
   rewrite: (input: { title: string; body: string; language: string; publisher: { sourceName: string | null; sourceUrl: string | null } }) => Promise<
     | { ok: true; needsReview: boolean; fields: { title: string; short: string; medium: string; long: string; summary: string; keyPoints: string[]; podcastScript: string; seoTitle: string; seoDescription: string } }
-    | { ok: false; retryable: boolean; reason: string }
+    | { ok: false; retryable: boolean; reason: string; errorKind?: 'model_not_found' | 'quota' | 'other' }
   >;
   updateStory: (id: string, data: Json) => Promise<void>;
   scrubCaptions: (articleId: string, fn: (t: string) => string) => Promise<void>;
@@ -68,7 +69,7 @@ const clip = (t: string, max: number) => (t.length <= max ? t : `${t.slice(0, ma
  * are set to DRAFT (never deleted); model/quota failures change nothing and are retried by the next run. Idempotent.
  */
 export async function rewriteExistingStories(deps: Deps, opts: Options, namesFor: (src: SourceMaterial) => string[] = (s) => sourceNameVariants(s?.sourceName, s?.sourceUrl)): Promise<{ counts: Counts; stoppedEarly: string | null }> {
-  const counts: Counts = { scanned: 0, rewritten: 0, rewritten_needs_review: 0, drafted: 0, skipped: 0, retry_later: 0, would_rewrite: 0, errors: 0 };
+  const counts: Counts = { scanned: 0, rewritten: 0, rewritten_needs_review: 0, drafted: 0, skipped: 0, retry_later: 0, model_unavailable: 0, would_rewrite: 0, errors: 0 };
   let afterId: string | null = null;
   let worked = 0;
   let stoppedEarly: string | null = null;
@@ -127,9 +128,16 @@ export async function rewriteExistingStories(deps: Deps, opts: Options, namesFor
         counts[result.needsReview ? 'rewritten_needs_review' : 'rewritten']++;
         deps.log(`${result.needsReview ? 'REWRITTEN (needs review → PENDING_REVIEW)' : 'REWRITTEN'} ${row.slug}`);
       } else if (result && result.retryable) {
+        const kind = result.errorKind ?? classifyAiError(result.reason);
+        if (kind === 'model_not_found') {
+          counts.model_unavailable++;
+          deps.log(`MODEL ERROR ${row.slug}: ${shortReason(result.reason)}`);
+          stoppedEarly = 'Gemini model not available (retired / not found) — stopping, nothing was changed. Set GEMINI_MODEL in .env (e.g. gemini-2.5-flash), restart the api container and re-run.';
+          break outer;
+        }
         counts.retry_later++;
-        deps.log(`RETRY LATER ${row.slug}: ${result.reason}`);
-        if (/429|quota|too many requests/i.test(result.reason)) { stoppedEarly = 'Gemini quota/rate limit hit — stopping; re-run later (idempotent)'; break outer; }
+        deps.log(`RETRY LATER (${kind === 'quota' ? 'quota/rate limit' : 'temporary error'}) ${row.slug}: ${shortReason(result.reason)}`);
+        if (kind === 'quota') { stoppedEarly = 'Gemini quota/rate limit hit — stopping; re-run later (idempotent)'; break outer; }
       } else {
         const reason = result && !result.ok ? result.reason : 'no usable source text';
         await deps.updateStory(row.id, { status: 'DRAFT', body: { ...body, heldForRewrite: true, [REWRITE_MARK]: { at: now().toISOString(), outcome: 'drafted', reason } } });

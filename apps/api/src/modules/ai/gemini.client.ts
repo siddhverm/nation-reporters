@@ -1,17 +1,36 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { GoogleGenerativeAI, GenerativeModel } from '@google/generative-ai';
+import { DEFAULT_TEXT_FALLBACKS, DEFAULT_TEXT_MODEL, ModelSelector, classifyAiError, parseModelList } from '../../common/gemini-models.util';
 
 @Injectable()
 export class GeminiClient {
-  private readonly model: GenerativeModel;
+  private genAI: GoogleGenerativeAI | null = null;
+  private readonly models = new Map<string, GenerativeModel>();
+  private readonly selector: ModelSelector;
+  /** The model that actually answered last (stored on the story as its `model` label). */
+  lastModelUsed: string | null = null;
   private readonly logger = new Logger(GeminiClient.name);
   private lastCallAt = 0;
   private readonly minIntervalMs = 4500; // 15 RPM free tier → 1 req per 4s
 
-  constructor(config: ConfigService) {
-    const genAI = new GoogleGenerativeAI(config.get<string>('GEMINI_API_KEY')!);
-    this.model = genAI.getGenerativeModel({ model: 'gemini-2.0-flash' });
+  constructor(private readonly config: ConfigService) {
+    const candidates = parseModelList(
+      config.get<string>('GEMINI_MODEL') || DEFAULT_TEXT_MODEL,
+      config.get<string>('GEMINI_MODEL_FALLBACKS') ?? DEFAULT_TEXT_FALLBACKS,
+    );
+    this.selector = new ModelSelector(candidates, 'Gemini text', (m) => this.logger.log(m), 'GEMINI_MODEL');
+  }
+
+  /** Built lazily so a missing key / retired model never breaks app start-up. */
+  private modelFor(name: string): GenerativeModel {
+    let m = this.models.get(name);
+    if (!m) {
+      this.genAI ??= new GoogleGenerativeAI(this.config.get<string>('GEMINI_API_KEY')!);
+      m = this.genAI.getGenerativeModel({ model: name });
+      this.models.set(name, m);
+    }
+    return m;
   }
 
   private async throttle() {
@@ -25,15 +44,19 @@ export class GeminiClient {
     await this.throttle();
     for (let attempt = 0; attempt <= retries; attempt++) {
       try {
-        const result = await this.model.generateContent({
-          contents: [{ role: 'user', parts: [{ text: prompt }] }],
-          generationConfig: { maxOutputTokens: 8192, temperature: 0.4 },
-        });
+        const { result, model } = await this.selector.run((name) =>
+          this.modelFor(name).generateContent({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 8192, temperature: 0.4 },
+          }),
+        );
+        this.lastModelUsed = model;
         const text = result.response.text();
         const tokensUsed = result.response.usageMetadata?.totalTokenCount ?? 0;
         return { text, tokensUsed };
       } catch (err) {
         const msg = (err as Error).message ?? '';
+        if (classifyAiError(err) === 'model_not_found') throw err; // every candidate is gone — retrying cannot help
         const is429 = msg.includes('429') || msg.includes('quota') || msg.includes('Too Many');
         const quotaHardBlocked =
           msg.includes('limit: 0')

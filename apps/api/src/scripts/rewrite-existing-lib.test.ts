@@ -125,4 +125,29 @@ describe('rewriteExistingStories', () => {
     expect(calls).toHaveLength(2); // first candidate (source) failed → second (own text) succeeded
     expect(stoppedEarly).toMatch(/limit/);
   });
+
+  it('model not found (retired model) is a HARD STOP with a clear message, nothing changed, not RETRY LATER', async () => {
+    const h = makeDeps([row('a'), row('b')], async () => ({ ok: false, retryable: true, reason: '[GoogleGenerativeAI Error]: [404 Not Found] This model models/gemini-2.0-flash is no longer available' }));
+    const { counts, stoppedEarly } = await rewriteExistingStories(h.deps, { ...opts, apply: true });
+    expect(counts.model_unavailable).toBe(1);
+    expect(counts.retry_later).toBe(0);
+    expect(stoppedEarly).toMatch(/Set GEMINI_MODEL in \.env/);
+    expect(h.updates).toHaveLength(0);
+    expect(h.logs.join('\n')).toMatch(/MODEL ERROR/);
+    expect(h.logs.join('\n')).not.toMatch(/RETRY LATER/);
+  });
+
+  it('RETRY LATER lines are classified and never cut mid-word', async () => {
+    const long = 'fetch failed because the upstream connection was reset by peer while reading the response body '.repeat(5);
+    const h = makeDeps([row('a')], async () => ({ ok: false, retryable: true, reason: long }));
+    await rewriteExistingStories(h.deps, { ...opts, apply: true });
+    const line = h.logs.find((l) => l.startsWith('RETRY LATER'))!;
+    expect(line).toMatch(/^RETRY LATER \(temporary error\)/);
+    expect(line).toMatch(/\w…$/);
+    expect(line.length).toBeLessThan(300);
+    const q = makeDeps([row('a')], async () => ({ ok: false, retryable: true, reason: '[429 Too Many Requests] Quota exceeded' }));
+    await rewriteExistingStories(q.deps, { ...opts, apply: true });
+    expect(q.logs.join('\n')).toMatch(/RETRY LATER \(quota\/rate limit\)/);
+  });
 });
+

@@ -81,6 +81,7 @@ async function main() {
       opts,
     );
     console.log(JSON.stringify({ summary: counts, stoppedEarly, mode: opts.apply ? 'APPLY' : 'DRY-RUN' }, null, 2));
+    if (stoppedEarly && /model not available|storage problem/.test(stoppedEarly)) { console.error(`STOPPED: ${stoppedEarly}`); process.exitCode = 2; }
     if (!opts.apply) console.log('Dry run only (no changes). Re-run with --apply to mirror/generate the missing pictures.');
   } finally {
     await prisma.$disconnect();

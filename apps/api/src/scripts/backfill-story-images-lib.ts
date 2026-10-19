@@ -53,6 +53,7 @@ export async function backfillStoryImages(deps: ImgDeps, opts: ImgOptions): Prom
       if (r.outcome === 'source_mirrored' || r.outcome === 'generated') changed++;
       deps.log(`${r.outcome.toUpperCase()} ${s.slug}${r.reason ? ` — ${r.reason}` : ''}`);
       if (r.outcome === 'error' && /^storage|S3 not configured/i.test(r.reason ?? '')) { stoppedEarly = `storage problem (${r.reason}) — stopping; fix storage and re-run (idempotent)`; break outer; }
+      if (r.outcome === 'error' && /^model_not_found/i.test(r.reason ?? '')) { stoppedEarly = 'Gemini image model not available (retired / not found) — stopping. Set IMAGE_GEN_MODEL (and GEMINI_MODEL) in .env, restart the api container and re-run.'; break outer; }
       if (opts.delayMs > 0) await sleep(opts.delayMs);
     }
   }
