@@ -16,9 +16,12 @@ import {
   type StoryImageInput,
 } from '../../common/story-image.util';
 import { ImageMode, ImageOrigin, SCAN_GENERATED, SCAN_SOURCE_MIRRORED, originFromValue, parseImageMode } from '../../common/image-mode';
-import { fetchArticleOgImage } from './source-article-text.util';
+import { fetchArticleImageCandidates } from './source-article-text.util';
+import { IMAGE_ACCEPT_NO_AVIF, browserFetch, fetchFailureReason, type BrowserFetchOptions } from '../../common/browser-fetch.util';
+import { largerImageUrlVariants } from '../../common/image-candidates.util';
+import { loadSharpConverter, sniffConvertibleKind, type ImageConverter } from '../../common/image-convert.util';
 import { acceptLanguageHeaderForLocale } from './language-resolution.util';
-import { SafeFetchError, safeFetchBytes, type SafeFetchOptions } from '../../common/safe-fetch.util';
+import { type SafeFetchOptions } from '../../common/safe-fetch.util';
 import { KIND_EXT, prepareSourceImage, sourceImageLimitsFromEnv, type SourceImageLimits } from '../../common/image-sanitize.util';
 
 export const GENERATED_SCAN_STATUS = SCAN_GENERATED;
@@ -46,6 +49,10 @@ export type SourceMirrorOutcome = { ok: true } | { ok: false; reason: string };
 export class StoryImageService {
   private readonly logger = new Logger(StoryImageService.name);
   private lastCallAt = 0;
+  /** Optional sharp-based converter (animated/AVIF/rotated → JPEG); null when sharp is not installed. */
+  imageConverter: ImageConverter | null = loadSharpConverter();
+  /** Injectable fetcher for tests (defaults to the SSRF-safe fetcher). */
+  fetchImpl: BrowserFetchOptions['fetchImpl'] = undefined;
 
   constructor(
     private readonly config: ConfigService,
@@ -192,17 +199,70 @@ export class StoryImageService {
     if (fromFeed && !isWeakStoryImageUrl(fromFeed)) return fromFeed;
     const fetchFlag = (this.config.get<string>('FETCH_SOURCE_ARTICLE') ?? '').toLowerCase();
     if (['0', 'false', 'no', 'off'].includes(fetchFlag) || !articleUrl) return null;
+    const page = await this.pageImageCandidates(articleUrl, language, fetchOptions);
+    return page.candidates[0] ?? null;
+  }
+
+  /** Source-image candidates of the article page (best first) + why there are none, e.g. "page_fetch:http_status:403". */
+  async pageImageCandidates(pageUrl: string | null | undefined, language = 'en', fetchOptions?: SafeFetchOptions): Promise<{ candidates: string[]; reason?: string }> {
+    if (this.imageMode !== 'source_first' || !pageUrl) return { candidates: [] };
+    const fetchFlag = (this.config.get<string>('FETCH_SOURCE_ARTICLE') ?? '').toLowerCase();
+    if (['0', 'false', 'no', 'off'].includes(fetchFlag)) return { candidates: [], reason: 'page:fetch_disabled' };
     try {
-      const og = await fetchArticleOgImage(
-        articleUrl,
-        { timeoutMs: Math.min(Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000), 12_000), maxBytes: 400_000 },
-        { acceptLanguage: acceptLanguageHeaderForLocale(language), safeFetch: fetchOptions },
+      return await fetchArticleImageCandidates(
+        pageUrl,
+        { timeoutMs: Math.min(Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000), 12_000), maxBytes: 600_000 },
+        { acceptLanguage: acceptLanguageHeaderForLocale(language), safeFetch: fetchOptions, fetchImpl: this.fetchImpl },
       );
-      const norm = normalizeImageUrl(og, articleUrl);
-      return norm && !isWeakStoryImageUrl(norm) ? norm : null;
-    } catch {
-      return null;
+    } catch (e) {
+      return { candidates: [], reason: `page:error:${(e as Error).message?.slice(0, 60)}` };
     }
+  }
+
+  /**
+   * Try source-image candidates in order until one validates and is stored: a too-small picture is retried with its
+   * larger CDN version (size query params / "-150x150" suffix removed) before moving on; when the list runs out the
+   * article page is fetched (once) for more candidates (og:image, twitter:image, JSON-LD, article <img>).
+   * A storage failure stops immediately (never masked). Never throws.
+   */
+  async mirrorSourceCandidates(
+    article: AttachImageInput,
+    candidates: Array<string | null | undefined>,
+    opts: { pageUrl?: string | null; lazyPage?: boolean; fetchOptions?: SafeFetchOptions; maxAttempts?: number } = {},
+  ): Promise<{ ok: true; url: string } | { ok: false; reason: string; storage?: boolean }> {
+    const pageUrl = opts.pageUrl ?? article.feedLink ?? null;
+    const queue: string[] = [];
+    for (const raw of candidates) {
+      const n = normalizeImageUrl(raw, pageUrl ?? undefined);
+      if (n && !queue.includes(n)) queue.push(n);
+    }
+    const tried = new Set<string>();
+    const reasons: string[] = [];
+    let pageLoaded = !opts.lazyPage || !pageUrl;
+    let attempts = 0;
+    const max = opts.maxAttempts ?? 10;
+    for (;;) {
+      if (!queue.length && !pageLoaded) {
+        pageLoaded = true;
+        const page = await this.pageImageCandidates(pageUrl, article.language ?? 'en', opts.fetchOptions);
+        if (page.reason) reasons.push(page.reason);
+        queue.push(...page.candidates.filter((c) => !tried.has(c) && !queue.includes(c)));
+        continue;
+      }
+      const c = queue.shift();
+      if (!c) break;
+      if (tried.has(c)) continue;
+      tried.add(c);
+      if (++attempts > max) { reasons.push('too_many_candidates'); break; }
+      const out = await this.mirrorSourceImage({ ...article, sourceImageUrl: c, feedLink: pageUrl ?? article.feedLink }, opts.fetchOptions);
+      if (out.ok) return { ok: true, url: c };
+      reasons.push(out.reason);
+      if (out.reason.startsWith('storage')) return { ok: false, reason: out.reason, storage: true };
+      if (/^(invalid:too_small|invalid:too_small_bytes|weak_url)/.test(out.reason)) {
+        queue.unshift(...largerImageUrlVariants(c).filter((v) => !tried.has(v) && !queue.includes(v)));
+      }
+    }
+    return { ok: false, reason: shortReason(reasons.join('; ') || 'no source image', 300) };
   }
 
   /**
@@ -216,8 +276,9 @@ export class StoryImageService {
         const origin: ImageOrigin = existing.scanStatus === SCAN_SOURCE_MIRRORED ? 'source' : 'generated';
         return { url: storyImagePath(article.slug), alt: buildImageAlt(article.title, article.language, origin), origin };
       }
-      if (this.imageMode === 'source_first' && article.sourceImageUrl) {
-        const outcome = await this.mirrorSourceImage(article, deps.fetchOptions);
+      if (this.imageMode === 'source_first' && (article.sourceImageUrl || article.feedLink)) {
+        // feed/og image first; if it fails, the page's other candidates (lazy fetch) before any generated picture
+        const outcome = await this.mirrorSourceCandidates(article, [article.sourceImageUrl], { pageUrl: article.feedLink, lazyPage: true, fetchOptions: deps.fetchOptions });
         if (outcome.ok) {
           await this.prisma.article.update({ where: { id: article.id }, data: { imageOrigin: 'source' } });
           return { url: storyImagePath(article.slug), alt: buildImageAlt(article.title, article.language, 'source'), origin: 'source' };
@@ -253,20 +314,41 @@ export class StoryImageService {
       if (!store) return { ok: false, reason: 'S3 not configured (never hotlinked)' };
 
       const limits = this.sourceLimits;
+      const fetchOnce = (accept?: string) => browserFetch(normalized, 'image', {
+        maxBytes: limits.maxBytes,
+        timeoutMs: Number(this.config.get('SOURCE_IMAGE_TIMEOUT_MS') ?? 15_000),
+        referer: article.feedLink ?? null,
+        accept,
+        fetchImpl: this.fetchImpl,
+        ...fetchOptions,
+      });
       let fetched;
       try {
-        fetched = await safeFetchBytes(normalized, {
-          maxBytes: limits.maxBytes,
-          timeoutMs: Number(this.config.get('SOURCE_IMAGE_TIMEOUT_MS') ?? 15_000),
-          ...fetchOptions,
-        });
+        fetched = await fetchOnce();
       } catch (e) {
-        return { ok: false, reason: `fetch:${e instanceof SafeFetchError ? e.code : 'error'}` };
+        return { ok: false, reason: fetchFailureReason(e) };
       }
-      if (fetched.contentType && !/^image\//.test(fetched.contentType) && fetched.contentType !== 'application/octet-stream') {
-        return { ok: false, reason: 'not_an_image' };
+      if (fetched.contentType && !/^image\//.test(fetched.contentType) && !/octet-stream|binary/.test(fetched.contentType)) {
+        return { ok: false, reason: `not_an_image(${fetched.contentType.slice(0, 40)})` };
       }
-      const prepared = prepareSourceImage(fetched.body, limits);
+      let prepared = prepareSourceImage(fetched.body, limits);
+      if (!prepared.ok && ['unsupported_or_animated', 'not_an_image', 'needs_rotation'].includes(prepared.reason)) {
+        const kind = sniffConvertibleKind(fetched.body) ?? (fetched.contentType.includes('avif') ? 'avif' : null);
+        if (this.imageConverter) {
+          // first frame of an animation / AVIF / HEIC / rotated JPEG → plain JPEG, then validate again
+          const converted = await this.imageConverter(fetched.body);
+          if (converted) prepared = prepareSourceImage(converted, limits);
+        } else if (kind === 'avif' || kind === 'heic') {
+          // we cannot decode AVIF ourselves: ask the CDN for WebP/JPEG instead
+          try {
+            const again = await fetchOnce(IMAGE_ACCEPT_NO_AVIF);
+            prepared = prepareSourceImage(again.body, limits);
+          } catch (e) {
+            return { ok: false, reason: `invalid:unsupported_or_animated(${kind}); refetch ${fetchFailureReason(e)}` };
+          }
+        }
+        if (!prepared.ok && kind) return { ok: false, reason: `invalid:${prepared.reason}(${kind})` };
+      }
       if (!prepared.ok) return { ok: false, reason: `invalid:${prepared.reason}` };
 
       const key = `source-mirror/images/${article.id}.${KIND_EXT[prepared.kind]}`;
@@ -443,20 +525,17 @@ export class StoryImageService {
         const candidates: string[] = [];
         for (const raw of [article.sourceImageUrl, ...(article.legacyImageUrls ?? [])]) {
           const n = normalizeImageUrl(raw, article.pageUrl ?? article.feedLink ?? undefined);
-          if (n && !isWeakStoryImageUrl(n) && !candidates.includes(n)) candidates.push(n);
+          // tiny thumbnails ("?w=100") are kept: mirrorSourceCandidates tries their larger version
+          if (n && !candidates.includes(n) && (!isWeakStoryImageUrl(n) || largerImageUrlVariants(n).length)) candidates.push(n);
         }
-        // lazy-fetch: the article page's own og:image / twitter:image (SSRF-safe, timeout, size cap)
-        const og = await this.resolveSourceImageUrl(null, article.pageUrl ?? article.feedLink, article.language ?? 'en', opts.fetchOptions);
-        if (og && !candidates.includes(og)) candidates.push(og);
-        for (const c of candidates) {
-          const outcome = await this.mirrorSourceImage({ ...article, sourceImageUrl: c, feedLink: article.pageUrl ?? article.feedLink }, opts.fetchOptions);
-          if (outcome.ok) {
-            await this.markStoryImage(article, 'source');
-            return { outcome: 'source_mirrored' };
-          }
-          reasons.push(outcome.reason);
-          if (outcome.reason.startsWith('storage')) return { outcome: 'error', reason: outcome.reason }; // do not mask a storage outage
+        // stored URLs first, then the article page's own candidates (og:image, twitter:image, JSON-LD, article <img>)
+        const outcome = await this.mirrorSourceCandidates(article, candidates, { pageUrl: article.pageUrl ?? article.feedLink, lazyPage: true, fetchOptions: opts.fetchOptions });
+        if (outcome.ok) {
+          await this.markStoryImage(article, 'source');
+          return { outcome: 'source_mirrored' };
         }
+        if (outcome.storage) return { outcome: 'error', reason: outcome.reason }; // do not mask a storage outage
+        reasons.push(outcome.reason);
       }
       const generated = await this.generateForArticle(article, opts.fetchImpl);
       if (generated) {

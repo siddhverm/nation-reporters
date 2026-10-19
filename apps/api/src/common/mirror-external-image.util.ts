@@ -1,6 +1,7 @@
 import { Logger } from '@nestjs/common';
 import { S3Client, PutObjectCommand } from '@aws-sdk/client-s3';
 import { PrismaService } from '../prisma/prisma.service';
+import { browserFetch, fetchFailureReason } from './browser-fetch.util';
 
 const logger = new Logger('MirrorExternalImage');
 
@@ -94,21 +95,24 @@ export async function mirrorExternalImage(
   config: S3Config,
   sourceUrl: string,
   s3Key: string,
+  referer?: string | null,
 ): Promise<{ publicUrl: string; sizeBytes: number; mimeType: string } | null> {
   try {
-    const normalized = normalizeImageUrl(sourceUrl);
+    const normalized = normalizeImageUrl(sourceUrl, referer ?? undefined);
     if (!normalized) return null;
 
-    const res = await fetch(normalized, {
-      headers: { 'User-Agent': 'NationReporters/1.0', Accept: 'image/*,*/*' },
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!res.ok) return null;
-
-    const mimeType = (res.headers.get('content-type') || 'image/jpeg').split(';')[0].trim();
+    // SSRF-safe, browser-like headers (Referer = article page), one retry with alternate headers on 401/403/429/5xx
+    let fetched;
+    try {
+      fetched = await browserFetch(normalized, 'image', { referer, timeoutMs: 15_000, maxBytes: 5_000_000 });
+    } catch (e) {
+      logger.warn(`mirror failed ${normalized.slice(0, 80)}: ${fetchFailureReason(e)}`);
+      return null;
+    }
+    const mimeType = (fetched.contentType || 'image/jpeg').split(';')[0].trim();
     if (!mimeType.startsWith('image/')) return null;
 
-    const arr = Buffer.from(await res.arrayBuffer());
+    const arr = fetched.body;
     if (arr.length < 200 || arr.length > 5_000_000) return null;
 
     const s3 = new S3Client({
@@ -184,7 +188,7 @@ export async function persistArticleImage(
   let storedKey = `external/${articleId}/source-image`;
 
   if (s3Config) {
-    const mirrored = await mirrorExternalImage(s3Config, normalized, s3Key);
+    const mirrored = await mirrorExternalImage(s3Config, normalized, s3Key, feedLink);
     if (mirrored) {
       mimeType = mirrored.mimeType;
       sizeBytes = mirrored.sizeBytes;

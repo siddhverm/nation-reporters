@@ -12,6 +12,8 @@ import * as https from 'https';
 import * as net from 'net';
 
 export class SafeFetchError extends Error {
+  /** HTTP status for code 'http_status'. */
+  status?: number;
   constructor(public readonly code: string, message?: string) {
     super(message ?? code);
     this.name = 'SafeFetchError';
@@ -170,7 +172,11 @@ export async function safeFetchBytes(rawUrl: string, opts: SafeFetchOptions = {}
       try { current = new URL(next, url).href; } catch { throw new SafeFetchError('bad_redirect'); }
       continue;
     }
-    if (res.status < 200 || res.status >= 300) throw new SafeFetchError('http_status', `HTTP ${res.status}`);
+    if (res.status < 200 || res.status >= 300) {
+      const err = new SafeFetchError('http_status', `HTTP ${res.status}`);
+      err.status = res.status;
+      throw err;
+    }
     if (res.body.length > maxBytes && !opts.truncate) throw new SafeFetchError('too_large');
     const ct = res.headers['content-type'];
     return { body: res.body, contentType: String(Array.isArray(ct) ? ct[0] : ct ?? '').split(';')[0].trim().toLowerCase(), finalHost: host };
