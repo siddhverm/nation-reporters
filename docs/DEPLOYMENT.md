@@ -103,6 +103,7 @@ Name matching rules (since the empty-title fix): only clearly unique outlet toke
 docker compose -f docker-compose.server.yml exec api npm run rewrite:existing-stories:prod -- --limit 500 | grep empty_title   # dry run
 docker compose -f docker-compose.server.yml exec api npm run rewrite:existing-stories:prod -- --apply --limit 100 --delay-ms 4000
 ```
+Image backfill reasons (FALLBACK lines): `fetch:http_status:<code>` (publisher refused the picture even after the browser-header retry), `page_fetch:http_status:<code>` (article page refused), `page:no_image_found`, `invalid:too_small` (no larger version found), `invalid:unsupported_or_animated(gif|avif)` (install `sharp` in apps/api to convert such pictures; without it the next candidate is tried and AVIF is re-requested as WebP/JPEG). Fallback is never stored, so re-running the backfill retries those stories.
 Both scripts purge `country-feed:*` after `--apply`. Output lines: `RETRY LATER (quota/rate limit)` → re-run later; `RETRY LATER (temporary error)` → re-run; `MODEL ERROR … Set GEMINI_MODEL in .env` (exit code 2, nothing changed) → the configured Gemini model is retired: set `GEMINI_MODEL` / `IMAGE_GEN_MODEL` in `.env`, then `docker compose -f docker-compose.server.yml up -d api` and re-run. Check which model is live: `docker compose -f docker-compose.server.yml logs api | grep "using model"`. To flush the cache manually (or after editing data by hand):
 ```bash
 docker compose -f docker-compose.server.yml exec redis sh -c 'redis-cli --scan --pattern "country-feed:*" | xargs -r redis-cli del'

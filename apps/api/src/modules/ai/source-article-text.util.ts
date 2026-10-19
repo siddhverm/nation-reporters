@@ -1,7 +1,9 @@
 import { stripPageBoilerplate } from '../../common/page-boilerplate.util';
 import * as cheerio from 'cheerio';
 import { acceptLanguageHeaderForLocale } from './language-resolution.util';
-import { safeFetchBytes, type SafeFetchOptions } from '../../common/safe-fetch.util';
+import { type SafeFetchOptions } from '../../common/safe-fetch.util';
+import { browserFetch, fetchFailureReason, type BrowserFetchOptions } from '../../common/browser-fetch.util';
+import { extractImageCandidatesFromHtml } from '../../common/image-candidates.util';
 
 const USER_AGENTS = [
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
@@ -179,28 +181,9 @@ export function isAllowedArticleFetchUrl(urlStr: string): boolean {
   }
 }
 
-/** Extract og/twitter share image URLs from HTML (absolute against page URL). */
+/** First share/story image of a page (see extractImageCandidatesFromHtml for the full ordered list). */
 export function extractOgImageFromHtml(html: string, pageUrl: string): string | null {
-  const $ = cheerio.load(html);
-  const candidates = [
-    $('meta[property="og:image"]').attr('content'),
-    $('meta[property="og:image:secure_url"]').attr('content'),
-    $('meta[property="og:image:url"]').attr('content'),
-    $('meta[name="twitter:image"]').attr('content'),
-    $('meta[name="twitter:image:src"]').attr('content'),
-    $('link[rel="image_src"]').attr('href'),
-  ];
-  for (const raw of candidates) {
-    const u = (raw ?? '').trim();
-    if (!u) continue;
-    try {
-      const abs = new URL(u.startsWith('//') ? `https:${u}` : u, pageUrl).href;
-      if (/^https?:\/\//i.test(abs) && !/\.(svg)(\?|$)/i.test(abs)) return abs;
-    } catch {
-      /* ignore */
-    }
-  }
-  return null;
+  return extractImageCandidatesFromHtml(html, pageUrl, 1)[0] ?? null;
 }
 
 export async function fetchArticleTitleAndText(
@@ -278,30 +261,40 @@ export async function fetchArticlePlainText(
 }
 
 /**
- * Prefer og:image / twitter:image from the publisher page when RSS has no usable image.
- * Uses the SSRF-safe fetcher (validated + pinned DNS, http/https on 80/443, redirects re-validated).
+ * All source-image candidates of the publisher page (og:image, twitter:image, image_src, JSON-LD, large article <img>),
+ * best first. Uses the SSRF-safe fetcher with browser headers (validated + pinned DNS, redirects re-validated) and one
+ * retry with alternate headers on 401/403/429/5xx. `reason` explains a failed page fetch (e.g. fetch:http_status:403).
  */
+export async function fetchArticleImageCandidates(
+  url: string,
+  opts: { timeoutMs: number; maxBytes: number },
+  fetchOpts?: { acceptLanguage?: string; safeFetch?: SafeFetchOptions; fetchImpl?: BrowserFetchOptions['fetchImpl'] },
+): Promise<{ candidates: string[]; reason?: string }> {
+  if (!isAllowedArticleFetchUrl(url)) return { candidates: [], reason: 'page:not_allowed' };
+  try {
+    const res = await browserFetch(url, 'page', {
+      timeoutMs: opts.timeoutMs,
+      maxBytes: Math.min(opts.maxBytes, 600_000),
+      truncate: true,
+      referer: url,
+      acceptLanguage: fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
+      fetchImpl: fetchOpts?.fetchImpl,
+      ...(fetchOpts?.safeFetch ?? {}),
+    });
+    const html = new TextDecoder('utf-8', { fatal: false }).decode(res.body);
+    const candidates = extractImageCandidatesFromHtml(html, url);
+    return candidates.length ? { candidates } : { candidates, reason: 'page:no_image_found' };
+  } catch (e) {
+    return { candidates: [], reason: `page_${fetchFailureReason(e)}` };
+  }
+}
+
+/** First source-image candidate of the publisher page (kept for callers that need one URL). */
 export async function fetchArticleOgImage(
   url: string,
   opts: { timeoutMs: number; maxBytes: number },
   fetchOpts?: { acceptLanguage?: string; safeFetch?: SafeFetchOptions },
 ): Promise<string | null> {
-  if (!isAllowedArticleFetchUrl(url)) return null;
-  try {
-    const res = await safeFetchBytes(url, {
-      timeoutMs: opts.timeoutMs,
-      maxBytes: Math.min(opts.maxBytes, 400_000),
-      truncate: true,
-      headers: {
-        'User-Agent': randomUserAgent(),
-        Accept: 'text/html,application/xhtml+xml;q=0.9,*/*;q=0.8',
-        'Accept-Language': fetchOpts?.acceptLanguage ?? acceptLanguageHeaderForLocale('en'),
-      },
-      ...(fetchOpts?.safeFetch ?? {}),
-    });
-    const html = new TextDecoder('utf-8', { fatal: false }).decode(res.body);
-    return extractOgImageFromHtml(html, url);
-  } catch {
-    return null;
-  }
+  const r = await fetchArticleImageCandidates(url, opts, fetchOpts);
+  return r.candidates[0] ?? null;
 }
