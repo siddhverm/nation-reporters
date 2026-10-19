@@ -1,7 +1,7 @@
 import { sanitizeHashtags, sanitizePublisherStoryText, scrubSourceLabels, stripSourceFromSlug } from './reader-summary.util';
 import { buildImageAlt, storyImagePath } from './story-image.util';
 import { type ImageOrigin, originFromValue } from './image-mode';
-import { filterSourceHashtags, scrubSourceMentions, sourceNameVariants } from './source-scrub.util';
+import { filterSourceHashtags, scrubSourceMentions, scrubSourceMentionsInTitle, sourceNameVariants } from './source-scrub.util';
 import { stripPageBoilerplate } from './page-boilerplate.util';
 
 type ProvenanceLike = {
@@ -80,6 +80,37 @@ function cleanField(
   return raw.length <= 120 ? scrubSourceMentions(scrubSourceLabels(raw, opts), names) : '';
 }
 
+/**
+ * Clean a HEADLINE-like field (title, seoTitle, video title). Never runs the duplicate-headline remover on it and never
+ * shrinks it below 3 words / 60%: in that case only attribution phrases are removed and the wording is kept.
+ */
+function cleanHeadlineField(text: string | null | undefined, opts: CleanOpts): string {
+  const raw = (text ?? '').trim();
+  if (!raw) return '';
+  const names = namesFor(opts);
+  const scrubbed = scrubSourceMentionsInTitle(raw, names).trim();
+  const noHeadline = { sourceName: opts.sourceName, sourceUrl: opts.sourceUrl };
+  const cleaned = scrubSourceMentionsInTitle(scrubSourceLabels(sanitizePublisherStoryText(scrubbed, noHeadline), noHeadline), names).trim();
+  // Removing an "Outlet: " prefix is a legitimate big shrink; only a collapse (fewer than 3 words / empty) falls back.
+  const words = (x: string) => x.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+  const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}]/u.test(raw);
+  const collapsed = !cleaned || (cjk ? [...cleaned].length < Math.min(6, [...raw].length) : words(cleaned) < Math.min(3, words(raw)));
+  if (!collapsed) return cleaned;
+  if (looksLikePublisherChrome(raw)) return cleaned; // pure desk chrome: may legitimately become empty
+  return scrubbed;
+}
+
+/** First sentence(s) of a teaser, word-safe, as an emergency headline for stories stored without a title. */
+function headlineFromText(text: string | null | undefined, max = 110): string {
+  const t = (text ?? '').replace(/\s+/g, ' ').trim();
+  if (!t) return '';
+  const first = t.split(/(?<=[.!?।。！？])\s+/)[0] ?? t;
+  const s = first.replace(/[.!?।。！？]+$/, '');
+  if (s.length <= max) return s;
+  const cut = s.slice(0, max);
+  return cut.slice(0, Math.max(cut.lastIndexOf(' '), Math.floor(max * 0.6))).replace(/[\s,;:–—-]+$/, '') + '…';
+}
+
 /** Walk TipTap/ProseMirror text nodes and strip publisher chrome in place. */
 function sanitizeTipTapBody(
   body: unknown,
@@ -118,7 +149,7 @@ function sanitizeTipTapBody(
         av.narration = scrubSourceMentions(sanitizePublisherStoryText(av.narration, opts), namesFor(opts)).trim();
       }
       if (typeof av.title === 'string' && av.title.trim()) {
-        const cleanedTitle = scrubSourceMentions(sanitizePublisherStoryText(av.title, opts), namesFor(opts)).trim();
+        const cleanedTitle = cleanHeadlineField(av.title, opts);
         if (cleanedTitle) av.title = cleanedTitle;
       }
       next.aiVideo = av;
@@ -236,11 +267,14 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
   const sourceName = provenance?.sourceName ?? null;
   const sourceUrl = provenance?.sourceUrl ?? null;
   const rawTitle = (article.title ?? '').trim();
-  const cleanedTitle = cleanField(rawTitle, { sourceName, sourceUrl });
-  // Never restore chrome-only titles; keep raw only when it looks like a real headline.
+  const baseOpts = { sourceName, sourceUrl };
+  const bodyRec = (article.body && typeof article.body === 'object' ? article.body : {}) as { aiVideo?: { title?: unknown } };
+  // Never empty: title → seoTitle → video title → first sentence of the excerpt / short body (stories saved without one).
   const title =
-    cleanedTitle ||
-    (looksLikePublisherChrome(rawTitle) ? '' : rawTitle);
+    cleanHeadlineField(rawTitle, baseOpts) ||
+    cleanHeadlineField(article.seoTitle, baseOpts) ||
+    cleanHeadlineField(typeof bodyRec.aiVideo?.title === 'string' ? bodyRec.aiVideo.title : '', baseOpts) ||
+    headlineFromText(cleanField(article.excerpt, baseOpts, true) || cleanField(article.bodyShort, baseOpts, true));
   const opts = { headline: title, sourceName, sourceUrl };
 
   const { provenance: _drop, socialCaptions, ...rest } = article as T & {
@@ -267,12 +301,15 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
     ...(Array.isArray(mediaAssets) ? { mediaAssets: publicMediaAssets(mediaAssets, image) } : {}),
     ...(captions !== undefined ? { socialCaptions: captions } : {}),
     title,
-    excerpt: article.excerpt != null ? cleanField(article.excerpt, opts, true) || null : article.excerpt,
+    // never empty when the story has any usable short text
+    excerpt: article.excerpt != null
+      ? cleanField(article.excerpt, opts, true) || cleanField(article.bodyShort, opts, true) || cleanField(article.bodyMedium, opts, true) || null
+      : article.excerpt,
     bodyShort: article.bodyShort != null ? cleanField(article.bodyShort, opts, true) || null : article.bodyShort,
     bodyMedium:
       article.bodyMedium != null ? cleanField(article.bodyMedium, opts, true) || null : article.bodyMedium,
     ...(typeof article.podcastScript === 'string' ? { podcastScript: cleanField(article.podcastScript, opts, true) || null } : {}),
-    seoTitle: article.seoTitle != null ? cleanField(article.seoTitle, opts) || null : article.seoTitle,
+    seoTitle: article.seoTitle != null ? cleanHeadlineField(article.seoTitle, baseOpts) || title || null : article.seoTitle,
     seoDescription:
       article.seoDescription != null
         ? cleanField(article.seoDescription, opts) || null
@@ -295,9 +332,11 @@ export function sanitizeArticleListItem<
   },
 >(item: T): Omit<T, 'provenance'> & { image?: { url: string; alt: string; origin: ImageOrigin }; imageOrigin?: ImageOrigin } {
   const opts = { sourceName: item.provenance?.sourceName, sourceUrl: item.provenance?.sourceUrl };
-  const title = cleanField(item.title, opts) || '';
-  // Prefer empty over chrome when title was outlet desk junk.
-  const safeTitle = title || (looksLikePublisherChrome(item.title ?? '') ? '' : (item.title ?? ''));
+  const itemRec = item as unknown as { seoTitle?: string | null; bodyShort?: string | null };
+  const safeTitle =
+    cleanHeadlineField(item.title, opts) ||
+    cleanHeadlineField(itemRec.seoTitle, opts) ||
+    headlineFromText(cleanField(item.excerpt, opts, true) || cleanField(itemRec.bodyShort, opts, true));
   const excerpt =
     item.excerpt != null
       ? cleanField(item.excerpt, { ...opts, headline: safeTitle }, true) || null
@@ -309,7 +348,7 @@ export function sanitizeArticleListItem<
     if (typeof restRec[k] === 'string') restRec[k] = cleanField(restRec[k] as string, { ...opts, headline: safeTitle }, true) || null;
   }
   for (const k of ['seoTitle', 'seoDescription'] as const) {
-    if (typeof restRec[k] === 'string') restRec[k] = cleanField(restRec[k] as string, { ...opts, headline: safeTitle }) || null;
+    if (typeof restRec[k] === 'string') restRec[k] = (k === 'seoTitle' ? cleanHeadlineField(restRec[k] as string, opts) || safeTitle : cleanField(restRec[k] as string, { ...opts, headline: safeTitle })) || null;
   }
   if (Array.isArray(restRec.socialCaptions)) {
     restRec.socialCaptions = (restRec.socialCaptions as Array<{ caption?: string | null }>).map((c) => ({ ...c, caption: c?.caption != null ? cleanField(c.caption, opts) || '' : c?.caption }));

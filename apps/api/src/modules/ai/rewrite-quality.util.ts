@@ -66,7 +66,7 @@ export function assessRewrite(
     ['keyPoints', (draft.keyPoints ?? []).join('\n')],
   ];
   const hasContent = (draft.long ?? '').trim().length > 0 || (draft.summary ?? '').trim().length > 0;
-  if (!hasContent || !(draft.title ?? '').trim()) problems.push('empty');
+  if (!hasContent || titleTooShort(draft.title)) problems.push('empty');
   if (fields.some(([, text]) => containsSourceMention(text, publisherNames))) problems.push('names_source');
 
   let worst: OverlapResult | null = null;
@@ -120,4 +120,14 @@ export function normalizeKeyPoints(raw: unknown, max = 8): string[] {
     if (out.length >= max) break;
   }
   return out;
+}
+
+/** A headline needs at least 2 real words (an empty / one-word title is never published; the gate retries). */
+export function titleTooShort(title: string | null | undefined): boolean {
+  const t = (title ?? '').trim();
+  if (!t) return true;
+  const words = t.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w));
+  // scripts without spaces (zh/ja/th): fall back to characters
+  if (/[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u.test(t)) return [...t].length < 4;
+  return words.length < 2;
 }

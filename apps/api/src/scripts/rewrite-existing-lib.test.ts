@@ -43,6 +43,11 @@ describe('analyzeStory', () => {
     expect(analyzeStory(clean).needsRewrite).toBe(false);
     expect(analyzeStory(row('3', {}, { rewriteV2: { outcome: 'rewritten' } })).issues).toEqual(['already_processed']);
   });
+  it('flags empty titles even on stories an earlier run already processed', () => {
+    const a = analyzeStory(row('4', { title: '', excerpt: 'Fairfax will buy IDBI Bank.', hashtags: [] }, { content: [para('Fairfax will buy IDBI Bank.')], keyPoints: ['x'], rewriteV2: { outcome: 'rewritten' } }));
+    expect(a.needsRewrite).toBe(true);
+    expect(a.issues).toEqual(['empty_title']);
+  });
   it('plainTextOfBody joins paragraphs', () => {
     expect(plainTextOfBody({ type: 'doc', content: [para('A.'), para('B.')] })).toBe('A.\n\nB.');
   });

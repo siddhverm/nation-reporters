@@ -3,6 +3,7 @@ import { containsSourceMention, filterSourceHashtags, scrubSourceMentions, sourc
 import { assessStoryBody, looksTruncated, stripPageBoilerplate } from '../common/page-boilerplate.util';
 import { sanitizeHashtags } from '../common/reader-summary.util';
 import { sleep } from './cli-util';
+import { titleTooShort } from '../modules/ai/rewrite-quality.util';
 
 type Json = Record<string, unknown>;
 
@@ -33,8 +34,11 @@ export function plainTextOfBody(body: unknown): string {
 export function analyzeStory(row: StoryRow, extraNames: readonly string[] = []): StoryAnalysis {
   const body = (row.body && typeof row.body === 'object' ? row.body : {}) as Json;
   const plainBody = plainTextOfBody(body);
-  if (body[REWRITE_MARK]) return { needsRewrite: false, issues: ['already_processed'], plainBody };
+  // A story saved with an empty / one-word title is always repaired, even if an earlier run already processed it.
+  const emptyTitle = titleTooShort(row.title);
+  if (body[REWRITE_MARK] && !emptyTitle) return { needsRewrite: false, issues: ['already_processed'], plainBody };
   const issues: string[] = [];
+  if (emptyTitle) issues.push('empty_title');
   const texts = [row.title, row.excerpt, row.bodyShort, row.bodyMedium, row.podcastScript, plainBody, ...(Array.isArray(body.keyPoints) ? (body.keyPoints as string[]) : [])].filter((t): t is string => typeof t === 'string' && !!t.trim());
   if (texts.some((t) => containsSourceMention(t, extraNames))) issues.push('names_source');
   if (stripPageBoilerplate(plainBody) !== plainBody.trim() || /Trending Stories|Join conversation|End of Article|Follow Us On Social Media/i.test(plainBody)) issues.push('boilerplate');

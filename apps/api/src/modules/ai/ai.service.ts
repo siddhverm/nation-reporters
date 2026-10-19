@@ -2,6 +2,8 @@ import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from './gemini.client';
+import { scrubSourceMentionsInTitle } from '../../common/source-scrub.util';
+import { titleTooShort } from './rewrite-quality.util';
 import { classifyAiError, shortReason, type AiErrorKind } from '../../common/gemini-models.util';
 import {
   fetchArticlePlainText,
@@ -246,7 +248,9 @@ export class AiService {
         );
       const rewrite = {
         ...rewriteRaw,
-        title: stripWireHeadlinePrefix(stripRewritten(rewriteRaw.title)),
+        // A title is NOT body text: never run it through the body boilerplate stripper (it drops any line that looks
+        // like the source headline, which emptied titles that stayed close to the original wording).
+        title: stripWireHeadlinePrefix(scrubSourceMentionsInTitle(stripSyndicationLinkbacks(rewriteRaw.title), publisherNames)).trim(),
         short: stripRewritten(rewriteRaw.short),
         medium: stripRewritten(rewriteRaw.medium),
         long: stripRewritten(rewriteRaw.long),
@@ -263,11 +267,17 @@ export class AiService {
       if (!outQuality.ok) {
         throw new RewriteRejectedError(`rewritten body not publishable (${outQuality.reasons.join(',')})`, null);
       }
+      if (titleTooShort(rewrite.title)) {
+        throw new RewriteRejectedError('rewrite produced an empty / too short title', null);
+      }
 
-      const readerSummary = stripPublisherFeedBoilerplate(
-        this.finalizeInBrief(rewrite.summary, rewrite.short, rewrite.medium, rewrite.long, language, rewrite.title),
-        rewrite.title,
-        publisherSanitize,
+      const readerSummary = this.nonEmptyTeaser(
+        stripPublisherFeedBoilerplate(
+          this.finalizeInBrief(rewrite.summary, rewrite.short, rewrite.medium, rewrite.long, language, rewrite.title),
+          rewrite.title,
+          publisherSanitize,
+        ),
+        [rewrite.summary, rewrite.short, rewrite.medium, rewrite.long],
       );
       const longForPrompts = this.clipForPrompt(rewrite.long, 24_000);
 
@@ -294,7 +304,7 @@ export class AiService {
       // AI-written SEO fields can name the outlet (the model sees the source text): scrub them before storing.
       const seo = {
         ...seoRaw,
-        seoTitle: scrubSourceMentions(scrubSourceLabels(seoRaw.seoTitle ?? '', publisherSanitize), publisherNames) || rewrite.title,
+        seoTitle: ((t) => (titleTooShort(t) ? rewrite.title : t))(scrubSourceMentionsInTitle(scrubSourceLabels(seoRaw.seoTitle ?? '', publisherSanitize) || seoRaw.seoTitle || '', publisherNames)),
         seoDescription: scrubSourceMentions(scrubSourceLabels(seoDescription ?? seoRaw.seoDescription ?? '', publisherSanitize), publisherNames),
         slug: stripSourceFromSlug(seoRaw.slug ?? '', publisherSanitize) || `story-${Date.now().toString(36)}`,
         hashtags: filterSourceHashtags(sanitizeHashtags(seoRaw.hashtags, publisherSanitize), publisherNames),
@@ -566,7 +576,7 @@ export class AiService {
       const strip = (t: string) =>
         scrubSourceMentions(stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(stripPageBoilerplate(t)), titlePlain, publisher), publisherNames);
       const rw = {
-        title: stripWireHeadlinePrefix(strip(raw.title)),
+        title: stripWireHeadlinePrefix(scrubSourceMentionsInTitle(stripSyndicationLinkbacks(raw.title), publisherNames)).trim(),
         short: strip(raw.short),
         medium: strip(raw.medium),
         long: strip(raw.long),
@@ -576,10 +586,14 @@ export class AiService {
       };
       const outQ = assessStoryBody(rw.long, { minChars: 60 });
       if (!outQ.ok) return { ok: false, retryable: false, reason: `rewritten body not publishable (${outQ.reasons.join(',')})` };
-      const summary = stripPublisherFeedBoilerplate(
-        this.finalizeInBrief(rw.summary, rw.short, rw.medium, rw.long, input.language, rw.title),
-        rw.title,
-        publisher,
+      if (titleTooShort(rw.title)) return { ok: false, retryable: false, reason: 'rewrite produced an empty / too short title' };
+      const summary = this.nonEmptyTeaser(
+        stripPublisherFeedBoilerplate(
+          this.finalizeInBrief(rw.summary, rw.short, rw.medium, rw.long, input.language, rw.title),
+          rw.title,
+          publisher,
+        ),
+        [rw.summary, rw.short, rw.medium, rw.long],
       );
       const seoDescription = scrubSourceMentions(this.clipExcerpt(summary, 155) ?? '', publisherNames);
       const all = [rw.title, summary, rw.short, rw.medium, rw.long, rw.podcastScript, rw.keyPoints.join('\n'), seoDescription];
@@ -882,6 +896,17 @@ export class AiService {
     const t = (text ?? '').trim();
     if (t.length <= max) return t;
     return `${t.slice(0, max)}…`;
+  }
+
+  /** The excerpt is never empty: if cleaning removed it, use the first usable (already scrubbed) rewrite field. */
+  private nonEmptyTeaser(teaser: string, fallbacks: string[]): string {
+    const okT = (x: string) => x.trim().split(/\s+/).length >= 3 || [...x.trim()].length >= 20;
+    if (okT(teaser)) return teaser.trim();
+    for (const f of fallbacks) {
+      const c = this.clipExcerpt(f ?? '', 300);
+      if (c && okT(c)) return c.trim();
+    }
+    return teaser.trim();
   }
 
   private buildFallbackSocialCaptions(title: string, summary: string): Record<string, string> {
