@@ -110,3 +110,39 @@ describe('AiService.rewriteWithQualityGate (mocked Gemini)', () => {
     await expect(svc.rewriteWithQualityGate(SOURCE_TITLE, SOURCE_BODY, 'en')).rejects.toThrow(/429/);
   });
 });
+
+describe('publisher names in model output', () => {
+  const naming = {
+    ...good,
+    title: 'New metro line, TOI reports',
+    summary: good.summary + ' According to TOI, work starts soon.',
+    long: good.long + '\n\nA hospital note accessed by TOI stated the plan is final (PTI).',
+    podcastScript: 'Reuters reported a new metro line for the capital.',
+  };
+  it('assessRewrite flags a draft that still names the publisher', () => {
+    expect(assessRewrite(naming, SOURCE_TITLE, SOURCE_BODY).problems).toContain('names_source');
+    expect(assessRewrite(good, SOURCE_TITLE, SOURCE_BODY, undefined, ['Gazetteer Weekly']).problems).not.toContain('names_source');
+    expect(assessRewrite({ ...good, short: 'Gazetteer Weekly says a line opens.' }, SOURCE_TITLE, SOURCE_BODY, undefined, ['Gazetteer Weekly']).problems).toContain('names_source');
+  });
+  it('rewriteWithQualityGate scrubs outlet names from every field before assessment (no retry needed)', async () => {
+    const { svc, gemini } = make([naming]);
+    const r = await svc.rewriteWithQualityGate(SOURCE_TITLE, SOURCE_BODY, 'en', { sourceName: 'Times of India', sourceUrl: 'https://timesofindia.indiatimes.com/a' });
+    expect(gemini.generateJson).toHaveBeenCalledTimes(1);
+    expect(JSON.stringify(r.data)).not.toMatch(/TOI|Reuters|PTI/);
+    expect(r.data.title).toBe('New metro line');
+    expect(r.data.summary).toContain('According to a report, work starts soon');
+    expect(r.data.long).toContain('accessed by reporters stated');
+  });
+  it("scrubs the item's own (unknown) publisher passed from the sources table", async () => {
+    const { svc } = make([{ ...good, summary: good.summary + ' Gazetteer Weekly reported the plan.' }]);
+    const r = await svc.rewriteWithQualityGate(SOURCE_TITLE, SOURCE_BODY, 'en', { sourceName: 'Gazetteer Weekly', sourceUrl: 'https://gazetteer-weekly.example/rss' });
+    expect(r.data.summary).not.toMatch(/Gazetteer/);
+    expect(r.data.summary).toMatch(/Reports said the plan/);
+  });
+  it('the prompt tells the model never to name the outlet and to say "reports said"', async () => {
+    const { svc, prompts } = make([good]);
+    await svc.rewriteWithQualityGate(SOURCE_TITLE, SOURCE_BODY, 'en');
+    expect(prompts[0]).toMatch(/NEVER name or hint at the original publisher/);
+    expect(prompts[0]).toMatch(/"reports said"/);
+  });
+});

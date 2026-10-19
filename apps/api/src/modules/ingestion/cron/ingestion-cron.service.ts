@@ -35,6 +35,7 @@ import { StoryImageService } from '../../ai/story-image.service';
 import { pickStrongestImageUrl } from '../../../common/mirror-external-image.util';
 import { heldPlaceholderText, parseRawFallbackMode } from '../../../common/held-story';
 import { scrubSourceLabels } from '../../../common/reader-summary.util';
+import { scrubSourceMentions, sourceNameVariants } from '../../../common/source-scrub.util';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
 
 type CategorySlug =
@@ -682,7 +683,7 @@ export class IngestionCronService {
           ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       ),
     );
-    const title = scrubSourceLabels(displayTitle, sanitizeOpts) || displayTitle;
+    const title = scrubSourceMentions(scrubSourceLabels(displayTitle, sanitizeOpts), sourceNameVariants(source.name, ingestedArticle.sourceUrl)) || displayTitle;
     const slug = await resolveUniqueArticleSlug(
       async (base) => Boolean(
         await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } }),

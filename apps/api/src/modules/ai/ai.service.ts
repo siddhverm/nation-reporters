@@ -30,6 +30,8 @@ import {
   stripSourceFromSlug,
 } from '../../common/reader-summary.util';
 import { StoryImageService } from './story-image.service';
+import { containsSourceMention, scrubSourceMentions, sourceNameVariants } from '../../common/source-scrub.util';
+import { assessStoryBody, stripPageBoilerplate } from '../../common/page-boilerplate.util';
 
 type ProcessIngestedOptions = {
   language?: string;
@@ -105,8 +107,12 @@ export class AiService {
     title: string,
     body: string,
     language: string,
+    publisher: { sourceName?: string | null; sourceUrl?: string | null } = {},
   ): Promise<{ data: RewriteResult; tokensUsed: number; assessment: RewriteAssessment; attempts: number; needsReview: boolean }> {
-    let retryReason: 'too_similar' | 'missing_facts' | null = null;
+    // Publisher names for THIS item (plus every registered source) — scrubbed from every output field.
+    const publisherNames = sourceNameVariants(publisher.sourceName, publisher.sourceUrl);
+    const sc = (t: string) => scrubSourceMentions(t, publisherNames);
+    let retryReason: 'too_similar' | 'missing_facts' | 'names_source' | null = null;
     let missingNumbers: string[] = [];
     let tokens = 0;
     let last: { data: RewriteResult; assessment: RewriteAssessment } | null = null;
@@ -125,16 +131,16 @@ export class AiService {
       );
       tokens += tokensUsed;
       const data: RewriteResult = {
-        title: String(raw.title ?? '').trim(),
-        summary: String(raw.summary ?? '').trim(),
-        keyPoints: normalizeKeyPoints(raw.keyPoints),
-        short: String(raw.short ?? '').trim(),
-        medium: String(raw.medium ?? '').trim(),
-        long: String(raw.long ?? '').trim(),
-        podcastScript: String(raw.podcastScript ?? '').trim(),
+        title: sc(String(raw.title ?? '').trim()),
+        summary: sc(String(raw.summary ?? '').trim()),
+        keyPoints: normalizeKeyPoints(raw.keyPoints).map(sc).filter((k) => k.length >= 8),
+        short: sc(String(raw.short ?? '').trim()),
+        medium: sc(String(raw.medium ?? '').trim()),
+        long: sc(String(raw.long ?? '').trim()),
+        podcastScript: sc(String(raw.podcastScript ?? '').trim()),
         language: String(raw.language ?? language),
       };
-      const assessment = assessRewrite(data as RewriteDraft, title, body, this.qualityLimits);
+      const assessment = assessRewrite(data as RewriteDraft, title, body, this.qualityLimits, publisherNames);
       last = { data, assessment };
       if (assessment.ok) {
         return { data, tokensUsed: tokens, assessment, attempts: attempt, needsReview: false };
@@ -143,12 +149,14 @@ export class AiService {
         `rewrite attempt ${attempt}/${this.maxRewriteAttempts} rejected: ${assessment.problems.join(',')}` +
           (assessment.worstField ? ` (field=${assessment.worstField} overlap=${assessment.worst?.ratio.toFixed(2)} run=${assessment.worst?.longestRun})` : ''),
       );
-      retryReason = assessment.problems.includes('too_similar') ? 'too_similar' : 'missing_facts';
+      retryReason = assessment.problems.includes('names_source')
+        ? 'names_source'
+        : assessment.problems.includes('too_similar') ? 'too_similar' : 'missing_facts';
       missingNumbers = assessment.numbers.missing;
     }
 
     const a = last!.assessment;
-    if (a.problems.includes('empty') || a.problems.includes('too_similar')) {
+    if (a.problems.includes('empty') || a.problems.includes('too_similar') || a.problems.includes('names_source')) {
       throw new RewriteRejectedError(
         `rewrite rejected after ${this.maxRewriteAttempts} attempts: ${a.problems.join(',')}`,
         a,
@@ -209,10 +217,15 @@ export class AiService {
       }
 
       bodyForRewrite = stripPublisherFeedBoilerplate(
-        stripSyndicationLinkbacks(bodyForRewrite),
+        stripSyndicationLinkbacks(stripPageBoilerplate(bodyForRewrite)),
         titlePlain || ingested.sourceTitle,
         publisherSanitize,
       );
+      // A page that is only menus / "Trending Stories" / comment prompts has no story to rewrite: hold it as DRAFT.
+      const inputQuality = assessStoryBody(bodyForRewrite, { minChars: 0, requireSentenceEnd: false });
+      if (inputQuality.reasons.includes('empty') || inputQuality.reasons.includes('mostly_boilerplate')) {
+        throw new RewriteRejectedError(`source text is page boilerplate (${inputQuality.reasons.join(',')})`, null);
+      }
 
       // Always publish under the feed's language — never let AI or script detection override.
       const language = feedLangHint;
@@ -221,11 +234,15 @@ export class AiService {
       //    in original wording (quality gate rejects copied phrasing / lost numbers).
       const {
         data: rewriteRaw, tokensUsed: rwTokens, needsReview: factsNeedReview,
-      } = await this.rewriteWithQualityGate(titlePlain || ingested.sourceTitle, bodyForRewrite, language);
+      } = await this.rewriteWithQualityGate(titlePlain || ingested.sourceTitle, bodyForRewrite, language, publisherSanitize);
 
       const headlineForStrip = titlePlain || ingested.sourceTitle;
+      const publisherNames = sourceNameVariants(publisherSanitize.sourceName, publisherSanitize.sourceUrl);
       const stripRewritten = (t: string) =>
-        stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(t), headlineForStrip, publisherSanitize);
+        scrubSourceMentions(
+          stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(stripPageBoilerplate(t)), headlineForStrip, publisherSanitize),
+          publisherNames,
+        );
       const rewrite = {
         ...rewriteRaw,
         title: stripWireHeadlinePrefix(stripRewritten(rewriteRaw.title)),
@@ -239,6 +256,12 @@ export class AiService {
           .filter((k) => k.length >= 8),
         language: rewriteRaw.language,
       };
+
+      // Never publish a story that is empty, mostly page boilerplate, or cut off mid-sentence.
+      const outQuality = assessStoryBody(rewrite.long, { minChars: 60 });
+      if (!outQuality.ok) {
+        throw new RewriteRejectedError(`rewritten body not publishable (${outQuality.reasons.join(',')})`, null);
+      }
 
       const readerSummary = stripPublisherFeedBoilerplate(
         this.finalizeInBrief(rewrite.summary, rewrite.short, rewrite.medium, rewrite.long, language, rewrite.title),
@@ -270,8 +293,8 @@ export class AiService {
       // AI-written SEO fields can name the outlet (the model sees the source text): scrub them before storing.
       const seo = {
         ...seoRaw,
-        seoTitle: scrubSourceLabels(seoRaw.seoTitle ?? '', publisherSanitize) || rewrite.title,
-        seoDescription: scrubSourceLabels(seoDescription ?? seoRaw.seoDescription ?? '', publisherSanitize),
+        seoTitle: scrubSourceMentions(scrubSourceLabels(seoRaw.seoTitle ?? '', publisherSanitize), publisherNames) || rewrite.title,
+        seoDescription: scrubSourceMentions(scrubSourceLabels(seoDescription ?? seoRaw.seoDescription ?? '', publisherSanitize), publisherNames),
         slug: stripSourceFromSlug(seoRaw.slug ?? '', publisherSanitize) || `story-${Date.now().toString(36)}`,
         hashtags: sanitizeHashtags(seoRaw.hashtags, publisherSanitize),
       };
@@ -283,11 +306,23 @@ export class AiService {
           captionsPrompt(rewrite.title, readerSummary, language),
         );
         captions = Object.fromEntries(
-          Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? scrubSourceLabels(v, publisherSanitize) : v]),
+          Object.entries(data).map(([k, v]) => [k, typeof v === 'string' ? scrubSourceMentions(scrubSourceLabels(v, publisherSanitize), publisherNames) : v]),
         ) as Record<string, string>;
       } catch (capErr) {
         this.logger.warn(`Caption generation failed, using fallbacks: ${(capErr as Error).message}`);
         captions = this.buildFallbackSocialCaptions(rewrite.title, readerSummary);
+      }
+
+      // Post-check: if ANY reader-facing field still names a publisher, do not store/publish this draft
+      // (the caller falls back to the safe held-DRAFT path; the item stays RAW for a later retry).
+      const leakFields: Array<[string, string]> = [
+        ['title', rewrite.title], ['summary', readerSummary], ['short', rewrite.short], ['medium', rewrite.medium], ['long', rewrite.long],
+        ['podcastScript', rewrite.podcastScript], ['keyPoints', rewrite.keyPoints.join('\n')], ['seoTitle', seo.seoTitle], ['seoDescription', seo.seoDescription],
+        ...Object.entries(captions).map(([k, v]) => [`caption:${k}`, typeof v === 'string' ? v : ''] as [string, string]),
+      ];
+      const leaking = leakFields.filter(([, v]) => containsSourceMention(v, publisherNames)).map(([k]) => k);
+      if (leaking.length) {
+        throw new RewriteRejectedError(`rewrite still names the source in: ${leaking.join(',')}`, null);
       }
 
       // 5. Risk

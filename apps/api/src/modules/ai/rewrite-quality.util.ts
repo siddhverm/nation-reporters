@@ -1,3 +1,4 @@
+import { containsSourceMention } from '../../common/source-scrub.util';
 import {
   DEFAULT_OVERLAP_LIMITS, measureOverlap, numberRetention, overlapTooHigh,
   type OverlapLimits, type OverlapResult,
@@ -16,7 +17,7 @@ export type RewriteDraft = {
 export type RewriteAssessment = {
   ok: boolean;
   /** why the draft was rejected, most important first */
-  problems: Array<'empty' | 'too_similar' | 'missing_facts'>;
+  problems: Array<'empty' | 'too_similar' | 'missing_facts' | 'names_source'>;
   worst: OverlapResult | null;
   worstField: string | null;
   numbers: { ratio: number; total: number; missing: string[] };
@@ -53,6 +54,8 @@ export function assessRewrite(
   sourceTitle: string,
   sourceBody: string,
   limits: QualityLimits = DEFAULT_QUALITY_LIMITS,
+  /** publisher names for this item (Source.name / domain variants); a draft that still names any publisher is rejected */
+  publisherNames: readonly string[] = [],
 ): RewriteAssessment {
   const source = `${sourceTitle}\n${sourceBody}`;
   const problems: RewriteAssessment['problems'] = [];
@@ -64,6 +67,7 @@ export function assessRewrite(
   ];
   const hasContent = (draft.long ?? '').trim().length > 0 || (draft.summary ?? '').trim().length > 0;
   if (!hasContent || !(draft.title ?? '').trim()) problems.push('empty');
+  if (fields.some(([, text]) => containsSourceMention(text, publisherNames))) problems.push('names_source');
 
   let worst: OverlapResult | null = null;
   let worstField: string | null = null;
