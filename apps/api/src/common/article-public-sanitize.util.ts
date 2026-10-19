@@ -1,6 +1,8 @@
 import { sanitizeHashtags, sanitizePublisherStoryText, scrubSourceLabels, stripSourceFromSlug } from './reader-summary.util';
 import { buildImageAlt, storyImagePath } from './story-image.util';
 import { type ImageOrigin, originFromValue } from './image-mode';
+import { filterSourceHashtags, scrubSourceMentions, sourceNameVariants } from './source-scrub.util';
+import { stripPageBoilerplate } from './page-boilerplate.util';
 
 type ProvenanceLike = {
   sourceName?: string | null;
@@ -20,6 +22,7 @@ type PublicArticleLike = {
   mediaAssets?: unknown;
   imageOrigin?: string | null;
   hashtags?: string[] | null;
+  podcastScript?: string | null;
   seoSlug?: string | null;
   provenance?: ProvenanceLike;
   [key: string]: unknown;
@@ -52,18 +55,29 @@ function looksLikePublisherChrome(text: string): boolean {
   return false;
 }
 
+type CleanOpts = { headline?: string; sourceName?: string | null; sourceUrl?: string | null };
+
+/** Publisher names for this item + every registered source; used by scrubSourceMentions at read time. */
+const namesFor = (opts: CleanOpts) => sourceNameVariants(opts.sourceName, opts.sourceUrl);
+
 function cleanField(
   text: string | null | undefined,
-  opts: { headline?: string; sourceName?: string | null; sourceUrl?: string | null },
+  opts: CleanOpts,
+  longText = false,
 ): string {
   const raw = (text ?? '').trim();
   if (!raw) return '';
-  // Final scrub removes what is left once the outlet is gone ("… 2028. Source:", "… via", outlet hashtags).
-  const cleaned = scrubSourceLabels(sanitizePublisherStoryText(raw, opts), opts).trim();
+  const names = namesFor(opts);
+  // Long free text also loses scraped page boilerplate (menus, "Trending Stories", "Join conversation", …).
+  // Names first (so "told Reuters" → "told reporters" before the generic outlet remover would leave "told"), then again.
+  const pre = scrubSourceMentions(longText ? stripPageBoilerplate(raw) : raw, names);
+  // Final scrub removes what is left once the outlet is gone ("… 2028. Source:", "… via", outlet hashtags),
+  // then publisher references inside sentences are neutralised ("the TOI report" → "the report").
+  const cleaned = scrubSourceMentions(scrubSourceLabels(sanitizePublisherStoryText(pre, opts), opts), names).trim();
   if (cleaned) return cleaned;
   // Sanitizer emptied the field. Never put chrome back; only keep short real headlines.
   if (looksLikePublisherChrome(raw)) return '';
-  return raw.length <= 120 ? scrubSourceLabels(raw, opts) : '';
+  return raw.length <= 120 ? scrubSourceMentions(scrubSourceLabels(raw, opts), names) : '';
 }
 
 /** Walk TipTap/ProseMirror text nodes and strip publisher chrome in place. */
@@ -89,7 +103,7 @@ function sanitizeTipTapBody(
     }
     const next: Record<string, unknown> = { ...node };
     if (typeof next.text === 'string' && next.text.trim()) {
-      const cleaned = sanitizePublisherStoryText(next.text, opts).trim();
+      const cleaned = scrubSourceMentions(sanitizePublisherStoryText(scrubSourceMentions(next.text, namesFor(opts)), opts), namesFor(opts)).trim();
       if (cleaned) next.text = cleaned;
       else if (/Desk|UPDATED|डेस्क|Advertis|Sign up for|reporter at|Image\s+source\s*,|BBC\s+(?:Sport|News|Radio)|margin\s*:|Business\s+Standard|\*,\s*:after/i.test(next.text)) {
         next.text = '';
@@ -98,10 +112,13 @@ function sanitizeTipTapBody(
     if (next.aiVideo && typeof next.aiVideo === 'object') {
       const av = { ...(next.aiVideo as Record<string, unknown>) };
       if (typeof av.summary === 'string' && av.summary.trim()) {
-        av.summary = sanitizePublisherStoryText(av.summary, opts).trim();
+        av.summary = scrubSourceMentions(sanitizePublisherStoryText(av.summary, opts), namesFor(opts)).trim();
+      }
+      if (typeof av.narration === 'string' && av.narration.trim()) {
+        av.narration = scrubSourceMentions(sanitizePublisherStoryText(av.narration, opts), namesFor(opts)).trim();
       }
       if (typeof av.title === 'string' && av.title.trim()) {
-        const cleanedTitle = sanitizePublisherStoryText(av.title, opts).trim();
+        const cleanedTitle = scrubSourceMentions(sanitizePublisherStoryText(av.title, opts), namesFor(opts)).trim();
         if (cleanedTitle) av.title = cleanedTitle;
       }
       next.aiVideo = av;
@@ -118,7 +135,31 @@ function sanitizeTipTapBody(
     return next;
   };
 
-  return walk(body as Record<string, unknown>) ?? body;
+  const walked = walk(body as Record<string, unknown>) ?? body;
+  return dropBoilerplateParagraphs(walked);
+}
+
+/**
+ * Scraped-page leftovers inside the stored document (menus, "Trending Stories", comment prompts, text after an
+ * "End of Article" marker): rebuild the paragraphs from the cleaned text when anything was removed.
+ */
+function dropBoilerplateParagraphs(doc: unknown): unknown {
+  if (!doc || typeof doc !== 'object') return doc;
+  const d = doc as Record<string, unknown>;
+  if (d.type !== 'doc' || !Array.isArray(d.content)) return doc;
+  const paras = d.content as Array<Record<string, unknown>>;
+  if (!paras.every((p) => p?.type === 'paragraph' && Array.isArray(p.content) && (p.content as Array<Record<string, unknown>>).every((c) => c?.type === 'text'))) return doc;
+  const texts = paras.map((p) => (p.content as Array<Record<string, unknown>>).map((c) => String(c.text ?? '')).join('')).filter((t) => t.trim());
+  if (!texts.length) return doc;
+  const joined = texts.join('\n\n');
+  const cleaned = stripPageBoilerplate(joined);
+  if (cleaned === joined.trim()) return doc;
+  const content = cleaned
+    .split(/\n\s*\n|\n/)
+    .map((t) => t.trim())
+    .filter(Boolean)
+    .map((text) => ({ type: 'paragraph', content: [{ type: 'text', text }] }));
+  return { ...d, content };
 }
 
 /** body.keyPoints (bullet summary): clean every bullet like any other public text; drop empties. */
@@ -226,16 +267,17 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
     ...(Array.isArray(mediaAssets) ? { mediaAssets: publicMediaAssets(mediaAssets, image) } : {}),
     ...(captions !== undefined ? { socialCaptions: captions } : {}),
     title,
-    excerpt: article.excerpt != null ? cleanField(article.excerpt, opts) || null : article.excerpt,
-    bodyShort: article.bodyShort != null ? cleanField(article.bodyShort, opts) || null : article.bodyShort,
+    excerpt: article.excerpt != null ? cleanField(article.excerpt, opts, true) || null : article.excerpt,
+    bodyShort: article.bodyShort != null ? cleanField(article.bodyShort, opts, true) || null : article.bodyShort,
     bodyMedium:
-      article.bodyMedium != null ? cleanField(article.bodyMedium, opts) || null : article.bodyMedium,
+      article.bodyMedium != null ? cleanField(article.bodyMedium, opts, true) || null : article.bodyMedium,
+    ...(typeof article.podcastScript === 'string' ? { podcastScript: cleanField(article.podcastScript, opts, true) || null } : {}),
     seoTitle: article.seoTitle != null ? cleanField(article.seoTitle, opts) || null : article.seoTitle,
     seoDescription:
       article.seoDescription != null
         ? cleanField(article.seoDescription, opts) || null
         : article.seoDescription,
-    ...(Array.isArray(article.hashtags) ? { hashtags: sanitizeHashtags(article.hashtags, opts) } : {}),
+    ...(Array.isArray(article.hashtags) ? { hashtags: filterSourceHashtags(sanitizeHashtags(article.hashtags, opts), namesFor(opts)) } : {}),
     ...(typeof article.seoSlug === 'string' ? { seoSlug: stripSourceFromSlug(article.seoSlug, opts) || slug } : {}),
     body: image ? withStoryImageBody(cleanBody, image) : cleanBody,
     ...(image ? { imageOrigin: image.origin } : {}),
@@ -258,11 +300,26 @@ export function sanitizeArticleListItem<
   const safeTitle = title || (looksLikePublisherChrome(item.title ?? '') ? '' : (item.title ?? ''));
   const excerpt =
     item.excerpt != null
-      ? cleanField(item.excerpt, { ...opts, headline: safeTitle }) || null
+      ? cleanField(item.excerpt, { ...opts, headline: safeTitle }, true) || null
       : item.excerpt;
   const { mediaAssets, provenance: _prov, ...rest } = item;
+  // Any other reader-visible text a list row may carry is cleaned the same way.
+  const restRec = rest as Record<string, unknown>;
+  for (const k of ['bodyShort', 'bodyMedium', 'podcastScript'] as const) {
+    if (typeof restRec[k] === 'string') restRec[k] = cleanField(restRec[k] as string, { ...opts, headline: safeTitle }, true) || null;
+  }
+  for (const k of ['seoTitle', 'seoDescription'] as const) {
+    if (typeof restRec[k] === 'string') restRec[k] = cleanField(restRec[k] as string, { ...opts, headline: safeTitle }) || null;
+  }
+  if (Array.isArray(restRec.socialCaptions)) {
+    restRec.socialCaptions = (restRec.socialCaptions as Array<{ caption?: string | null }>).map((c) => ({ ...c, caption: c?.caption != null ? cleanField(c.caption, opts) || '' : c?.caption }));
+  }
   const origin = originFromValue(item.imageOrigin);
   // Defence in depth: list payloads normally carry no body, but if one is present never let a source image URL/credit through.
+  const maybeBody0 = (rest as { body?: unknown }).body;
+  if (maybeBody0 && typeof maybeBody0 === 'object') {
+    (rest as { body?: unknown }).body = withCleanKeyPoints(sanitizeTipTapBody(maybeBody0, { ...opts, headline: safeTitle }), { ...opts, headline: safeTitle });
+  }
   const maybeBody = (rest as { body?: unknown }).body;
   if (maybeBody && typeof maybeBody === 'object' && !Array.isArray(maybeBody) && item.slug) {
     (rest as { body?: unknown }).body = withStoryImageBody(maybeBody, { url: storyImagePath(item.slug), alt: buildImageAlt(safeTitle, item.language, origin), origin });

@@ -30,7 +30,10 @@ describe.each(LANGS)('rewrite prompt — %s', (code) => {
   });
   it('forbids copying and naming the source', () => {
     expect(p).toMatch(/Never copy sentences/);
-    expect(p).toMatch(/Never name or hint at the original publisher/);
+    expect(p).toMatch(/NEVER name or hint at the original publisher/);
+    expect(p).toMatch(/TOI/);
+    expect(p).toMatch(/reports said/);
+    expect(p).toMatch(/never stop mid-sentence/i);
     expect(p).toMatch(/quote of at most 8 words/);
   });
 });

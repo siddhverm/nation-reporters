@@ -1,3 +1,4 @@
+import { stripPageBoilerplate } from '../../common/page-boilerplate.util';
 import * as cheerio from 'cheerio';
 import { acceptLanguageHeaderForLocale } from './language-resolution.util';
 import { safeFetchBytes, type SafeFetchOptions } from '../../common/safe-fetch.util';
@@ -235,7 +236,7 @@ export async function fetchArticleTitleAndText(
       $('title').text().trim() ||
       '';
     const text = extractReadableTextFromHtml(html, 120_000);
-    return { title, text, ogImage: extractOgImageFromHtml(html, url) };
+    return { title, text: stripPageBoilerplate(text), ogImage: extractOgImageFromHtml(html, url) };
   } catch {
     return null;
   } finally {
@@ -268,7 +269,7 @@ export async function fetchArticlePlainText(
     const buf = await res.arrayBuffer();
     const slice = buf.byteLength > opts.maxBytes ? buf.slice(0, opts.maxBytes) : buf;
     const html = new TextDecoder('utf-8', { fatal: false }).decode(slice);
-    return extractReadableTextFromHtml(html, 120_000);
+    return stripPageBoilerplate(extractReadableTextFromHtml(html, 120_000));
   } catch {
     return null;
   } finally {

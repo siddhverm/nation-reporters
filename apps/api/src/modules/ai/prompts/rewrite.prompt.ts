@@ -6,7 +6,7 @@ export type RewritePromptOptions = {
   /** Upper bound for the full-coverage body, in words (CJK: roughly characters / 2). */
   maxLongWords?: number;
   /** Second attempt after a draft was too close to the source / dropped facts. */
-  retryReason?: 'too_similar' | 'missing_facts' | null;
+  retryReason?: 'too_similar' | 'missing_facts' | 'names_source' | null;
   /** Numbers from the source that the previous draft dropped (shown to the model on retry). */
   missingNumbers?: string[];
 };
@@ -26,7 +26,9 @@ export function rewritePrompt(title: string, body: string, targetLang: string, o
   const retry =
     opts.retryReason === 'too_similar'
       ? `\nPREVIOUS ATTEMPT REJECTED: it reused phrases from the source. Rebuild every sentence from the facts with a different structure and different words; do not reuse any run of more than 4 consecutive words from the source (names, numbers, dates and quotes' meaning excepted).\n`
-      : opts.retryReason === 'missing_facts'
+      : opts.retryReason === 'names_source'
+        ? `\nPREVIOUS ATTEMPT REJECTED: it named the publisher / news outlet / agency. Never write any outlet, website, agency or reporter name (for example TOI, Times of India, PTI, ANI, Reuters, NDTV, BBC, HT). Write "reports said", "officials said", "a report", "police said" instead.\n`
+        : opts.retryReason === 'missing_facts'
         ? `\nPREVIOUS ATTEMPT REJECTED: it dropped facts. Every number, name, date, place and amount in the source must appear in your output${opts.missingNumbers?.length ? ` (missing: ${opts.missingNumbers.slice(0, 12).join(', ')})` : ''}.\n`
         : '';
   return `
@@ -38,7 +40,8 @@ Neutral, factual tone. No opinion, no sensational words, no advice.
 COPYRIGHT AND ORIGINALITY (strict):
 - Write in your own words and your own sentence structure. Never copy sentences or long phrases from the source; never lightly reword sentence by sentence either. Understand the facts, then explain them fresh.
 - Do not reproduce quotes at length. Report what someone said in one short paraphrase; a quote of at most 8 words is allowed.
-- Never name or hint at the original publisher, website, reporter, photographer or agency. Never write "according to <outlet>", "via", "source:", "reported by", bylines, image credits, newsletter promos, ads, "Read more", or URLs. Present the story as Nation Reporters' own explanation.
+- NEVER name or hint at the original publisher, news outlet, website, TV channel, news agency, reporter, photographer or editor. This includes abbreviations and brands such as TOI, TNN, Times of India, PTI, ANI, IANS, NDTV, Hindustan Times, HT, The Hindu, Indian Express, India Today, News18, Zee News, Reuters, AP, AFP, BBC, CNN, Mint, Economic Times, Moneycontrol. Never write "according to <outlet>", "a <outlet> report", "<outlet> reported", "told <outlet>", "accessed by <outlet>", "via", "source:", "reported by", "(PTI)", bylines, image credits, "Edited by", newsletter promos, "Download the app", community guidelines, ads, "Read more", or URLs. Instead write "reports said", "officials said", "police said", "a report said", "according to reports" or simply state the fact. Present the story as Nation Reporters' own explanation.
+- Ignore page chrome in the source (menus, "Trending Stories", "Join conversation", comments, video lists, "Follow us"); it is not part of the story. Always finish every sentence; never stop mid-sentence.
 - Do not start the headline with wire prefixes such as "BREAKING:", "JUST IN:" or "UPDATE:".
 
 FACTS (strict):
