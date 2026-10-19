@@ -1,5 +1,5 @@
 import {
-  containsSourceMention, registerSourceNames, scrubSourceMentions, scrubSourceMentionsDeep, sourceNameVariants,
+  filterSourceHashtags, containsSourceMention, registerSourceNames, scrubSourceMentions, scrubSourceMentionsDeep, sourceNameVariants,
 } from './source-scrub.util';
 
 const s = (t: string | null, extra: string[] = []) => scrubSourceMentions(t, extra);
@@ -175,5 +175,12 @@ describe('scrubSourceMentionsDeep', () => {
     expect(JSON.stringify(out)).not.toMatch(/TOI|Reuters/);
     expect(out.type).toBe('doc');
     expect(out.aiVideo.status).toBe('ready');
+  });
+});
+
+describe('filterSourceHashtags', () => {
+  it('drops publisher hashtags, keeps topical ones', () => {
+    expect(filterSourceHashtags(['#TigerShroff', '#TOI', '#TimesOfIndia', '#NDTV', '#Bollywood', '#HindustanTimes', '#toi'])).toEqual(['#TigerShroff', '#Bollywood']);
+    expect(filterSourceHashtags(['#Gazetteer Weekly', '#Metro'], ['Gazetteer Weekly'])).toEqual(['#Metro']);
   });
 });

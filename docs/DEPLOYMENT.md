@@ -68,13 +68,42 @@ curl -s https://nationreporters.com/copyright | grep -i "@"                     
 ```
 Leak check (must print nothing; use a story with a source image): `curl -s https://nationreporters.com/article/<slug> | grep -oiE '<publisher-domain>|/api/image'` and look at the page’s network tab: images must be `/story-image/<slug>` only (also in `og:image`, JSON-LD and `/api/v1/articles/<slug>`).
 UI: story with a source image shows only the small “* We do not own the copyright of this image…” line; generated shows only “Illustration (AI-generated)”.
-Redis: the country feed cache key is now `country-feed:v5:…`; the first requests after deploy are cold (expected).
+Redis: the country feed cache key is now `country-feed:v6:…` (bumped so cached feeds from before the source-name scrub are never served); the first requests after deploy are cold (expected).
 
 ## 5. Rollback
 * Code: `ssh VPS 'bash /opt/nation-reporters/scripts/rollback-production.sh <previous-sha>'` (resets the server checkout, rebuilds api+web, waits for health). **Then revert the bad commit on `master`** — the next push redeploys `master` otherwise.
 * Database: migrations here are additive (nullable column / `IF NOT EXISTS` table); older code runs fine against the newer schema, so no down-migration is needed. For a destructive failure restore the `pg_dump` from `/opt/backups`: `gunzip -c file.sql.gz | docker compose -f docker-compose.server.yml exec -T postgres psql -U $POSTGRES_USER nationreporters`.
 * Pictures only (no code rollback): set `IMAGE_MODE=generated_only` in `.env` and restart api (`up -d api`); new stories stop using source images. To also switch **existing** stories, use the takedown tool below for each (or SQL: set `articles."imageOrigin"='generated'` and delete the `source-mirror/` objects — prefer the tool, it also clears caches).
 * Nginx: restore the previous vhost file, `nginx -t && systemctl reload nginx`.
+
+## 5a. Source-name scrub, old-story rewrite and picture backfill (run once after the deploy that ships them)
+
+What changed: every public text field (title, body, excerpt, bodyShort/Medium, aiVideo, podcastScript, SEO, image alt/captions, hashtags) passes `scrubSourceMentions` at **read time**, so existing stories are clean the moment the new API is live (page chrome such as “Trending Stories / Join conversation” is dropped too). The rewrite pipeline never names the publisher and fails the draft to the safe fallback (`RAW_FALLBACK_MODE=draft`) if a name survives. Any push/social text must be built with `sanitizeTextForPublic` (the helper the serializer uses). The scripts below make the cleaning permanent in the database and repair pictures.
+
+```bash
+cd /opt/nation-reporters && git pull && bash scripts/deploy-production.sh
+
+# 1) rewrite old PUBLISHED stories (dry run first: no model calls, no writes — lists what would change)
+docker compose -f docker-compose.server.yml exec api npm run rewrite:existing-stories:prod -- --limit 500
+# apply in batches (Gemini quota-friendly; re-run until "would_rewrite" is 0; it is idempotent and stops by itself on quota)
+docker compose -f docker-compose.server.yml exec api npm run rewrite:existing-stories:prod -- --apply --limit 100 --delay-ms 4000
+#   options: --since 2026-08-01 (only newer than)   --batch-size 25
+#   Stories that cannot be rewritten safely (page-boilerplate only / cut off / publisher name left) are set to DRAFT, never deleted.
+
+# 2) pictures: re-resolve + mirror the SOURCE image for stories whose image object is missing from S3
+docker compose -f docker-compose.server.yml exec api npm run backfill:story-images:prod -- --limit 500
+docker compose -f docker-compose.server.yml exec api npm run backfill:story-images:prod -- --apply --limit 200 --delay-ms 1500
+#   options: --since / --before YYYY-MM-DD, --slug <slug> (one story)
+#   order: stored/legacy image URL → article page og:image/twitter:image (SSRF-safe, size capped) → AI picture → fallback artwork.
+#   Prints counts per outcome: source_mirrored / generated / fallback / ok_present / error. Stops on a storage outage.
+```
+Both scripts purge `country-feed:*` after `--apply`. To flush the cache manually (or after editing data by hand):
+```bash
+docker compose -f docker-compose.server.yml exec redis sh -c 'redis-cli --scan --pattern "country-feed:*" | xargs -r redis-cli del'
+# (add -a "$REDIS_PASSWORD" to redis-cli if your Redis has a password)
+```
+Cache key version lives in `apps/api/src/modules/articles/articles.service.ts` (`country-feed:v6:`); bump it to `v7` in any release that changes the serialized story shape and old cached feeds must not be served.
+Storage upload retries: `S3_PUT_RETRIES` (default 3) and `S3_RETRY_BASE_MS` (default 500). A story is never marked `generated` just because storage failed — the picture stays pending/fallback and the backfill retries it.
 
 ## 6. Image takedown runbook (copyright request)
 ```bash

@@ -1,6 +1,6 @@
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
-import { DeleteObjectCommand, GetObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
+import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client, type PutObjectCommandInput } from '@aws-sdk/client-s3';
 import { MediaType } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { RedisCacheService } from '../../common/cache/redis-cache.service';
@@ -90,11 +90,61 @@ export class StoryImageService {
     this.lastCallAt = Date.now();
   }
 
+  /**
+   * Store an object, retrying transient storage failures (object store restarting / briefly unreachable).
+   * Throws after the last attempt — callers must NOT silently pretend the image exists.
+   */
+  private async putWithRetry(store: { client: S3Client; cfg: S3Config }, input: PutObjectCommandInput): Promise<void> {
+    const attempts = Math.min(6, Math.max(1, Number(this.config.get('S3_PUT_RETRIES') ?? 3) || 3));
+    const base = Number(this.config.get('S3_RETRY_BASE_MS') ?? 500);
+    let lastErr: unknown;
+    for (let i = 1; i <= attempts; i++) {
+      try {
+        await store.client.send(new PutObjectCommand(input));
+        return;
+      } catch (e) {
+        lastErr = e;
+        this.logger.warn(`storage put failed (${i}/${attempts}) for ${input.Key}: ${(e as Error).message?.slice(0, 120)}`);
+        if (i < attempts) await new Promise((r) => setTimeout(r, base * i * i));
+      }
+    }
+    throw lastErr instanceof Error ? lastErr : new Error('storage put failed');
+  }
+
+  /** True when the object is in storage; false only on a definite "not found". Other errors propagate (unknown ≠ missing). */
+  async objectExists(key: string): Promise<boolean> {
+    const store = this.s3();
+    if (!store) throw new Error('S3 not configured');
+    try {
+      await store.client.send(new HeadObjectCommand({ Bucket: store.cfg.bucket, Key: key }));
+      return true;
+    } catch (e) {
+      const err = e as { name?: string; $metadata?: { httpStatusCode?: number } };
+      if (err?.name === 'NotFound' || err?.name === 'NoSuchKey' || err?.$metadata?.httpStatusCode === 404) return false;
+      throw e;
+    }
+  }
+
+  /**
+   * The story's image asset, but only if its object really is in storage. A row whose object is gone (storage was
+   * wiped / replaced / the upload never completed) is dangling: it is deleted so the image can be re-created instead
+   * of the story being stuck on fallback artwork forever.
+   */
   private async existingStoryImage(articleId: string) {
-    return this.prisma.mediaAsset.findFirst({
+    const row = await this.prisma.mediaAsset.findFirst({
       where: { articleId, type: MediaType.IMAGE, scanStatus: { in: [SCAN_GENERATED, SCAN_SOURCE_MIRRORED] } },
-      select: { id: true, scanStatus: true },
+      select: { id: true, scanStatus: true, s3Key: true },
     });
+    if (!row || !row.s3Key || !this.s3()) return row;
+    try {
+      if (await this.objectExists(row.s3Key)) return row;
+      this.logger.warn(`image object ${row.s3Key} is missing from storage — dropping dangling asset ${row.id}`);
+      await this.prisma.mediaAsset.deleteMany({ where: { id: row.id } });
+      return null;
+    } catch (e) {
+      this.logger.warn(`could not verify ${row.s3Key}: ${(e as Error).message?.slice(0, 100)} — assuming present`);
+      return row;
+    }
   }
 
   /**
@@ -102,7 +152,7 @@ export class StoryImageService {
    * photo, else the article page's og:image / twitter:image (fetched through the SSRF-safe fetcher).
    * Returns null in generated_only mode. The URL is used server-side to mirror the file and is never stored or returned.
    */
-  async resolveSourceImageUrl(rssImageUrl: string | null | undefined, articleUrl: string | null | undefined, language = 'en'): Promise<string | null> {
+  async resolveSourceImageUrl(rssImageUrl: string | null | undefined, articleUrl: string | null | undefined, language = 'en', fetchOptions?: SafeFetchOptions): Promise<string | null> {
     if (this.imageMode !== 'source_first') return null;
     const fromFeed = normalizeImageUrl(rssImageUrl, articleUrl ?? undefined);
     if (fromFeed && !isWeakStoryImageUrl(fromFeed)) return fromFeed;
@@ -112,7 +162,7 @@ export class StoryImageService {
       const og = await fetchArticleOgImage(
         articleUrl,
         { timeoutMs: Math.min(Number(this.config.get('FETCH_SOURCE_TIMEOUT_MS') ?? 15_000), 12_000), maxBytes: 400_000 },
-        { acceptLanguage: acceptLanguageHeaderForLocale(language) },
+        { acceptLanguage: acceptLanguageHeaderForLocale(language), safeFetch: fetchOptions },
       );
       const norm = normalizeImageUrl(og, articleUrl);
       return norm && !isWeakStoryImageUrl(norm) ? norm : null;
@@ -137,6 +187,13 @@ export class StoryImageService {
         if (outcome.ok) {
           await this.prisma.article.update({ where: { id: article.id }, data: { imageOrigin: 'source' } });
           return { url: storyImagePath(article.slug), alt: buildImageAlt(article.title, article.language, 'source'), origin: 'source' };
+        }
+        if (outcome.reason.startsWith('storage')) {
+          // Storage itself is failing: a generated image could not be stored either, and silently saving a
+          // "generated" story with no object is exactly the bug to avoid. Leave the story without an asset so the
+          // image backfill (npm run backfill:story-images) picks it up once storage is healthy.
+          this.logger.error(`source image for article ${article.id} NOT stored (${outcome.reason}); left for image backfill`);
+          return null;
         }
         this.logger.log(`source image not used for article ${article.id}: ${outcome.reason} — falling back to generated picture`);
       }
@@ -179,15 +236,17 @@ export class StoryImageService {
       if (!prepared.ok) return { ok: false, reason: `invalid:${prepared.reason}` };
 
       const key = `source-mirror/images/${article.id}.${KIND_EXT[prepared.kind]}`;
-      await store.client.send(
-        new PutObjectCommand({
+      try {
+        await this.putWithRetry(store, {
           Bucket: store.cfg.bucket,
           Key: key,
           Body: prepared.buffer,
           ContentType: prepared.mimeType,
           CacheControl: 'public, max-age=3600',
-        }),
-      );
+        });
+      } catch (e) {
+        return { ok: false, reason: `storage:${(e as Error).message?.slice(0, 100)}` };
+      }
       await this.prisma.mediaAsset.create({
         data: {
           articleId: article.id,
@@ -214,9 +273,17 @@ export class StoryImageService {
     try {
       const existing = await this.prisma.mediaAsset.findFirst({
         where: { articleId: article.id, type: MediaType.IMAGE, scanStatus: GENERATED_SCAN_STATUS },
-        select: { id: true },
+        select: { id: true, s3Key: true },
       });
-      if (existing) return { url, alt };
+      if (existing) {
+        let present = true;
+        if (existing.s3Key && this.s3()) {
+          try { present = await this.objectExists(existing.s3Key); } catch { present = true; }
+        }
+        if (present) return { url, alt };
+        this.logger.warn(`generated image object ${existing.s3Key} missing — regenerating`);
+        await this.prisma.mediaAsset.deleteMany({ where: { id: existing.id } });
+      }
 
       if (!this.enabled) {
         this.logger.log(`image generation disabled — article ${article.id} will use fallback artwork`);
@@ -241,15 +308,13 @@ export class StoryImageService {
       }
 
       const key = `generated/images/${article.id}.${imageExtension(result.image.mimeType)}`;
-      await store.client.send(
-        new PutObjectCommand({
-          Bucket: store.cfg.bucket,
-          Key: key,
-          Body: result.image.buffer,
-          ContentType: result.image.mimeType,
-          CacheControl: 'public, max-age=31536000, immutable',
-        }),
-      );
+      await this.putWithRetry(store, {
+        Bucket: store.cfg.bucket,
+        Key: key,
+        Body: result.image.buffer,
+        ContentType: result.image.mimeType,
+        CacheControl: 'public, max-age=31536000, immutable',
+      });
       await this.prisma.mediaAsset.create({
         data: {
           articleId: article.id,
@@ -323,6 +388,79 @@ export class StoryImageService {
     );
     this.redisCache?.delByPrefix('country-feed:').catch(() => null);
     return { found: true, articleId: article.id, slug: article.slug, removedAssets: assets.length, deletedObjects, generated: !!generated, origin: 'generated' };
+  }
+
+  /**
+   * BACKFILL for an existing story whose picture object is missing from storage (rows exist but the object is gone,
+   * or no asset was ever stored): re-resolve the SOURCE picture (legacy stored URL / og:image of the article page),
+   * mirror it into our storage, else generate an AI picture, else leave the story on fallback artwork.
+   * Never hotlinks; the source URL is used server-side only. Idempotent: a story whose object exists is left alone.
+   * dryRun: only checks storage and reports what would happen.
+   */
+  async backfillStoryImage(
+    article: AttachImageInput & { legacyImageUrls?: string[]; pageUrl?: string | null },
+    opts: { dryRun?: boolean; fetchOptions?: SafeFetchOptions; fetchImpl?: typeof fetch } = {},
+  ): Promise<{ outcome: 'ok_present' | 'would_backfill' | 'source_mirrored' | 'generated' | 'fallback' | 'error'; reason?: string }> {
+    try {
+      if (!this.s3()) return { outcome: 'error', reason: 'S3 not configured' };
+      const present = await this.existingStoryImageNoDelete(article.id);
+      if (present) return { outcome: 'ok_present' };
+      if (opts.dryRun) return { outcome: 'would_backfill' };
+      // existingStoryImage() deletes a dangling row (object missing) — do it now that we are applying.
+      if (await this.existingStoryImage(article.id)) return { outcome: 'ok_present' };
+
+      const reasons: string[] = [];
+      if (this.imageMode === 'source_first') {
+        const candidates: string[] = [];
+        for (const raw of [article.sourceImageUrl, ...(article.legacyImageUrls ?? [])]) {
+          const n = normalizeImageUrl(raw, article.pageUrl ?? article.feedLink ?? undefined);
+          if (n && !isWeakStoryImageUrl(n) && !candidates.includes(n)) candidates.push(n);
+        }
+        // lazy-fetch: the article page's own og:image / twitter:image (SSRF-safe, timeout, size cap)
+        const og = await this.resolveSourceImageUrl(null, article.pageUrl ?? article.feedLink, article.language ?? 'en', opts.fetchOptions);
+        if (og && !candidates.includes(og)) candidates.push(og);
+        for (const c of candidates) {
+          const outcome = await this.mirrorSourceImage({ ...article, sourceImageUrl: c, feedLink: article.pageUrl ?? article.feedLink }, opts.fetchOptions);
+          if (outcome.ok) {
+            await this.markStoryImage(article, 'source');
+            return { outcome: 'source_mirrored' };
+          }
+          reasons.push(outcome.reason);
+          if (outcome.reason.startsWith('storage')) return { outcome: 'error', reason: outcome.reason }; // do not mask a storage outage
+        }
+      }
+      const generated = await this.generateForArticle(article, opts.fetchImpl);
+      if (generated) {
+        await this.markStoryImage(article, 'generated');
+        return { outcome: 'generated', reason: reasons.join('; ') || undefined };
+      }
+      return { outcome: 'fallback', reason: reasons.join('; ') || 'no source image and generation unavailable' };
+    } catch (e) {
+      return { outcome: 'error', reason: (e as Error).message?.slice(0, 160) };
+    }
+  }
+
+  private async existingStoryImageNoDelete(articleId: string): Promise<boolean> {
+    const row = await this.prisma.mediaAsset.findFirst({
+      where: { articleId, type: MediaType.IMAGE, scanStatus: { in: [SCAN_GENERATED, SCAN_SOURCE_MIRRORED] } },
+      select: { s3Key: true },
+    });
+    if (!row) return false;
+    if (!row.s3Key) return true;
+    return this.objectExists(row.s3Key);
+  }
+
+  /** Record the picture origin on the article row and its body (our own URL only). */
+  private async markStoryImage(article: ArticleForImage, origin: ImageOrigin) {
+    const current = await this.prisma.article.findUnique({ where: { id: article.id }, select: { body: true } });
+    const { imageCredit: _c, imageSource: _s, ...rest } = ((current?.body ?? {}) as Record<string, unknown>);
+    await this.prisma.article.update({
+      where: { id: article.id },
+      data: {
+        imageOrigin: origin,
+        body: { ...rest, imageUrl: storyImagePath(article.slug), imageAlt: buildImageAlt(article.title, article.language, origin), imageGenerated: origin === 'generated', imageOrigin: origin } as never,
+      },
+    });
   }
 
   /** Stream source for GET /articles/:slug/image (source-mirrored or generated picture). */

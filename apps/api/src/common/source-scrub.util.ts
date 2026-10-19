@@ -332,3 +332,16 @@ export function scrubSourceMentionsDeep<T>(value: T, extraNames: readonly string
   }
   return value;
 }
+
+const tagKey = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, '');
+
+/** Drop hashtags that name a publisher (#TOI, #TimesOfIndia, #NDTV, #DailyPlanetGazette …). */
+export function filterSourceHashtags(tags: readonly string[] | null | undefined, extraNames: readonly string[] = []): string[] {
+  const C = compile(extraNames);
+  const keys = [...new Set([...C.strongNames, ...C.weakNames.filter((w) => w.length >= 4)].map(tagKey).filter((k) => k.length >= 2))];
+  return (tags ?? []).filter((tag) => {
+    const k = tagKey(tag);
+    if (!k) return false;
+    return !keys.some((name) => (name.length >= 5 ? k.includes(name) : k === name));
+  });
+}

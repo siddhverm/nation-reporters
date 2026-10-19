@@ -4,6 +4,7 @@ jest.mock('@aws-sdk/client-s3', () => ({
   PutObjectCommand: class { constructor(public input: any) { Object.assign(this, { kind: 'put' }); } },
   GetObjectCommand: class { constructor(public input: any) { Object.assign(this, { kind: 'get' }); } },
   DeleteObjectCommand: class { constructor(public input: any) { Object.assign(this, { kind: 'delete' }); } },
+  HeadObjectCommand: class { constructor(public input: any) { Object.assign(this, { kind: 'head' }); } },
 }));
 
 import { StoryImageService } from './story-image.service';

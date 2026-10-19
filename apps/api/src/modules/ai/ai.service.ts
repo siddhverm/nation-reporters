@@ -30,7 +30,7 @@ import {
   stripSourceFromSlug,
 } from '../../common/reader-summary.util';
 import { StoryImageService } from './story-image.service';
-import { containsSourceMention, scrubSourceMentions, sourceNameVariants } from '../../common/source-scrub.util';
+import { containsSourceMention, filterSourceHashtags, scrubSourceMentions, sourceNameVariants } from '../../common/source-scrub.util';
 import { assessStoryBody, stripPageBoilerplate } from '../../common/page-boilerplate.util';
 
 type ProcessIngestedOptions = {
@@ -296,7 +296,7 @@ export class AiService {
         seoTitle: scrubSourceMentions(scrubSourceLabels(seoRaw.seoTitle ?? '', publisherSanitize), publisherNames) || rewrite.title,
         seoDescription: scrubSourceMentions(scrubSourceLabels(seoDescription ?? seoRaw.seoDescription ?? '', publisherSanitize), publisherNames),
         slug: stripSourceFromSlug(seoRaw.slug ?? '', publisherSanitize) || `story-${Date.now().toString(36)}`,
-        hashtags: sanitizeHashtags(seoRaw.hashtags, publisherSanitize),
+        hashtags: filterSourceHashtags(sanitizeHashtags(seoRaw.hashtags, publisherSanitize), publisherNames),
       };
 
       // 4. Captions (fallback so publishing still works if this call fails)
@@ -529,6 +529,68 @@ export class AiService {
         data: { status: retryable ? 'RAW' : 'SKIPPED' },
       });
       throw err;
+    }
+  }
+
+  /**
+   * Re-run rewrite + scrub on text that is ALREADY stored (existing stories; used by the rewrite-existing-stories CLI).
+   * Same safeguards as the ingestion pipeline: page boilerplate is stripped first, the copy-safety gate and publisher
+   * names are enforced, the body must be complete. Never throws: `ok:false` + `retryable` tells the caller whether the
+   * story is unsafe to publish (hold as DRAFT) or the model/network failed (try again later, change nothing).
+   */
+  async rewriteStoredStory(input: {
+    title: string;
+    body: string;
+    language: string;
+    publisher?: { sourceName?: string | null; sourceUrl?: string | null };
+  }): Promise<
+    | { ok: true; needsReview: boolean; fields: { title: string; short: string; medium: string; long: string; summary: string; keyPoints: string[]; podcastScript: string; seoTitle: string; seoDescription: string; language: string } }
+    | { ok: false; retryable: boolean; reason: string }
+  > {
+    const publisher = input.publisher ?? {};
+    const publisherNames = sourceNameVariants(publisher.sourceName, publisher.sourceUrl);
+    try {
+      const titlePlain = input.title.trim();
+      const bodyIn = stripPublisherFeedBoilerplate(
+        stripSyndicationLinkbacks(stripPageBoilerplate(input.body)),
+        titlePlain,
+        publisher,
+      );
+      const inQ = assessStoryBody(bodyIn, { minChars: 80, requireSentenceEnd: false });
+      if (!inQ.ok) return { ok: false, retryable: false, reason: `source text unusable (${inQ.reasons.join(',')})` };
+
+      const { data: raw, needsReview } = await this.rewriteWithQualityGate(titlePlain, bodyIn, input.language, publisher);
+      const strip = (t: string) =>
+        scrubSourceMentions(stripPublisherFeedBoilerplate(stripSyndicationLinkbacks(stripPageBoilerplate(t)), titlePlain, publisher), publisherNames);
+      const rw = {
+        title: stripWireHeadlinePrefix(strip(raw.title)),
+        short: strip(raw.short),
+        medium: strip(raw.medium),
+        long: strip(raw.long),
+        summary: strip(raw.summary),
+        podcastScript: strip(raw.podcastScript),
+        keyPoints: raw.keyPoints.map((k) => strip(k)).filter((k) => k.length >= 8),
+      };
+      const outQ = assessStoryBody(rw.long, { minChars: 60 });
+      if (!outQ.ok) return { ok: false, retryable: false, reason: `rewritten body not publishable (${outQ.reasons.join(',')})` };
+      const summary = stripPublisherFeedBoilerplate(
+        this.finalizeInBrief(rw.summary, rw.short, rw.medium, rw.long, input.language, rw.title),
+        rw.title,
+        publisher,
+      );
+      const seoDescription = scrubSourceMentions(this.clipExcerpt(summary, 155) ?? '', publisherNames);
+      const all = [rw.title, summary, rw.short, rw.medium, rw.long, rw.podcastScript, rw.keyPoints.join('\n'), seoDescription];
+      if (all.some((t) => containsSourceMention(t, publisherNames))) {
+        return { ok: false, retryable: false, reason: 'rewrite still names the source' };
+      }
+      return {
+        ok: true,
+        needsReview,
+        fields: { ...rw, summary, seoTitle: rw.title, seoDescription, language: input.language },
+      };
+    } catch (err) {
+      if (err instanceof RewriteRejectedError) return { ok: false, retryable: false, reason: err.message };
+      return { ok: false, retryable: true, reason: String((err as Error)?.message ?? err).slice(0, 200) };
     }
   }
 

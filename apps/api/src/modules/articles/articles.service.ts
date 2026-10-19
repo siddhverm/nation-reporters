@@ -411,8 +411,8 @@ export class ArticlesService {
   }
 
   private getCountryFeedRedisKey(cacheKey: string): string {
-    // v5: list payloads carry the story image reference + origin (source|generated) and no raw media rows / publisher URLs.
-    return `country-feed:v5:${cacheKey}`;
+    // v6: payloads are scrubbed of publisher mentions / page boilerplate at read time (v5: image reference + origin, no raw media rows / publisher URLs).
+    return `country-feed:v6:${cacheKey}`;
   }
 
   private async generateSlug(title: string): Promise<string> {

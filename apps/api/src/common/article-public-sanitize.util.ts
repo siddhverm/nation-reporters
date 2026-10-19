@@ -1,7 +1,7 @@
 import { sanitizeHashtags, sanitizePublisherStoryText, scrubSourceLabels, stripSourceFromSlug } from './reader-summary.util';
 import { buildImageAlt, storyImagePath } from './story-image.util';
 import { type ImageOrigin, originFromValue } from './image-mode';
-import { scrubSourceMentions, sourceNameVariants } from './source-scrub.util';
+import { filterSourceHashtags, scrubSourceMentions, sourceNameVariants } from './source-scrub.util';
 import { stripPageBoilerplate } from './page-boilerplate.util';
 
 type ProvenanceLike = {
@@ -277,7 +277,7 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
       article.seoDescription != null
         ? cleanField(article.seoDescription, opts) || null
         : article.seoDescription,
-    ...(Array.isArray(article.hashtags) ? { hashtags: sanitizeHashtags(article.hashtags, opts) } : {}),
+    ...(Array.isArray(article.hashtags) ? { hashtags: filterSourceHashtags(sanitizeHashtags(article.hashtags, opts), namesFor(opts)) } : {}),
     ...(typeof article.seoSlug === 'string' ? { seoSlug: stripSourceFromSlug(article.seoSlug, opts) || slug } : {}),
     body: image ? withStoryImageBody(cleanBody, image) : cleanBody,
     ...(image ? { imageOrigin: image.origin } : {}),
