@@ -10,6 +10,7 @@ import { assertTransition } from './status.machine';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { inferLangFromText, normalizeLanguageCode } from '../ai/language-resolution.util';
 import { resolveUniqueArticleSlug } from '../../common/slug.util';
+import { safeInt } from '../../common/safe-int.util';
 import {
   sanitizeArticleForPublicResponse,
   sanitizeArticleListItem,
@@ -47,14 +48,14 @@ export class ArticlesService {
   async findCountryFeed(options: {
     localLang: string;
     globalLang?: string;
-    localLimit?: number;
-    globalLimit?: number;
+    localLimit?: number | string;
+    globalLimit?: number | string;
   }) {
     const startedAt = Date.now();
     const localLang = normalizeLanguageCode(options.localLang || 'en');
     const globalLang = normalizeLanguageCode(options.globalLang || 'en');
-    const localLimit = Math.min(100, Math.max(1, Number(options.localLimit ?? 20)));
-    const globalLimit = Math.min(100, Math.max(1, Number(options.globalLimit ?? 20)));
+    const localLimit = safeInt(options.localLimit, 20, 1, 100);
+    const globalLimit = safeInt(options.globalLimit, 20, 1, 100);
     const cacheKey = `${localLang}|${globalLang}|${localLimit}|${globalLimit}`;
     const redisKey = this.getCountryFeedRedisKey(cacheKey);
 
@@ -205,18 +206,17 @@ export class ArticlesService {
     authorId?: string;
     language?: string;
     hasVideo?: boolean;
-    page?: number;
-    limit?: number;
+    page?: number | string;
+    limit?: number | string;
     omitBody?: boolean;
   }, audience: Audience = 'staff') {
     if (audience === 'public') {
       // Anonymous readers only ever see published stories, and cannot filter by author.
       filters = { ...filters, status: ArticleStatus.PUBLISHED, authorId: undefined };
     }
-    const p = Math.max(1, parseInt(String(filters.page ?? 1), 10) || 1);
-    const rawLimit = parseInt(String(filters.limit ?? 20), 10) || 20;
+    const p = safeInt(filters.page, 1, 1, 100000);
     const maxTake = filters.omitBody ? 150 : 100;
-    const take = Math.min(maxTake, Math.max(1, rawLimit));
+    const take = safeInt(filters.limit, 20, 1, maxTake);
     const { status, categoryId, authorId, language, hasVideo, omitBody } = filters;
     const languageNorm = language ? normalizeLanguageCode(language) : undefined;
     const baseWhere: Prisma.ArticleWhereInput = {

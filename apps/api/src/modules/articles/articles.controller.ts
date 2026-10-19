@@ -6,6 +6,7 @@ import { ApiTags, ApiBearerAuth } from '@nestjs/swagger';
 import { ArticleStatus, Role } from '@prisma/client';
 import { ArticlesService } from './articles.service';
 import { PublishingService } from '../publishing/publishing.service';
+import { safeInt } from '../../common/safe-int.util';
 import { CreateArticleDto } from './dto/create-article.dto';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { OptionalJwtAuthGuard } from '../../common/guards/optional-jwt-auth.guard';
@@ -32,8 +33,9 @@ export class ArticlesController {
     @Query('authorId') authorId?: string,
     @Query('language') language?: string,
     @Query('hasVideo') hasVideo?: string,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    // Typed as string on purpose: a `number` type makes the global ValidationPipe turn a missing param into NaN.
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
     /** When true, omits heavy fields (e.g. TipTap body) for faster public feeds. */
     @Query('omitBody') omitBody?: string,
   ) {
@@ -43,8 +45,8 @@ export class ArticlesController {
       authorId,
       language,
       hasVideo: hasVideo === 'true',
-      page,
-      limit,
+      page: safeInt(page, 1, 1, 100000),
+      limit: safeInt(limit, 20, 1, 150),
       omitBody: omitBody === 'true',
     }, req.user ? 'staff' : 'public');
   }
@@ -53,10 +55,15 @@ export class ArticlesController {
   countryFeed(
     @Query('localLang') localLang = 'en',
     @Query('globalLang') globalLang = 'en',
-    @Query('localLimit') localLimit?: number,
-    @Query('globalLimit') globalLimit?: number,
+    @Query('localLimit') localLimit?: string,
+    @Query('globalLimit') globalLimit?: string,
   ) {
-    return this.svc.findCountryFeed({ localLang, globalLang, localLimit, globalLimit });
+    return this.svc.findCountryFeed({
+      localLang,
+      globalLang,
+      localLimit: safeInt(localLimit, 20, 1, 100),
+      globalLimit: safeInt(globalLimit, 20, 1, 100),
+    });
   }
 
   @Get(':id')
