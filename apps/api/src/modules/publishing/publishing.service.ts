@@ -3,6 +3,8 @@ import { ConfigService } from '@nestjs/config';
 import { Platform, JobStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { SocialConnector, PublishPayload } from './connectors/base.connector';
+import { sanitizeTextForPublic } from '../../common/article-public-sanitize.util';
+import { sanitizeHashtags } from '../../common/reader-summary.util';
 import { TwitterConnector } from './connectors/twitter/twitter.connector';
 import { TelegramConnector } from './connectors/telegram/telegram.connector';
 import { MetaConnector } from './connectors/meta/meta.connector';
@@ -66,8 +68,8 @@ export class PublishingService {
       include: { socialCaptions: true, mediaAssets: { take: 5 } },
     });
     if (!article) throw new NotFoundException('Article not found');
-    const videoAsset = article.mediaAssets.find((m) => m.type === 'VIDEO');
-    const imageAsset = article.mediaAssets.find((m) => m.type === 'IMAGE');
+    // Only our own rendered videos are published; publisher/source videos (s3Key "external/…") never are.
+    const videoAsset = article.mediaAssets.find((m) => m.type === 'VIDEO' && !String(m.s3Key ?? '').startsWith('external/'));
 
     let activePlatforms = platforms
       ? platforms.filter((p) => this.enabledPlatforms.has(p))
@@ -100,8 +102,7 @@ export class PublishingService {
   private async executeJob(jobId: string, article: any) {
     const job = await this.prisma.publishJob.findUniqueOrThrow({ where: { id: jobId } });
     const connector = this.connectors.get(job.platform);
-    const videoAsset = article.mediaAssets?.find((m: any) => m.type === 'VIDEO');
-    const imageAsset = article.mediaAssets?.find((m: any) => m.type === 'IMAGE');
+    const videoAsset = article.mediaAssets?.find((m: any) => m.type === 'VIDEO' && !String(m.s3Key ?? '').startsWith('external/'));
 
     if (job.platform === Platform.WEB) {
       // Web is handled by marking article published — nothing to do here
@@ -122,16 +123,24 @@ export class PublishingService {
 
     const caption = article.socialCaptions?.find((c: any) => c.platform === job.platform);
     const excerptForPublish = this.resolvePublishExcerpt(article);
+    // Social posts go out under the Nation Reporters name only: strip the original outlet/byline/credit
+    // from every text field and never attach a source image or source video URL.
+    const prov = await this.prisma.contentProvenance
+      .findUnique({ where: { articleId: article.id } })
+      .catch(() => null);
+    const sopts = { sourceName: prov?.sourceName ?? null, sourceUrl: prov?.sourceUrl ?? null };
+    const cleanTitle = sanitizeTextForPublic(article.title, sopts) || article.title;
     const payload: PublishPayload = {
       articleId: article.id,
-      title: article.title,
-      excerpt: excerptForPublish,
+      title: cleanTitle,
+      excerpt: sanitizeTextForPublic(excerptForPublish, { ...sopts, headline: cleanTitle }) || cleanTitle,
       // Use canonical slug used by web route. seoSlug can be non-unique / unsuffixed.
       url: `${this.publicWebBaseUrl}/article/${article.slug}`,
-      imageUrl: imageAsset?.url ?? `${this.publicWebBaseUrl}/logo.png`,
+      // Our own /story-image/<slug> URL: serves the mirrored source image (IMAGE_MODE=source_first) or the generated one — never a publisher URL.
+      imageUrl: `${this.publicWebBaseUrl}/story-image/${encodeURIComponent(article.slug)}`,
       videoUrl: videoAsset?.url,
-      caption: caption?.caption,
-      hashtags: article.hashtags,
+      caption: caption?.caption ? sanitizeTextForPublic(caption.caption, sopts) || undefined : undefined,
+      hashtags: sanitizeHashtags(article.hashtags, sopts),
       platform: job.platform,
       language: article.language ?? 'en',
     };
@@ -174,7 +183,7 @@ export class PublishingService {
       Platform.TWITTER, Platform.FACEBOOK, Platform.INSTAGRAM,
       Platform.TELEGRAM, Platform.LINKEDIN, Platform.THREADS, Platform.WHATSAPP,
     ];
-    const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
+    const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO' && !String(m.s3Key ?? '').startsWith('external/'));
     if (videoAsset && this.enabledPlatforms.has(Platform.YOUTUBE)) {
       socialPlatforms.push(Platform.YOUTUBE);
     }

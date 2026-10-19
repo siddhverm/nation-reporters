@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
+import StoryImageNotice from '@/components/news/StoryImageNotice';
 import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
@@ -11,7 +12,7 @@ import {
   getCountryLanguageCodes,
   resolveCountryDefaultLanguage,
 } from '@/lib/countries';
-import { getArticleImage, getPreferredArticleImage } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage, imageOriginOf } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
@@ -188,6 +189,7 @@ export default function CountryPage() {
                   className="group block rounded-xl overflow-hidden relative h-72">
                   <Image src={getArticleImage(hero.slug, code, 'hero', getPreferredArticleImage(hero))} alt={safeArticleText(hero.title, 'Article')}
                     fill className="object-cover" unoptimized />
+<StoryImageNotice variant="overlay" origin={imageOriginOf(hero)} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
                     <span className="inline-block bg-brand text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded mb-2">
@@ -216,6 +218,7 @@ export default function CountryPage() {
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                       <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
@@ -246,6 +249,7 @@ export default function CountryPage() {
                         className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                         <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                           <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
@@ -270,6 +274,7 @@ export default function CountryPage() {
                         className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-blue-300 hover:shadow-sm transition-all">
                         <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
                           <Image src={getArticleImage(a.slug, code, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                         </div>
                         <div className="flex-1 min-w-0">
                           <h3 className="font-semibold text-gray-800 group-hover:text-blue-600 leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>

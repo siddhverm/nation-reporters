@@ -131,7 +131,7 @@ export function stripLeakedPageCss(text: string): string {
     ' ',
   );
   t = t.replace(/\bfunction\s+\w+\s*\([^)]{0,80}\)\s*\{[^}]{0,500}\}/gi, ' ');
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 /**

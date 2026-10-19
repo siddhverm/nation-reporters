@@ -13,7 +13,11 @@ import { resolveUniqueArticleSlug } from '../../common/slug.util';
 import {
   sanitizeArticleForPublicResponse,
   sanitizeArticleListItem,
+  stripInternalFields,
 } from '../../common/article-public-sanitize.util';
+
+/** 'public' = anonymous reader (published stories only, no editorial internals); 'staff' = authenticated CMS user. */
+export type Audience = 'public' | 'staff';
 
 type CountryFeedResult = {
   localLang: string;
@@ -86,11 +90,9 @@ export class ArticlesService {
       publishedAt: true,
       categoryId: true,
       language: true,
-      mediaAssets: {
-        where: { type: MediaType.IMAGE },
-        take: 3,
-        select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
-      },
+      imageOrigin: true,
+      // Only used server-side to strip this feed's outlet name from the text; removed before the response.
+      provenance: { select: { sourceName: true, sourceUrl: true } },
     } satisfies Prisma.ArticleSelect;
 
     const localTagged = await this.prisma.article.findMany({
@@ -186,12 +188,14 @@ export class ArticlesService {
       language: true,
       status: true,
       podcastScript: true,
-      // Prefer story IMAGE assets on public cards (not VIDEO thumbnails / unrelated media).
-      mediaAssets: {
-        where: { type: hasVideo ? MediaType.VIDEO : MediaType.IMAGE },
-        take: 3,
-        select: { id: true, type: true, url: true, scanStatus: true, s3Key: true },
-      },
+      imageOrigin: true,
+      // Only used server-side to strip this feed's outlet name from the text; removed before the response.
+      provenance: { select: { sourceName: true, sourceUrl: true } },
+      // Cards use the generated story image (derived from the slug) — no image rows are selected.
+      // Video listings need the story's own VIDEO rows (source/external videos are filtered on output).
+      ...(hasVideo
+        ? { mediaAssets: { where: { type: MediaType.VIDEO }, take: 3, select: { id: true, type: true, url: true, scanStatus: true, s3Key: true } } }
+        : {}),
     };
   }
 
@@ -204,7 +208,11 @@ export class ArticlesService {
     page?: number;
     limit?: number;
     omitBody?: boolean;
-  }) {
+  }, audience: Audience = 'staff') {
+    if (audience === 'public') {
+      // Anonymous readers only ever see published stories, and cannot filter by author.
+      filters = { ...filters, status: ArticleStatus.PUBLISHED, authorId: undefined };
+    }
     const p = Math.max(1, parseInt(String(filters.page ?? 1), 10) || 1);
     const rawLimit = parseInt(String(filters.limit ?? 20), 10) || 20;
     const maxTake = filters.omitBody ? 150 : 100;
@@ -287,12 +295,15 @@ export class ArticlesService {
 
     const sanitized = omitBody
       ? data.map((row) => sanitizeArticleListItem(row))
-      : data.map((row) => sanitizeArticleForPublicResponse(row));
+      : data.map((row) => {
+          const clean = sanitizeArticleForPublicResponse(row as never) as Record<string, unknown>;
+          return audience === 'public' ? stripInternalFields(clean) : clean;
+        });
 
     return { data: sanitized, total, page, limit };
   }
 
-  async findOne(idOrSlug: string) {
+  async findOne(idOrSlug: string, audience: Audience = 'staff') {
     const include = {
       tags: { include: { tag: true } },
       mediaAssets: true,
@@ -324,7 +335,12 @@ export class ArticlesService {
       });
     }
     if (!article) throw new NotFoundException('Article not found');
-    return sanitizeArticleForPublicResponse(article);
+    // Drafts / unpublished stories do not exist for anonymous readers.
+    if (audience === 'public' && article.status !== ArticleStatus.PUBLISHED) {
+      throw new NotFoundException('Article not found');
+    }
+    const clean = sanitizeArticleForPublicResponse(article);
+    return (audience === 'public' ? stripInternalFields(clean as Record<string, unknown>) : clean) as typeof clean;
   }
 
   async update(id: string, userId: string, userRole: Role, data: Partial<CreateArticleDto>) {
@@ -395,8 +411,8 @@ export class ArticlesService {
   }
 
   private getCountryFeedRedisKey(cacheKey: string): string {
-    // v3: list payloads are sanitized (desk chrome / outlet boilerplate stripped).
-    return `country-feed:v3:${cacheKey}`;
+    // v5: list payloads carry the story image reference + origin (source|generated) and no raw media rows / publisher URLs.
+    return `country-feed:v5:${cacheKey}`;
   }
 
   private async generateSlug(title: string): Promise<string> {

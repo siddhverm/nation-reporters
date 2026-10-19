@@ -4,12 +4,13 @@ import Link from 'next/link';
 import Image from 'next/image';
 import { useParams } from 'next/navigation';
 import { Clock, ChevronRight } from 'lucide-react';
-import { getArticleImage, getPreferredArticleImage, getBodyImageUrl } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage, imageOriginOf } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { fetchCategoryArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
 import { withUiLanguagePath } from '@/lib/ui-language';
+import StoryImageNotice from '@/components/news/StoryImageNotice';
 import { useUiLanguage } from '@/lib/use-ui-language';
 
 interface Article {
@@ -161,8 +162,9 @@ export default function CategoryPage() {
               {hero && (
                 <Link href={`/article/${hero.slug}`}
                   className="group block rounded-xl overflow-hidden relative h-72">
-                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero) ?? getBodyImageUrl(hero.body))} alt={safeArticleText(hero.title, 'Article')}
+                  <Image src={getArticleImage(hero.slug, slug, 'hero', getPreferredArticleImage(hero))} alt={safeArticleText(hero.title, 'Article')}
                     fill className="object-cover" unoptimized />
+<StoryImageNotice variant="overlay" origin={imageOriginOf(hero)} />
                   <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
                   <div className="absolute inset-x-0 bottom-0 p-5">
                     <span className={`inline-block ${accent} text-white text-[10px] font-bold uppercase tracking-wider px-2 py-0.5 rounded mb-2`}>
@@ -187,8 +189,9 @@ export default function CategoryPage() {
                   <Link key={a.id} href={`/article/${a.slug}`}
                     className="group flex gap-4 p-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all">
                     <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))} alt={safeArticleText(a.title, 'Article')}
+                      <Image src={getArticleImage(a.slug, slug, 'thumb', getPreferredArticleImage(a))} alt={safeArticleText(a.title, 'Article')}
                         fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                     </div>
                     <div className="flex-1 min-w-0">
                       <h3 className="font-semibold text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>

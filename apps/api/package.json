@@ -9,6 +9,8 @@
     "backfill:article-language": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-article-language.ts",
     "backfill:reader-summary": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-reader-summary.ts",
     "publish:stuck-approved": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/publish-stuck-approved.ts",
+    "image:replace-with-generated:prod": "node dist/scripts/replace-with-generated.js",
+    "image:replace-with-generated": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/replace-with-generated.ts",
     "ingest:regional": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/ingest-regional-feeds.ts",
     "ingest:all": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/ingest-all-languages.ts",
     "lint": "eslint src --ext .ts",

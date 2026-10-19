@@ -6,6 +6,7 @@ import {
   stripWireHeadlinePrefix,
 } from '@/lib/rss-plain-text';
 import { KNOWN_SYNDICATION_OUTLET_LABELS } from '@/lib/known-syndication-outlets';
+import { isAttributionLine } from '@/lib/attribution';
 
 function normalizeForCompare(s: string): string {
   return s
@@ -17,6 +18,23 @@ function normalizeForCompare(s: string): string {
 
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+const AD_LABEL_WORDS = 'Advertisement|Publicité|Werbung|Publicidad|Publicidade|Pubblicità|Реклама|广告|広告|광고|İlan|Reklam|Iklan';
+const AD_LABEL_AT_END = new RegExp(`(?<=[.!?।。！？؟])\\s*(?:${AD_LABEL_WORDS})\\s*$`, 'iu');
+const AD_LABEL_AT_START = new RegExp(`^\\s*(?:${AD_LABEL_WORDS})\\s+(?=\\p{Lu})`, 'u');
+
+/**
+ * Whole-label match that works for every script. JS `\b` is ASCII-only, so it never matches around
+ * Devanagari/Arabic/CJK labels (a native-script outlet name was never stripped).
+ */
+function labelRegex(label: string): RegExp {
+  const first = String.fromCodePoint(label.codePointAt(0) ?? 0);
+  const isCjk = /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af\u0e00-\u0e7f]/u.test(first);
+  const isLatin = /[A-Za-z0-9\u00c0-\u024f]/.test(first);
+  const cls = isLatin ? '[A-Za-z0-9\\u00c0-\\u024f]' : '[\\p{L}\\p{M}\\p{N}]';
+  const body = escapeRegExp(label);
+  return new RegExp(isCjk ? body : `(?<!${cls})${body}(?!${cls})`, 'giu');
 }
 
 export type PublisherSanitizeOptions = {
@@ -58,7 +76,7 @@ function shouldStripOutletPhrase(label: string): boolean {
 }
 
 function stripSectionOutletCrumbs(text: string): string {
-  return text.replace(SECTION_OUTLET_CRUMB, ' ').replace(/\s{2,}/g, ' ').trim();
+  return text.replace(SECTION_OUTLET_CRUMB, ' ').replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 function collectSourceLabels(opts?: PublisherSanitizeOptions): string[] {
@@ -137,7 +155,7 @@ function stripIndianEnglishDeskChrome(text: string): string {
     ),
     '',
   );
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 function stripSourceAttribution(text: string, opts?: PublisherSanitizeOptions): string {
@@ -152,10 +170,10 @@ function stripSourceAttribution(text: string, opts?: PublisherSanitizeOptions): 
     t = t.replace(new RegExp(`\\b(?:Source|Via)\\s*:\\s*${esc}\\b[^.\\n]{0,80}\\.?`, 'gi'), '');
     t = t.replace(new RegExp(`\\b${esc}\\s+(?:${INDIAN_DESK_SECTIONS})\\s+Desk\\b`, 'gi'), '');
     if (shouldStripOutletPhrase(label)) {
-      t = t.replace(new RegExp(`\\b${esc}\\b`, 'gi'), ' ');
+      t = t.replace(labelRegex(label), ' ');
     }
   }
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 function stripInlinePublisherChrome(text: string): string {
@@ -167,9 +185,12 @@ function stripInlinePublisherChrome(text: string): string {
     /\b(?:[A-Za-z][a-z]+(?:\s+[A-Za-z][a-z]+)?\s+)?reporter\s+at\s+[A-Z][A-Za-z0-9\s.&'-]{2,60}\.?/gi,
     '',
   );
-  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, ' ');
+  t = t.replace(/(?<=[a-z0-9.!?])Advertisem(?:ent)?(?=[A-Z\s]|$)/g, ' ');
   t = t.replace(/\bMorning\s+Edition\b/gi, ' ');
-  t = t.replace(/\s*(Advertisement|Publicité|Werbung|Publicidad)\s*/gi, ' ');
+  // Ad labels in other languages are ordinary words ("publicidad", "Werbung", "广告收入"); standalone label lines
+  // are dropped by isBoilerplateLine, so only a label closing/opening the whole text is removed here.
+  t = t.replace(AD_LABEL_AT_END, '');
+  t = t.replace(AD_LABEL_AT_START, '');
   t = t.replace(/\b(Photo\s*:|Photos\s*:|Image\s*:|Pic\s*:|Picture\s*:|Caption\s*:)\s*[^\n.]{0,80}/gi, '');
   t = t.replace(/\b(Follow us on|Subscribe to|Subscribe for|Get our newsletter)\b[^\n.]*/gi, '');
   t = t.replace(/\bImage\s+notice\s*:\s*[^\n.]*/gi, '');
@@ -189,7 +210,7 @@ function stripInlinePublisherChrome(text: string): string {
     '',
   );
   t = stripSourcePageChromeInline(t);
-  return t.replace(/\s{2,}/g, ' ').trim();
+  return t.replace(/[^\S\r\n]{2,}/g, ' ').trim();
 }
 
 function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string[] = []): boolean {
@@ -288,7 +309,9 @@ function isBoilerplateLine(line: string, titleNorm: string, sourceLabels: string
   if (/Article\s+image\s+is\s+shown\s+when\s+available/i.test(t)) return true;
   // Multilingual reporter / desk short lines
   if (/^(প্রতিনিধি|সংবাদদাতা|நமது\s*நிருபர்|वार्ताहर|प्रतिनिधी|نامہ\s*نگار|مراسلنا)/.test(t) && t.length < 100) return true;
-  if (/^(Par|Von|Por|By|Di|Da)\s+[A-ZÀÁÂÃÄÅÆÇÈÉÊËÌÍÎÏÐÑÒÓÔÕÖÙÚÛÜ]/i.test(t) && t.length < 80) return true;
+  // Multilingual byline / photo credit / source lines (replaces a case-insensitive Par|Von|Por|By|Di|Da rule that
+  // also deleted real sentences such as "By next year…", "Par ailleurs…", "Di Jakarta…", "Da domani…").
+  if (isAttributionLine(t)) return true;
   if (/डेस्क\s*,/.test(t) && t.length < 140) return true;
   if (t.length < 4) return true;
   if (/^https?:\/\/\S+$/i.test(t)) return true;
@@ -300,9 +323,14 @@ export function isPublisherBoilerplateLine(line: string, headline?: string): boo
   return isBoilerplateLine(line.trim(), normalizeForCompare(title), collectSourceLabels());
 }
 
+/** CJK scripts carry ~3x the meaning per character and have no spaces: scale length thresholds. */
+function scaledMin(text: string, latinMin: number): number {
+  return /[\u3040-\u30ff\u3400-\u9fff\uac00-\ud7af]/u.test(text) ? Math.ceil(latinMin / 3) : latinMin;
+}
+
 function splitSentences(text: string): string[] {
   return text
-    .split(/(?<=[.!?।])\s+/)
+    .split(/(?<=[.!?।؟])\s+|(?<=[。！？])\s*/u)
     .map((s) => s.trim())
     .filter((s) => s.length > 0);
 }
@@ -401,7 +429,7 @@ function preformatMashedPlain(plain: string, headline?: string): string {
   t = t.replace(/(कॉपी\s*लिंक)/gu, '\n$1\n');
   t = t.replace(/\b(Sign\s+up\s+for\s+(?:our\s+)?(?:Morning|Afternoon|Evening)\s+Edition)\b/gi, '\n$1\n');
   t = t.replace(/(\breporter\s+at\s+[A-Z][A-Za-z0-9\s.&'-]{2,80}\.?)/gi, '\n$1\n');
-  t = t.replace(/\bAdvertisem(?:ent)?\b/gi, '\n$&\n');
+  // (standalone "Advertisement" lines are handled by isBoilerplateLine)
   // Hindi/regional desk attribution mashed inline
   t = t.replace(/([ऀ-ॿ\w\s]*डेस्क\s*,[^\n।]{0,80}[।\n])/gu, '\n$1\n');
   t = t.replace(
@@ -524,12 +552,12 @@ export function buildReaderSummaryFromPlainText(
   let paragraphs = cleaned
     .split(/\n\s*\n+/)
     .map((p) => p.trim())
-    .filter((p) => p.length > 40 && !isBoilerplateLine(p, normalizeForCompare(headline ?? ''), sourceLabels));
+    .filter((p) => p.length > scaledMin(p, 40) && !isBoilerplateLine(p, normalizeForCompare(headline ?? ''), sourceLabels));
 
   if (paragraphs.length <= 1 && cleaned.length > 120) {
     const flat = cleaned.replace(/\s+/g, ' ').trim();
     const sents = splitSentences(flat).filter(
-      (s) => s.length > 25 && !isBoilerplateLine(s, normalizeForCompare(headline ?? ''), sourceLabels),
+      (s) => s.length > scaledMin(s, 25) && !isBoilerplateLine(s, normalizeForCompare(headline ?? ''), sourceLabels),
     );
     if (sents.length >= 1) paragraphs = sents;
   }

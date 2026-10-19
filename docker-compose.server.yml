@@ -74,6 +74,8 @@ services:
       NODE_ENV: production
       NEXT_PUBLIC_API_URL: https://nationreporters.com/api/v1
       API_PROXY_TARGETS: http://api:3001/api/v1,https://nationreporters.com/api/v1
+      # Shown on /copyright (read at request time). Set COPYRIGHT_EMAIL in the server .env next to this file.
+      COPYRIGHT_EMAIL: ${COPYRIGHT_EMAIL:-}
       PORT: 3000
       HOSTNAME: 0.0.0.0
     depends_on:
@@ -85,6 +87,36 @@ services:
       timeout: 10s
       retries: 3
 
+  # ── Optional object storage for story pictures (not started by the default deploy) ──
+  # Start once:  docker compose -f docker-compose.server.yml --profile storage up -d minio minio-init
+  # Then in .env:  S3_ENDPOINT=http://minio:9000  S3_BUCKET=nation-reporters  S3_ACCESS_KEY=...  S3_SECRET_KEY=...
+  # (the API proxies images, so the bucket is private and no port is published). Pin the image tags for production.
+  minio:
+    image: minio/minio:latest
+    profiles: ['storage']
+    command: server /data --console-address ':9001'
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    volumes:
+      - minio_data:/data
+    restart: unless-stopped
+
+  minio-init:
+    image: minio/mc:latest
+    profiles: ['storage']
+    depends_on:
+      - minio
+    environment:
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY}
+      S3_SECRET_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET:-nation-reporters}
+    entrypoint: >
+      /bin/sh -c "until mc alias set local http://minio:9000 $$S3_ACCESS_KEY $$S3_SECRET_KEY; do sleep 2; done;
+      mc mb --ignore-existing local/$$S3_BUCKET; exit 0"
+    restart: 'no'
+
 volumes:
   postgres_data:
   meilisearch_data:
+  minio_data:

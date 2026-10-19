@@ -1,92 +1,41 @@
-// Returns a consistent image URL for an article.
-// ALL absolute image URLs go through /api/image so:
-//  - hotlink-protected publisher images load server-side
-//  - MinIO / localhost S3 URLs (unreachable from the browser) are fetched by the web container
-// Falls back to site logo when no story image is available.
-export const LOGO_FALLBACK = '/logo.png';
+// Every story image is served from OUR origin: /story-image/<slug>. That URL returns either a source image that the
+// API mirrored into our own storage (IMAGE_MODE=source_first) or an AI-generated picture / generated fallback artwork.
+// Publisher image URLs are never read, proxied or displayed — whatever the API returns in mediaAssets /
+// body.imageUrl is ignored here on purpose, so a source URL can never reappear on a card, hero, OG tag or JSON-LD
+// even if an old payload still carries one. The only thing we read from the payload is the image ORIGIN
+// ('source' | 'generated') which decides which small notice is shown.
+export type ImageOrigin = 'source' | 'generated';
 
-const WEAK_IMAGE_STEM =
-  /^(?:logo|favicon|icon|sprite|avatar|placeholder|default[-_]?image|brand(?:ing)?|masthead|watermark|badge|button|spinner|loader|spacer|pixel|tracking|1x1|blank)(?:[-_.].*)?$/i;
-
-/** Match on filename, not path folders — LiveMint stores story photos under `/logo/`. */
-function isWeakStoryImageUrl(url: string): boolean {
-  const u = url.trim().toLowerCase();
-  if (!u || u.startsWith('data:')) return true;
-  if (/\.svg(\?|#|$)/i.test(u)) return true;
-  let pathname = u;
-  try {
-    pathname = new URL(u).pathname.toLowerCase();
-  } catch {
-    /* keep raw */
-  }
-  const file = (pathname.split('/').pop() || '').split('?')[0];
-  const stem = file.replace(/\.[a-z0-9]+$/i, '');
-  if (WEAK_IMAGE_STEM.test(stem)) return true;
-  if (/\/(?:wp-content\/(?:themes|plugins)|static\/(?:logo|icons?)|favicons?)\//i.test(pathname)) {
-    return true;
-  }
-  if (/\/(?:icons?|favicons?)\//i.test(pathname) && stem.length < 18) return true;
-  return false;
+/** 'source' only when the API says so explicitly; everything else (old rows, fallback art) is 'generated'. */
+export function imageOriginOf(article: unknown): ImageOrigin {
+  const a = article as { image?: { origin?: unknown } | null; imageOrigin?: unknown; body?: { imageOrigin?: unknown } | null } | null | undefined;
+  const v = a?.image?.origin ?? a?.imageOrigin ?? a?.body?.imageOrigin;
+  return v === 'source' ? 'source' : 'generated';
 }
 
-/** Proxy every absolute URL so the browser never talks to publishers or private MinIO. */
-function toDisplayImageUrl(url: string): string {
-  if (!url) return LOGO_FALLBACK;
-  if (url.startsWith('/')) return url;
-  return `/api/image?url=${encodeURIComponent(url)}`;
+export const LOGO_FALLBACK = '/logo.png';
+
+/** Same-origin URL of the generated image for a story. Always resolves (generated art when no image exists yet). */
+export function getStoryImageUrl(slug: string): string {
+  return `/story-image/${encodeURIComponent(slug)}`;
 }
 
 export function getArticleImage(
   slug: string,
-  categorySlug?: string,
-  size: 'card' | 'hero' | 'thumb' = 'card',
-  externalImageUrl?: string | null,
+  _categorySlug?: string,
+  _size: 'card' | 'hero' | 'thumb' = 'card',
+  _ignoredSourceUrl?: string | null,
 ): string {
-  if (externalImageUrl && !isWeakStoryImageUrl(externalImageUrl)) {
-    return toDisplayImageUrl(externalImageUrl);
-  }
-  return LOGO_FALLBACK;
+  return slug ? getStoryImageUrl(slug) : LOGO_FALLBACK;
 }
 
-type ImageLikeArticle = {
-  body?: unknown;
-  mediaAssets?: Array<{
-    type?: string;
-    url?: string | null;
-    scanStatus?: string | null;
-    s3Key?: string | null;
-  }>;
-};
-
-/**
- * Image for public cards / article hero. Prefers mediaAssets IMAGE, then body.imageUrl.
- */
-export function getPreferredArticleImage(article: ImageLikeArticle | null | undefined): string | null {
-  if (!article) return null;
-
-  const media = article.mediaAssets?.find(
-    (m) => m.type === 'IMAGE' && typeof m.url === 'string' && m.url.length > 0,
-  );
-  if (media?.url && !isWeakStoryImageUrl(media.url)) {
-    return toDisplayImageUrl(media.url);
-  }
-
-  const bodyUrl = getBodyImageUrl(article.body);
-  if (bodyUrl && !isWeakStoryImageUrl(bodyUrl)) return toDisplayImageUrl(bodyUrl);
-
-  return null;
+/** Kept for call-site compatibility: the preferred image of an article is its generated story image. */
+export function getPreferredArticleImage(article: { slug?: string | null } | null | undefined): string | null {
+  return article?.slug ? getStoryImageUrl(article.slug) : null;
 }
 
-export function getCategoryImage(categorySlug: string): string {
-  return `https://picsum.photos/seed/cat-${categorySlug}/1200/400`;
-}
-
-export function getBodyImageUrl(body: unknown): string | null {
-  if (!body || typeof body !== 'object') return null;
-  return ((body as Record<string, unknown>).imageUrl as string) ?? null;
-}
-
-export function getBodyImageCredit(body: unknown): string | null {
-  if (!body || typeof body !== 'object') return null;
-  return ((body as Record<string, unknown>).imageCredit as string) ?? null;
+/** Alt text: the (sanitized) headline. Generated English illustrations get a short "Illustration for:" prefix. */
+export function getImageAlt(title: string | null | undefined, language?: string | null, origin: ImageOrigin = 'generated'): string {
+  const t = (title ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);
+  return origin === 'generated' && (language ?? 'en').toLowerCase().startsWith('en') && t ? `Illustration for: ${t}` : t;
 }

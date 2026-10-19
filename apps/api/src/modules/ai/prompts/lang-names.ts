@@ -24,6 +24,7 @@ export const LANG_NAMES: Record<string, string> = {
   ms: 'Malay',
   sw: 'Swahili',
   tr: 'Turkish',
+  it: 'Italian',
 };
 
 export function languageDisplayName(code: string): string {

@@ -157,6 +157,8 @@ model Article {
   seoSlug           String?
   hashtags          String[]
   podcastScript     String?
+  /// Where the story picture comes from: "source" (mirrored into our storage) or "generated" (AI). NULL = generated.
+  imageOrigin       String?
   scheduledAt       DateTime?
   publishedAt       DateTime?
   createdAt         DateTime      @default(now())

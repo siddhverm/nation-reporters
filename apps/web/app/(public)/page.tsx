@@ -3,11 +3,12 @@ import { useEffect, useState } from 'react';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, ChevronRight, Flame, Globe } from 'lucide-react';
-import { getArticleImage, getPreferredArticleImage, getBodyImageUrl, LOGO_FALLBACK } from '@/lib/news-image';
+import { getArticleImage, getPreferredArticleImage, imageOriginOf, LOGO_FALLBACK } from '@/lib/news-image';
 import { fetchJsonFromApi } from '@/lib/api-client';
 import { safeArticleText } from '@/lib/rss-plain-text';
 import { formatListingExcerpt } from '@/lib/reader-summary';
 import { withUiLanguagePath } from '@/lib/ui-language';
+import StoryImageNotice from '@/components/news/StoryImageNotice';
 import { useUiLanguage } from '@/lib/use-ui-language';
 import { fetchArticlesForUiLanguage } from '@/lib/fetch-articles-for-lang';
 
@@ -67,7 +68,7 @@ function fillSectionWithFallback(_slug: string, list: Article[], min = MIN_SECTI
 
 function ArticleCard({ a }: { a: Article }) {
   const [imgError, setImgError] = useState(false);
-  const externalImg = getPreferredArticleImage(a) ?? getBodyImageUrl(a.body);
+  const externalImg = getPreferredArticleImage(a);
   const imgSrc = imgError ? LOGO_FALLBACK : getArticleImage(a.slug, undefined, 'thumb', externalImg);
   return (
     <Link href={`/article/${a.slug}`}
@@ -76,6 +77,7 @@ function ArticleCard({ a }: { a: Article }) {
         <Image src={imgSrc}
           alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized
           onError={() => setImgError(true)} />
+        <StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
       </div>
       <div className="flex-1 min-w-0">
         <h3 className="font-semibold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{a.title}</h3>
@@ -236,8 +238,9 @@ export default function HomePage() {
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-8">
             <Link href={`/article/${displayArticles[0].slug}`}
               className="lg:col-span-2 group block rounded-xl overflow-hidden relative h-80">
-              <Image src={getArticleImage(displayArticles[0].slug, undefined, 'hero', getPreferredArticleImage(displayArticles[0]) ?? getBodyImageUrl(displayArticles[0].body))}
+              <Image src={getArticleImage(displayArticles[0].slug, undefined, 'hero', getPreferredArticleImage(displayArticles[0]))}
                 alt={safeArticleText(displayArticles[0].title, 'Article')} fill className="object-cover" unoptimized priority />
+<StoryImageNotice variant="overlay" origin={imageOriginOf(displayArticles[0])} />
               <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/30 to-transparent" />
               <div className="absolute inset-x-0 bottom-0 p-6">
                 <span className="bg-signal text-white text-[10px] font-black uppercase tracking-wider px-2 py-0.5 rounded mb-2 inline-block">Top Story</span>
@@ -259,8 +262,9 @@ export default function HomePage() {
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group flex gap-3 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-3">
                   <div className="h-16 w-16 rounded-lg overflow-hidden shrink-0 relative">
-                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))}
+                    <Image src={getArticleImage(a.slug, undefined, 'thumb', getPreferredArticleImage(a))}
                       alt={safeArticleText(a.title, 'Article')} fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="font-semibold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-3">{safeArticleText(a.title)}</h3>
@@ -296,8 +300,9 @@ export default function HomePage() {
                 <Link key={a.id} href={`/article/${a.slug}`}
                   className="group bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-md transition-all overflow-hidden">
                   <div className="relative h-36 overflow-hidden">
-                    <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a) ?? getBodyImageUrl(a.body))}
+                    <Image src={getArticleImage(a.slug, undefined, 'card', getPreferredArticleImage(a))}
                       alt={safeArticleText(a.title, 'Article')} fill className="object-cover group-hover:scale-105 transition-transform duration-300" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(a)} />
                   </div>
                   <div className="p-3">
                     <h3 className="font-bold text-xs text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(a.title)}</h3>
@@ -341,8 +346,9 @@ export default function HomePage() {
                 <div className="grid grid-cols-1 lg:grid-cols-4 gap-4">
                   <Link href={`/article/${hero.slug}`}
                     className="group block rounded-xl overflow-hidden relative h-56 lg:row-span-2">
-                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero) ?? getBodyImageUrl(hero.body))}
+                    <Image src={getArticleImage(hero.slug, undefined, 'hero', getPreferredArticleImage(hero))}
                       alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
+<StoryImageNotice variant="overlay" origin={imageOriginOf(hero)} />
                     <div className="absolute inset-0 bg-gradient-to-t from-black/90 via-black/20 to-transparent" />
                     <div className="absolute inset-x-0 bottom-0 p-4">
                       <span className={`inline-block ${meta.color} text-white text-[10px] font-black uppercase px-2 py-0.5 rounded mb-1`}>Top</span>
@@ -365,8 +371,9 @@ export default function HomePage() {
                 <Link href={`/article/${hero.slug}`}
                   className="group flex gap-4 bg-white rounded-xl border border-gray-100 hover:border-brand/30 hover:shadow-sm transition-all p-4">
                   <div className="h-20 w-20 rounded-lg overflow-hidden shrink-0 relative">
-                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero) ?? getBodyImageUrl(hero.body))}
+                    <Image src={getArticleImage(hero.slug, undefined, 'thumb', getPreferredArticleImage(hero))}
                       alt={safeArticleText(hero.title, 'Article')} fill className="object-cover" unoptimized />
+<StoryImageNotice variant="badge" origin={imageOriginOf(hero)} />
                   </div>
                   <div className="flex-1 min-w-0">
                     <h3 className="font-bold text-sm text-gray-800 group-hover:text-brand leading-snug line-clamp-2">{safeArticleText(hero.title)}</h3>
