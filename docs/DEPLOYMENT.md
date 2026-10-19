@@ -58,6 +58,8 @@ Required: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `MEILISEARCH_KEY`, `JWT_SECRET`,
 cd /opt/nation-reporters && docker compose -f docker-compose.server.yml ps          # api, web healthy
 docker compose -f docker-compose.server.yml logs api --tail 50 | grep -i "migrat"   # "migrations … applied" / no errors
 curl -sf http://localhost:3001/api/v1/health/ready                                    # db/redis/search up
+# Public /health and /health/ready return status + counts only (no source names/feed URLs).
+# The stale-source list is included only with a CMS Bearer token: curl -H "Authorization: Bearer $TOKEN" .../health/ready
 # from anywhere
 curl -sI https://nationreporters.com/ | head -1                                       # 200
 curl -s  https://nationreporters.com/sitemap.xml | head -5                            # <urlset …>

@@ -6,6 +6,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { safeInt } from '../../common/safe-int.util';
 
 @ApiTags('audit')
 @ApiBearerAuth()
@@ -19,13 +20,15 @@ class AuditController {
   findAll(
     @Query('entityType') entityType?: string,
     @Query('entityId') entityId?: string,
-    @Query('page') page = 1,
-    @Query('limit') limit = 50,
+    @Query('page') pageRaw?: string,
+    @Query('limit') limitRaw?: string,
   ) {
+    const page = safeInt(pageRaw, 1, 1, 100000);
+    const limit = safeInt(limitRaw, 50, 1, 200);
     return this.prisma.auditLog.findMany({
       where: { ...(entityType && { entityType }), ...(entityId && { entityId }) },
-      skip: (+page - 1) * +limit,
-      take: +limit,
+      skip: (page - 1) * limit,
+      take: limit,
       orderBy: { createdAt: 'desc' },
     });
   }

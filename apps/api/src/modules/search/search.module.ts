@@ -7,6 +7,7 @@ import { Injectable } from '@nestjs/common';
 import { ArticleStatus } from '@prisma/client';
 import { PrismaService } from '../../prisma/prisma.service';
 import { sanitizeArticleListItem } from '../../common/article-public-sanitize.util';
+import { safeInt } from '../../common/safe-int.util';
 
 /** Meilisearch filter values are quoted strings: strip anything that could break out of the quotes. */
 const filterValue = (v: string) => v.replace(/["\\\r\n]/g, '').slice(0, 64);
@@ -37,7 +38,8 @@ class SearchService {
     });
   }
 
-  async search(q: string, options: { category?: string; lang?: string; page?: number }) {
+  async search(q: string, options: { category?: string; lang?: string; page?: number | string }) {
+    const page = safeInt(options.page, 1, 1, 1000);
     // Try Meilisearch first, fall back to Prisma full-text search
     try {
       const result = await this.meili.index('articles').search(q, {
@@ -45,7 +47,7 @@ class SearchService {
           options.category ? `category = "${filterValue(options.category)}"` : null,
           options.lang ? `language = "${filterValue(options.lang)}"` : null,
         ].filter(Boolean) as string[],
-        page: options.page ?? 1,
+        page,
         hitsPerPage: 20,
       });
       if (result.hits.length > 0 || result.totalHits > 0) {
@@ -56,7 +58,6 @@ class SearchService {
     }
 
     // DB fallback
-    const page = Math.max(1, Number(options.page) || 1);
     const take = 20;
     const term = q.trim();
 
@@ -118,9 +119,9 @@ class SearchController {
     @Query('q') q = '',
     @Query('category') category?: string,
     @Query('lang') lang?: string,
-    @Query('page') page?: number,
+    @Query('page') page?: string,
   ) {
-    return this.svc.search(q, { category, lang, page });
+    return this.svc.search(q, { category, lang, page: safeInt(page, 1, 1, 1000) });
   }
 }
 

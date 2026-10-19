@@ -6,6 +6,7 @@ import { SocialDigestService } from './social-digest.service';
 import { JwtAuthGuard } from '../../common/guards/jwt-auth.guard';
 import { RolesGuard } from '../../common/guards/roles.guard';
 import { Roles } from '../../common/decorators/roles.decorator';
+import { safeInt } from '../../common/safe-int.util';
 
 @ApiTags('publish-jobs')
 @ApiBearerAuth()
@@ -21,10 +22,10 @@ export class PublishingController {
   getJobs(
     @Query('platform') platform?: Platform,
     @Query('status') status?: JobStatus,
-    @Query('page') page?: number,
-    @Query('limit') limit?: number,
+    @Query('page') page?: string,
+    @Query('limit') limit?: string,
   ) {
-    return this.svc.getJobs({ platform, status, page, limit });
+    return this.svc.getJobs({ platform, status, page: safeInt(page, 1, 1, 100000), limit: safeInt(limit, 20, 1, 200) });
   }
 
   @Get('dlq')
@@ -41,7 +42,8 @@ export class PublishingController {
 
   @Post('digest/trigger')
   @Roles(Role.ADMIN, Role.SOCIAL_MANAGER)
-  triggerDigest(@Query('limit') limit?: number) {
-    return this.digest.triggerManual(limit ? +limit : undefined);
+  triggerDigest(@Query('limit') limit?: string) {
+    const n = safeInt(limit, 0, 0, 1000);
+    return this.digest.triggerManual(n > 0 ? n : undefined);
   }
 }
