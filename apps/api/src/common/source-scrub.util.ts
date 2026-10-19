@@ -33,11 +33,36 @@ export const STRONG_OUTLET_NAMES: readonly string[] = [
   'Press Association', 'ABC News',
 ];
 
+/**
+ * The ONLY names removed as bare words (anywhere, not just in attribution context): clearly unique outlet tokens.
+ * Acronyms match case-sensitively ("TOI" yes, French "toi" / name "Ani" no). Every other outlet / company-like name
+ * (Reuters, BBC, Fairfax Media, names from the sources table …) is only removed in attribution context, so a story
+ * whose SUBJECT is that company ("Reuters shares fall", "Fairfax gets 15 years …") keeps its subject.
+ * Domain-like names ("ndtv.com", "bbc.co.uk") are unique too and also removed bare.
+ */
+export const UNIQUE_BARE_NAMES: readonly string[] = [
+  'TOI', 'TNN', 'PTI', 'ANI', 'IANS', 'NDTV', 'Times of India', 'The Times of India', 'Hindustan Times', 'Press Trust of India',
+  'Indo-Asian News Service', 'Asian News International', 'TOI.com', 'TIMESOFINDIA.COM',
+];
+
 /** Ordinary words / short abbreviations / surnames: only neutralised in attribution context, case-sensitively. */
 export const WEAK_OUTLET_NAMES: readonly string[] = [
   'AP', 'HT', 'ET', 'UNI', 'The Hindu', 'Mint', 'Tribune', 'Express', 'The Age', 'Patrika', 'Sakal', 'Bild', 'Bloomberg', 'The Guardian', 'The Wire', 'The Print',
 ];
 
+/** Common English words that are also outlet brands: a sources-table name made only of these is never used. */
+const COMMON_BRAND_WORDS = new Set([
+  'mint', 'express', 'times', 'time', 'star', 'stars', 'sun', 'moon', 'mirror', 'wire', 'scroll', 'print', 'telegraph', 'tribune', 'hindu', 'guardian', 'independent',
+  'observer', 'herald', 'chronicle', 'post', 'mail', 'standard', 'statesman', 'pioneer', 'nation', 'fortune', 'economist', 'quartz', 'verge', 'insider', 'outlook',
+  'frontline', 'caravan', 'week', 'money', 'market', 'markets', 'voice', 'spectator', 'journal', 'gazette', 'courier', 'sentinel', 'record', 'register', 'review',
+  'digest', 'globe', 'planet', 'metro', 'city', 'square', 'network', 'report', 'reporter', 'patriot', 'citizen', 'republic', 'pulse', 'current', 'signal', 'beacon',
+  'examiner', 'enquirer', 'inquirer', 'monitor', 'leader', 'press', 'clarion', 'dispatch', 'ledger', 'mercury', 'echo', 'edge', 'dawn', 'people', 'quint', 'lens',
+  'focus', 'insight', 'view', 'views', 'scoop', 'buzz', 'brief', 'minute', 'flash', 'telegram', 'bulletin', 'tide', 'wave', 'light', 'bridge', 'capital', 'state',
+  'union', 'federal', 'global', 'local', 'metro', 'evening', 'morning', 'weekly', 'sunday', 'saturday', 'free', 'first', 'new', 'old', 'big', 'good', 'great',
+  'asia', 'asian', 'africa', 'europe', 'america', 'american', 'british', 'indian', 'pakistan', 'china', 'chinese', 'japan', 'delhi', 'mumbai', 'london', 'paris',
+  'sport', 'sports', 'cricket', 'football', 'film', 'films', 'movie', 'movies', 'music', 'health', 'science', 'tech', 'technology', 'money', 'finance', 'auto', 'travel',
+  'story', 'stories', 'press', 'media', 'channel', 'radio', 'television', 'online', 'wired', 'vogue', 'variety', 'billboard', 'mashable', 'engadget',
+]);
 const GENERIC_WORDS = new Set([
   'news', 'india', 'world', 'today', 'times', 'daily', 'the', 'top', 'stories', 'latest', 'headlines', 'national', 'international', 'business', 'sports', 'sport',
   'live', 'online', 'digital', 'feed', 'rss', 'updates', 'update', 'breaking', 'express', 'post', 'mail', 'hindu', 'standard', 'age', 'mirror', 'sun', 'tribune', 'mint',
@@ -95,6 +120,29 @@ export function sourceNameVariants(name?: string | null, urlOrHost?: string | nu
 }
 
 // ── name classification + compiled patterns ─────────────────────────────────────────────────────────────────────────
+const isDomainLike = (n: string) => /^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)+$/u.test(n) && /\.[a-z]{2,}$/i.test(n);
+const UNIQUE_KEYS = new Set(UNIQUE_BARE_NAMES.map((n) => n.toLowerCase()));
+
+/**
+ * Tier for a name from the sources table / per-item extras:
+ *  'strong' = attribution context, case-insensitive (multi-word names, or one word ≥ 5 chars that is not a common word),
+ *  'weak'   = attribution context, case-sensitive (short acronyms like "HT"),
+ *  null     = ignored (common words, short words: "Wire", "Star", "Mint", "Scroll" …).
+ */
+export function classifyDynamicName(name: string): 'strong' | 'weak' | null {
+  const n = name.trim();
+  if (n.length < 2) return null;
+  if (isDomainLike(n)) return 'strong';
+  if (/^[\p{Lu}]{2,5}$/u.test(n)) return 'weak';
+  const words = n.toLowerCase().replace(/^the\s+/, '').split(/[\s-]+/).filter(Boolean);
+  if (!words.length) return null;
+  // multi-word names are specific enough for attribution context, unless they are only feed labels ("Top Stories")
+  if (words.length >= 2) return words.every((w) => GENERIC_WORDS.has(w)) ? null : 'strong';
+  const w = words[0];
+  if (w.length < 5 || COMMON_BRAND_WORDS.has(w) || GENERIC_WORDS.has(w)) return null;
+  return 'strong';
+}
+
 function isWeak(name: string): boolean {
   const n = name.trim();
   if (WEAK_OUTLET_NAMES.includes(n)) return true;
@@ -114,7 +162,7 @@ function nameAlt(names: string[]): string {
   }).join('|');
 }
 
-type Compiled = { quick: RegExp; strong: RegExp[] | null; ctxStrong: string; ctxWeak: string; any: boolean; strongNames: string[]; weakNames: string[] };
+type Compiled = { quick: RegExp; strong: RegExp[] | null; ctxStrong: string; ctxWeak: string; bare: RegExp; any: boolean; strongNames: string[]; weakNames: string[] };
 const cache = new Map<string, Compiled>();
 
 function compile(extra: readonly string[]): Compiled {
@@ -125,8 +173,9 @@ function compile(extra: readonly string[]): Compiled {
   const weakNames: string[] = [...WEAK_OUTLET_NAMES];
   for (const n of [...REGISTERED, ...extra]) {
     const t = n.trim();
-    if (t.length < 2) continue;
-    (isWeak(t) ? weakNames : strongNames).push(t);
+    const tier = classifyDynamicName(t);
+    if (tier === 'strong') strongNames.push(t);
+    else if (tier === 'weak') weakNames.push(t);
   }
   // A name that is strong in the built-in list stays strong even if also listed elsewhere.
   const strongSet = new Set(strongNames.map((s) => s.toLowerCase()));
@@ -136,6 +185,7 @@ function compile(extra: readonly string[]): Compiled {
     quick: new RegExp(`${LB}(?:${nameAlt([...strongNames, ...weak])})${RB}|\\bedited\\s+by\\b|\\binputs\\b|\\bagenc(?:y|ies)\\b`, 'iu'),
     strong: null,
     ctxStrong: nameAlt(strongNames),
+    bare: bareRegex(strongNames),
     ctxWeak: weak.length ? nameAlt(weak) : '(?!)',
     any: true,
     strongNames,
@@ -144,6 +194,38 @@ function compile(extra: readonly string[]): Compiled {
   cache.set(key, c);
   return c;
 }
+
+/** Bare-word matcher: unique names (acronyms case-sensitive, long names case-insensitive) + domain-like names. */
+function bareRegex(strongNames: string[]): RegExp {
+  const all = [...new Set([...UNIQUE_BARE_NAMES, ...strongNames.filter(isDomainLike)])];
+  const acr = all.filter((n) => /^[A-Z]{2,5}$/.test(n));
+  const rest = all.filter((n) => !acr.includes(n));
+  return new RegExp(`${LB}(?:${nameAlt(rest)})${RB}|${LB}(?:${nameAlt(acr)})${RB}`, 'giu');
+}
+/**
+ * Acronym-shaped names ("TOI", "PTI", "ANI", "BBC") must match in upper case: French "toi" or the name "Ani" are words.
+ * JS has no inline case flags, so matches found case-insensitively are verified here.
+ */
+const ACRONYM_CACHE = new Map<string, Set<string>>();
+function acronymsOf(names: string[]): Set<string> {
+  const k = names.join('\u0001');
+  let v = ACRONYM_CACHE.get(k);
+  if (!v) { v = new Set(names.filter((n) => /^[A-Z]{2,5}$/.test(n)).map((n) => n.toLowerCase())); ACRONYM_CACHE.set(k, v); if (ACRONYM_CACHE.size > 50) ACRONYM_CACHE.clear(); }
+  return v;
+}
+function acronymCaseOk(m: string, acr: Set<string>): boolean {
+  for (const w of m.matchAll(/[\p{L}\p{N}]+/gu)) {
+    const word = w[0];
+    if (!acr.has(word.toLowerCase()) || word === word.toUpperCase()) continue;
+    // lower/mixed case is only fine inside a domain ("toi.com", "ndtv.com")
+    if (/^\.[a-z]/i.test(m.slice((w.index ?? 0) + word.length))) continue;
+    return false;
+  }
+  return true;
+}
+
+const isBareAcronymMatch = (m: string) => /^[A-Za-z]{2,5}$/.test(m.trim());
+const isExactUniqueAcronym = (m: string) => UNIQUE_BARE_NAMES.includes(m.trim());
 
 // L = Unicode-aware "not inside a word" boundaries
 const LB = '(?<![\\p{L}\\p{N}_])';
@@ -186,32 +268,41 @@ function dropChromeLines(text: string, C: Compiled): string {
     new RegExp(`.*\\b${N}\\s+(?:for\\s+the\\s+latest|latest\\s+news|breaking\\s+news).*`, 'iu'),
   ];
   const promo = [rules[4], rules[5], rules[6], rules[9]];
+  const acrSet = acronymsOf(C.strongNames);
   return text
     .split('\n')
     .map((line) => {
-      if (line.length <= 160) return rules.some((r) => r.test(line)) ? null : line;
+      if (line.length <= 160) return rules.some((r) => { const m = r.exec(line); return !!m && acronymCaseOk(m[0], acrSet); }) ? null : line;
       // long paragraph: only drop promo SENTENCES, never the whole paragraph
       const parts = line.split(/(?<=[.!?।。！？؟])\s+/);
-      const kept = parts.filter((p) => !promo.some((r) => r.test(p)));
+      const kept = parts.filter((p) => !promo.some((r) => { const m = r.exec(p); return !!m && acronymCaseOk(m[0], acrSet); }));
       return kept.join(' ');
     })
     .filter((l): l is string => l !== null)
     .join('\n');
 }
 
-function neutralise(input: string, extra: readonly string[]): string {
+export type ScrubOptions = {
+  /** false = never replace bare names, only attribution phrases (headline-safe mode). Default true. */
+  bare?: boolean;
+  /** true = a headline: never drop the whole line as "chrome". */
+  title?: boolean;
+};
+
+function neutralise(input: string, extra: readonly string[], opts: ScrubOptions = {}): string {
   const C = compile(extra);
   if (!C.quick.test(input)) return input;
   const NS = `(?:${C.ctxStrong})`; // strong name
   const NA = `(?:${C.ctxStrong})|(?:${C.ctxWeak})`; // any name (weak only valid in the contexts below)
   const A = `(?:${NA})`;
   const POSS = "(?:['’]s)?";
-  let t = dropChromeLines(input, C);
+  let t = opts.title ? input : dropChromeLines(input, C);
 
   const rx = (src: string, flags = 'giu') => new RegExp(src, flags);
   // weak names must match case-sensitively: build a case-sensitive variant of A for them
+  const acr = acronymsOf(C.strongNames);
   const both = (inner: string, fn: (...a: any[]) => string, flags = '', weakToo = true) => {
-    t = t.replace(rx(inner.replace(/__N__/g, `(?:${C.ctxStrong})`), `giu${flags}`), fn);
+    t = t.replace(rx(inner.replace(/__N__/g, `(?:${C.ctxStrong})`), `giu${flags}`), (m: string, ...a: unknown[]) => (acronymCaseOk(m, acr) ? (fn as (...x: unknown[]) => string)(m, ...a) : m));
     if (!weakToo || !C.weakNames.length) return;
     // weak names are case-sensitive: match insensitively (so context words like "According" work), then verify the exact name
     const exact = (m: string) => C.weakNames.some((n) => m.includes(n));
@@ -226,6 +317,8 @@ function neutralise(input: string, extra: readonly string[]): string {
   both(`\\s*[-–—|/]\\s*__N__(?:\\s*[/,&+]\\s*(?:${NA}))*\\s*\\.?\\s*$`, () => '', 'm');
   both(`\\s*,\\s*__N__(?:\\s*[/,&+]\\s*(?:${NA}))*\\s*\\.?\\s*$`, () => '', 'm', false);
 
+  // headline / line prefix credit: "Daily Planet Gazette: Floods hit city", "Reuters | Markets fall" → "Floods hit city"
+  both(`^([ \\t]*)(?:the\\s+)?__N__\\s*[:|：]\\s*(?=\\S)`, (_m, ws) => String(ws ?? ''), 'm');
   // headline tail: "Tiger Shroff hospitalised after stunt, TOI reports" / "… – NDTV report"
   both(`\\s*[,;:–—|-]\\s*__N__${POSS}\\s+(?:reports?|says?|said|claims?|learns?|reveals?)\\s*$`, () => '', 'm');
   // "senior reporter at TOI" / "correspondent with Reuters"
@@ -268,8 +361,13 @@ function neutralise(input: string, extra: readonly string[]): string {
   // "in/on/by/from/at/with/of <N>" generic leftovers handled by the fallback below.
 
   // 2. Fallback for what remains (strong names only): possessive → "the outlet's", else "a news outlet".
-  t = t.replace(rx(`${LB}(the\\s+)?${NS}(['’]s)${RB}`), (_m, _the, _p, off, full) => fit(full, off, "the outlet's"));
-  t = t.replace(rx(`${LB}(the\\s+)?${NS}${RB}`), (_m, the, off, full) => fit(full, off, the ? 'the news outlet' : 'a news outlet'));
+  // Only UNIQUE outlet tokens are replaced as bare words; everything else stays (it may be the story's subject).
+  if (opts.bare !== false) {
+    const B = C.bare.source;
+    const okBare = (name: string) => !isBareAcronymMatch(name) || isExactUniqueAcronym(name);
+    t = t.replace(new RegExp(`${LB}(the\\s+)?(${B})(['’]s)${RB}`, 'giu'), (m, _the, name, _p, off, full) => (okBare(name) ? fit(full, off, "the outlet's") : m));
+    t = t.replace(new RegExp(`${LB}(the\\s+)?(${B})${RB}`, 'giu'), (m, the, name, off, full) => (okBare(name) ? fit(full, off, the ? 'the news outlet' : 'a news outlet') : m));
+  }
 
   // 3. tidy
   t = t
@@ -291,16 +389,25 @@ export function containsSourceMention(text: string | null | undefined, extraName
   const s = text ?? '';
   if (!s) return false;
   const C = compile(extraNames);
-  if (new RegExp(`${LB}(?:${C.ctxStrong})${RB}`, 'iu').test(s)) return true;
+  // unique tokens anywhere
+  for (const m of s.matchAll(C.bare)) if (!isBareAcronymMatch(m[0]) || isExactUniqueAcronym(m[0])) return true;
+  // every other name only in attribution context (strong: case-insensitive; weak: case-sensitive)
+  const ctx = (W: string) => [
+    `(?:according\\s+to|as\\s+per|told|tells|via|source:|courtesy(?:\\s+of)?|reported\\s+by|accessed\\s+by|seen\\s+by|reviewed\\s+by|citing|quoting|speaking\\s+to|spoke\\s+to|talking\\s+to|in\\s+an\\s+interview\\s+with)\\s+(?:the\\s+)?(?:${W})${RB}`,
+    `${LB}(?:${W})(?:['’]s)?\\s+(?:reported|reports|report|story|stories|reporter|correspondent|has\\s+learnt|learnt|learned|quoted|exclusively|app|community\\s+guidelines|e-?paper|newsletter|said|says|stated|states|wrote|writes|claimed|claims|noted|notes|revealed)${RB}`,
+    `^[ \\t]*(?:the\\s+)?(?:${W})\\s*[:|：]\\s*\\S`,
+    `[(\\[]\\s*(?:${W})\\s*[)\\]]`,
+    `[-–—|/]\\s*(?:${W})\\s*$`,
+    `download\\s+(?:the\\s+)?(?:${W})\\s+(?:news\\s+)?app`,
+  ];
+  const acr = acronymsOf(C.strongNames);
+  for (const c of ctx(C.ctxStrong)) {
+    for (const m of s.matchAll(new RegExp(c, 'gimu'))) if (acronymCaseOk(m[0], acr)) return true;
+  }
   if (C.weakNames.length) {
-    const W = `(?:${C.ctxWeak})`;
-    const ctx = [
-      `(?:according\\s+to|as\\s+per|told|via|source:|courtesy|reported\\s+by|accessed\\s+by|seen\\s+by|per)\\s+${W}${RB}`,
-      `${LB}${W}\\s+(?:reported|said|stated|reports|says|report|story|quoted|claimed|noted)${RB}`,
-      `[(\\[]\\s*${W}\\s*[)\\]]`,
-      `[-–—|/]\\s*${W}\\s*$`,
-    ];
-    if (ctx.some((c) => new RegExp(c, 'mu').test(s))) return true;
+    for (const c of ctx(C.ctxWeak)) {
+      for (const m of s.matchAll(new RegExp(c, 'gimu'))) if (C.weakNames.some((n) => m[0].includes(n))) return true;
+    }
   }
   return false;
 }
@@ -309,14 +416,42 @@ export function containsSourceMention(text: string | null | undefined, extraName
  * Remove / neutralise publisher references. `extraNames` = e.g. Source.name + domain-derived variants for this
  * item's source (see sourceNameVariants); all registered source names are applied too.
  */
-export function scrubSourceMentions(text: string | null | undefined, extraNames: readonly string[] = []): string {
+export function scrubSourceMentions(text: string | null | undefined, extraNames: readonly string[] = [], opts: ScrubOptions = {}): string {
   const s = text ?? '';
   if (!s.trim()) return s.trim();
   // fast path: nothing that could be an outlet reference
-  let out = neutralise(s, extraNames);
+  let out = neutralise(s, extraNames, opts);
   // second pass catches names exposed by the first (e.g. "TOI/PTI")
-  if (containsSourceMention(out, extraNames)) out = neutralise(out, extraNames);
+  if (containsSourceMention(out, extraNames)) out = neutralise(out, extraNames, opts);
   return out;
+}
+
+const wordCount = (t: string) => t.split(/\s+/).filter((w) => /[\p{L}\p{N}]/u.test(w)).length;
+
+/** Did cleaning shrink a headline / teaser too much (below 3 words or 60% of the original length)? */
+export function shrankTooMuch(cleaned: string, original: string): boolean {
+  const c = cleaned.trim();
+  const o = original.trim();
+  if (!o) return false;
+  if (!c) return true;
+  const minWords = Math.min(3, wordCount(o));
+  return wordCount(c) < minWords || c.length < o.length * 0.6;
+}
+
+/**
+ * Scrub a TITLE / short teaser without ever emptying it: never drops the whole line; if the normal scrub would leave
+ * fewer than 2 words it keeps the wording minus attribution phrases only (bare names left alone), and if even that
+ * collapses it returns the original headline.
+ */
+export function scrubSourceMentionsInTitle(text: string | null | undefined, extraNames: readonly string[] = []): string {
+  const raw = (text ?? '').trim();
+  if (!raw) return '';
+  const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
+  const enough = (t: string) => !!t.trim() && (wordCount(t) >= Math.min(2, wordCount(raw)) || (cjk.test(t) && [...t.trim()].length >= 4));
+  const full = scrubSourceMentions(raw, extraNames, { title: true });
+  if (enough(full)) return full;
+  const attributionOnly = scrubSourceMentions(raw, extraNames, { title: true, bare: false });
+  return enough(attributionOnly) ? attributionOnly : raw;
 }
 
 /** Scrub every string of a TipTap/JSON-ish value in place-safe fashion (returns a new structure). */

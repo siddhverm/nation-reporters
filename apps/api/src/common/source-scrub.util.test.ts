@@ -96,7 +96,9 @@ describe('scrubSourceMentions — credits, datelines, promos', () => {
 
 describe('scrubSourceMentions — safety (no mangling)', () => {
   it('is case-insensitive for strong names', () => {
-    expect(s('according to toi, it rained')).toBe('according to a report, it rained');
+    expect(s('ACCORDING TO TOI, it rained')).toBe('According to a report, it rained');
+    expect(s('according to Reuters, it rained')).toBe('according to a report, it rained');
+    expect(s('according to toi, it rained')).toBe('according to toi, it rained'); // acronyms are case-sensitive
     expect(s('ACCORDING TO REUTERS, it rained')).not.toMatch(/reuters/i);
   });
   it('respects word boundaries', () => {

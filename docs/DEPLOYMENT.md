@@ -98,6 +98,11 @@ docker compose -f docker-compose.server.yml exec api npm run backfill:story-imag
 #   order: stored/legacy image URL → article page og:image/twitter:image (SSRF-safe, size capped) → AI picture → fallback artwork.
 #   Prints counts per outcome: source_mirrored / generated / fallback / ok_present / error. Stops on a storage outage.
 ```
+Name matching rules (since the empty-title fix): only clearly unique outlet tokens (TOI, PTI, ANI, IANS, TNN, NDTV, Times of India, Hindustan Times, domain names like ndtv.com) are removed as bare words; every other name — including all names from the sources table — is removed only in attribution context ("according to X", "X reported", "told X", "(X)", "– X", "X: headline", "Download the X app"), so a company that is the story's subject ("Fairfax gets 15 years…", "Reuters shares fall") is kept. Sources-table names that are common words or short ("Wire", "Mint", "Star", "Scroll") are ignored. Titles/excerpts are never returned empty: a story stored without a title gets one from seoTitle / the first sentence of the excerpt at read time, and the rewrite script re-selects such stories (`issues=empty_title`, even if already processed):
+```bash
+docker compose -f docker-compose.server.yml exec api npm run rewrite:existing-stories:prod -- --limit 500 | grep empty_title   # dry run
+docker compose -f docker-compose.server.yml exec api npm run rewrite:existing-stories:prod -- --apply --limit 100 --delay-ms 4000
+```
 Both scripts purge `country-feed:*` after `--apply`. Output lines: `RETRY LATER (quota/rate limit)` → re-run later; `RETRY LATER (temporary error)` → re-run; `MODEL ERROR … Set GEMINI_MODEL in .env` (exit code 2, nothing changed) → the configured Gemini model is retired: set `GEMINI_MODEL` / `IMAGE_GEN_MODEL` in `.env`, then `docker compose -f docker-compose.server.yml up -d api` and re-run. Check which model is live: `docker compose -f docker-compose.server.yml logs api | grep "using model"`. To flush the cache manually (or after editing data by hand):
 ```bash
 docker compose -f docker-compose.server.yml exec redis sh -c 'redis-cli --scan --pattern "country-feed:*" | xargs -r redis-cli del'
