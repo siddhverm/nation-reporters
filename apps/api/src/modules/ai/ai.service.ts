@@ -2,6 +2,7 @@ import { Injectable, Logger, Inject, forwardRef } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { PrismaService } from '../../prisma/prisma.service';
 import { GeminiClient } from './gemini.client';
+import { classifyAiError, shortReason, type AiErrorKind } from '../../common/gemini-models.util';
 import {
   fetchArticlePlainText,
   MIN_SOURCE_ARTICLE_PLAIN_CHARS,
@@ -348,7 +349,7 @@ export class AiService {
           seoTitle: seo.seoTitle,
           seoDescription: seo.seoDescription,
           hashtags: seo.hashtags,
-          model: 'gemini-1.5-flash',
+          model: this.gemini.lastModelUsed ?? 'gemini',
           tokensUsed: rwTokens,
         },
       });
@@ -523,7 +524,9 @@ export class AiService {
     } catch (err) {
       this.logger.error(`AI processing failed for ${ingestedArticleId}`, err);
       // Rewrite rejected / quota: keep the row RAW so it can be rewritten later; never leave source text public.
-      const retryable = err instanceof RewriteRejectedError || /429|quota|too many requests/i.test((err as Error)?.message ?? '');
+      const kind = classifyAiError(err);
+      // a retired model (config problem) or quota must not permanently SKIP the item: keep it RAW
+      const retryable = err instanceof RewriteRejectedError || kind === 'quota' || kind === 'model_not_found';
       await this.prisma.ingestedArticle.update({
         where: { id: ingestedArticleId },
         data: { status: retryable ? 'RAW' : 'SKIPPED' },
@@ -545,7 +548,7 @@ export class AiService {
     publisher?: { sourceName?: string | null; sourceUrl?: string | null };
   }): Promise<
     | { ok: true; needsReview: boolean; fields: { title: string; short: string; medium: string; long: string; summary: string; keyPoints: string[]; podcastScript: string; seoTitle: string; seoDescription: string; language: string } }
-    | { ok: false; retryable: boolean; reason: string }
+    | { ok: false; retryable: boolean; reason: string; errorKind?: AiErrorKind }
   > {
     const publisher = input.publisher ?? {};
     const publisherNames = sourceNameVariants(publisher.sourceName, publisher.sourceUrl);
@@ -590,7 +593,8 @@ export class AiService {
       };
     } catch (err) {
       if (err instanceof RewriteRejectedError) return { ok: false, retryable: false, reason: err.message };
-      return { ok: false, retryable: true, reason: String((err as Error)?.message ?? err).slice(0, 200) };
+      const kind = classifyAiError(err);
+      return { ok: false, retryable: true, reason: shortReason(String((err as Error)?.message ?? err)), errorKind: kind };
     }
   }
 

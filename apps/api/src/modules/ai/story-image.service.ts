@@ -1,3 +1,4 @@
+import { DEFAULT_IMAGE_FALLBACKS, DEFAULT_IMAGE_MODEL, ModelSelector, parseModelList, shortReason } from '../../common/gemini-models.util';
 import { Injectable, Logger, Optional } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
 import { DeleteObjectCommand, GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client, type PutObjectCommandInput } from '@aws-sdk/client-s3';
@@ -61,8 +62,41 @@ export class StoryImageService {
     return !['0', 'false', 'no', 'off'].includes(flag);
   }
 
-  private get model(): string {
-    return this.config.get<string>('IMAGE_GEN_MODEL') || 'gemini-2.5-flash-image';
+  private imageSelector: ModelSelector | null = null;
+  /** True once every configured image model answered 404 (until restart / config change). */
+  imageModelsUnavailable = false;
+
+  /** IMAGE_GEN_MODEL then IMAGE_GEN_MODEL_FALLBACKS; the first that works is cached for the process. */
+  private get models(): ModelSelector {
+    return (this.imageSelector ??= new ModelSelector(
+      parseModelList(
+        this.config.get<string>('IMAGE_GEN_MODEL') || DEFAULT_IMAGE_MODEL,
+        this.config.get<string>('IMAGE_GEN_MODEL_FALLBACKS') ?? DEFAULT_IMAGE_FALLBACKS,
+      ),
+      'Gemini image',
+      (m) => this.logger.log(m),
+      'IMAGE_GEN_MODEL',
+    ));
+  }
+
+  /** Call the image model, switching to the next candidate on a 404 (retired / unknown model). */
+  private async generateWithFallback(prompt: string, fetchImpl?: typeof fetch): Promise<ImageGenResult & { model?: string }> {
+    const sel = this.models;
+    for (let model = sel.current; model; model = sel.current) {
+      const result = await generateImageWithGemini(prompt, {
+        apiKey: this.config.get<string>('GEMINI_API_KEY'),
+        model,
+        timeoutMs: Number(this.config.get('IMAGE_GEN_TIMEOUT_MS') ?? 40_000),
+        fetchImpl,
+      });
+      if (result.ok || result.reason !== 'model_not_found') {
+        if (result.ok) sel.confirm(model);
+        return { ...result, model };
+      }
+      sel.markUnavailable(model);
+    }
+    this.imageModelsUnavailable = true;
+    return { ok: false, reason: 'model_not_found', detail: sel.exhausted.message };
   }
 
   private get sourceLimits(): SourceImageLimits {
@@ -296,12 +330,7 @@ export class StoryImageService {
       }
 
       await this.throttle();
-      const result: ImageGenResult = await generateImageWithGemini(buildStoryImagePrompt(article), {
-        apiKey: this.config.get<string>('GEMINI_API_KEY'),
-        model: this.model,
-        timeoutMs: Number(this.config.get('IMAGE_GEN_TIMEOUT_MS') ?? 40_000),
-        fetchImpl,
-      });
+      const result = await this.generateWithFallback(buildStoryImagePrompt(article), fetchImpl);
       if (!result.ok) {
         this.logger.warn(`image generation failed for ${article.id}: ${result.reason}${result.detail ? ` (${result.detail})` : ''} — fallback artwork will be used`);
         return null;
@@ -434,9 +463,13 @@ export class StoryImageService {
         await this.markStoryImage(article, 'generated');
         return { outcome: 'generated', reason: reasons.join('; ') || undefined };
       }
+      if (this.imageModelsUnavailable) {
+        // config problem, not a per-story one: report it so the backfill stops instead of leaving every story on fallback
+        return { outcome: 'error', reason: `model_not_found: ${this.models.exhausted.message}` };
+      }
       return { outcome: 'fallback', reason: reasons.join('; ') || 'no source image and generation unavailable' };
     } catch (e) {
-      return { outcome: 'error', reason: (e as Error).message?.slice(0, 160) };
+      return { outcome: 'error', reason: shortReason((e as Error).message ?? String(e), 200) };
     }
   }
 

@@ -33,7 +33,8 @@ Required: `POSTGRES_USER`, `POSTGRES_PASSWORD`, `MEILISEARCH_KEY`, `JWT_SECRET`,
 | `SOURCE_IMAGE_MAX_BYTES` / `_MIN_WIDTH` / `_MIN_HEIGHT` / `_MAX_PIXELS` / `_TIMEOUT_MS` | 5000000 / 600 / 315 / 50000000 / 15000 | source-image validation |
 | `S3_ENDPOINT`, `S3_BUCKET`, `S3_ACCESS_KEY`, `S3_SECRET_KEY`, `S3_REGION` | local MinIO | **Without S3 no source image is ever used (never hotlinks) and AI images cannot be stored → fallback artwork everywhere.** |
 | `GEMINI_API_KEY` | – | rewrite + AI pictures. Without it the rewrite step fails and `RAW_FALLBACK_MODE` applies. |
-| `IMAGE_GEN_ENABLED`, `IMAGE_GEN_MODEL`, `IMAGE_GEN_TIMEOUT_MS`, `IMAGE_GEN_MIN_INTERVAL_MS` | true / gemini-2.5-flash-image / 40000 / 4000 | AI pictures. **Verify the model id against your Gemini access.** |
+| `GEMINI_MODEL`, `GEMINI_MODEL_FALLBACKS` | gemini-2.5-flash / gemini-flash-latest,gemini-2.5-flash-lite | text model + comma-separated fallbacks. A retired/unknown model (404, "no longer available") switches to the next one automatically; the api log says `Gemini text: using model …`. If all fail, ingestion keeps items RAW (→ DRAFT fallback) and the scripts stop with "Set GEMINI_MODEL in .env". |
+| `IMAGE_GEN_ENABLED`, `IMAGE_GEN_MODEL`, `IMAGE_GEN_MODEL_FALLBACKS`, `IMAGE_GEN_TIMEOUT_MS`, `IMAGE_GEN_MIN_INTERVAL_MS` | true / gemini-2.5-flash-image / gemini-3.1-flash-image / 40000 / 4000 | AI pictures; 404 → next fallback (`Gemini image: using model …` in the log). |
 | `READING_LEVEL` | `simple` | `simple|plain|standard|advanced` |
 | `REWRITE_MAX_LONG_WORDS`, `REWRITE_MAX_ATTEMPTS`, `REWRITE_MAX_OVERLAP`, `REWRITE_MAX_COPIED_RUN_WORDS/_CHARS`, `REWRITE_MIN_NUMBER_RETENTION` | 700 / 2 / 0.25 / 12 / 36 / 0.6 | copy-safety + quality gate (failures → `PENDING_REVIEW`) |
 | `RAW_FALLBACK_MODE`, `RAW_FALLBACK_MAX_DRAFTS_PER_RUN` | `draft` / 30 | when the rewrite fails: hold as DRAFT (default) or publish a neutral placeholder; source text is never published |
@@ -97,7 +98,7 @@ docker compose -f docker-compose.server.yml exec api npm run backfill:story-imag
 #   order: stored/legacy image URL → article page og:image/twitter:image (SSRF-safe, size capped) → AI picture → fallback artwork.
 #   Prints counts per outcome: source_mirrored / generated / fallback / ok_present / error. Stops on a storage outage.
 ```
-Both scripts purge `country-feed:*` after `--apply`. To flush the cache manually (or after editing data by hand):
+Both scripts purge `country-feed:*` after `--apply`. Output lines: `RETRY LATER (quota/rate limit)` → re-run later; `RETRY LATER (temporary error)` → re-run; `MODEL ERROR … Set GEMINI_MODEL in .env` (exit code 2, nothing changed) → the configured Gemini model is retired: set `GEMINI_MODEL` / `IMAGE_GEN_MODEL` in `.env`, then `docker compose -f docker-compose.server.yml up -d api` and re-run. Check which model is live: `docker compose -f docker-compose.server.yml logs api | grep "using model"`. To flush the cache manually (or after editing data by hand):
 ```bash
 docker compose -f docker-compose.server.yml exec redis sh -c 'redis-cli --scan --pattern "country-feed:*" | xargs -r redis-cli del'
 # (add -a "$REDIS_PASSWORD" to redis-cli if your Redis has a password)

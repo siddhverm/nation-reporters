@@ -57,4 +57,14 @@ describe('backfillStoryImages', () => {
     expect(legacyImageUrlsOf({ imageUrl: 'https://cdn.example/a.jpg' }, ['/story-image/x', 'https://cdn.example/a.jpg', null, 'https://o.example/b.png'])).toEqual(['https://cdn.example/a.jpg', 'https://o.example/b.png']);
     expect(legacyImageUrlsOf({ imageUrl: '/story-image/x' }, [])).toEqual([]);
   });
+
+  it('image model not found stops the run with a clear message', async () => {
+    const rows = [story('1'), story('2')];
+    const h = make(rows, { 1: 'error', 2: 'generated' });
+    h.deps.backfill = async (_s, o) => (o.dryRun ? { outcome: 'would_backfill' } : { outcome: 'error', reason: 'model_not_found: No available Gemini model' });
+    const { counts, stoppedEarly } = await backfillStoryImages(h.deps, { ...opts, apply: true });
+    expect(counts.error).toBe(1);
+    expect(stoppedEarly).toMatch(/Set IMAGE_GEN_MODEL/);
+  });
 });
+

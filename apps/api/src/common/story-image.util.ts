@@ -18,7 +18,7 @@ export type GeneratedImage = { buffer: Buffer; mimeType: string };
 
 export type ImageGenResult =
   | { ok: true; image: GeneratedImage }
-  | { ok: false; reason: 'disabled' | 'no_api_key' | 'http_error' | 'blocked' | 'no_image' | 'timeout' | 'error'; detail?: string };
+  | { ok: false; reason: 'disabled' | 'no_api_key' | 'model_not_found' | 'http_error' | 'blocked' | 'no_image' | 'timeout' | 'error'; detail?: string };
 
 const CATEGORY_STYLE: Record<string, string> = {
   india: 'a wide editorial scene of everyday life and civic landmarks in India',
@@ -122,6 +122,8 @@ export async function generateImageWithGemini(prompt: string, opts: GeminiImageO
       },
     );
     if (!res.ok) {
+      // 404 = retired / unknown model ("models/x is no longer available") → the caller switches to the next model
+      if (res.status === 404) return { ok: false, reason: 'model_not_found', detail: `HTTP 404 (${opts.model})` };
       return { ok: false, reason: 'http_error', detail: `HTTP ${res.status}` };
     }
     const extracted = extractGeminiImage(await res.json());

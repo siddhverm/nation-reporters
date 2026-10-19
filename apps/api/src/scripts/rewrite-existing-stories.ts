@@ -89,6 +89,7 @@ async function main() {
 
     const { counts, stoppedEarly } = await rewriteExistingStories(deps, opts);
     console.log(JSON.stringify({ summary: counts, stoppedEarly, mode: opts.apply ? 'APPLY' : 'DRY-RUN' }, null, 2));
+    if (counts.model_unavailable > 0) { console.error(`STOPPED: ${stoppedEarly}`); process.exitCode = 2; }
     if (!opts.apply) console.log('Dry run only. Re-run with --apply to write.');
   } finally {
     await prisma.$disconnect();
