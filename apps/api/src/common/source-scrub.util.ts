@@ -77,6 +77,7 @@ let REGISTERED: string[] = [];
 export function registerSourceNames(names: readonly (string | null | undefined)[]): void {
   REGISTERED = [...new Set(names.map((n) => (n ?? '').trim()).filter((n) => n.length >= 2))];
   cache.clear();
+  tierCache.clear();
 }
 export function registeredSourceNames(): readonly string[] { return REGISTERED; }
 
@@ -154,20 +155,35 @@ function isWeak(name: string): boolean {
   return false;
 }
 
-/** Whole-name boundary that works for every script (JS \b is ASCII-only). */
+/** Whole-name boundary that works for every script (JS \b is ASCII-only). An empty list never matches. */
 function nameAlt(names: string[]): string {
-  return [...new Set(names)].sort((a, b) => b.length - a.length).map((n) => {
+  const uniq = [...new Set(names)];
+  if (!uniq.length) return '(?!)';
+  return uniq.sort((a, b) => b.length - a.length).map((n) => {
     // allow flexible whitespace and optional dots between initials ("T.O.I.")
     return escapeRe(n).replace(/\\?\s+|\s+/g, '\\s+');
   }).join('|');
 }
 
-type Compiled = { quick: RegExp; strong: RegExp[] | null; ctxStrong: string; ctxWeak: string; bare: RegExp; any: boolean; strongNames: string[]; weakNames: string[] };
-const cache = new Map<string, Compiled>();
+type Compiled = {
+  quick: RegExp; strong: RegExp[] | null; ctxStrong: string; ctxWeak: string; bare: RegExp; any: boolean;
+  strongNames: string[]; weakNames: string[];
+  /** memoised RegExp constructor: patterns are built once per compiled name set, not once per call */
+  re: (src: string, flags: string) => RegExp;
+};
 
-function compile(extra: readonly string[]): Compiled {
+// ── performance ─────────────────────────────────────────────────────────────────────────────────────────────────────
+// The registry holds ~1k publisher names. A regex alternation over all of them is slow to build and, worse, slow to
+// RUN (every position of a 4k-char text tries every name), and neutralise() runs ~40 such patterns per field. So for
+// each text we first pick the names whose first word actually occurs in it (a Set lookup per name) and compile the
+// patterns for that small subset only — usually zero or one name. Results are identical: a name whose first word is
+// not in the text can never match. Compiled subsets are cached (bounded).
+
+type Tiers = { strongNames: string[]; weakNames: string[] };
+const tierCache = new Map<string, Tiers>();
+function tiersFor(extra: readonly string[]): Tiers {
   const key = extra.join('\u0001');
-  const hit = cache.get(key);
+  const hit = tierCache.get(key);
   if (hit) return hit;
   const strongNames: string[] = [...STRONG_OUTLET_NAMES];
   const weakNames: string[] = [...WEAK_OUTLET_NAMES];
@@ -180,24 +196,83 @@ function compile(extra: readonly string[]): Compiled {
   // A name that is strong in the built-in list stays strong even if also listed elsewhere.
   const strongSet = new Set(strongNames.map((s) => s.toLowerCase()));
   const weak = weakNames.filter((w, i) => !strongSet.has(w.toLowerCase()) && weakNames.indexOf(w) === i);
+  const v = { strongNames: [...new Set(strongNames)], weakNames: weak };
+  if (tierCache.size > 500) tierCache.clear();
+  tierCache.set(key, v);
+  return v;
+}
+
+const TOKEN_RE = /[\p{L}\p{N}]+/gu;
+const firstTokenCache = new Map<string, string>();
+function keyToken(name: string): string {
+  let v = firstTokenCache.get(name);
+  if (v === undefined) {
+    // the longest word of the name: every word must be present for the name to match, the longest is the most selective
+    v = (name.toLowerCase().match(TOKEN_RE) ?? ['']).reduce((a, b) => (b.length > a.length ? b : a), '');
+    if (firstTokenCache.size > 20000) firstTokenCache.clear();
+    firstTokenCache.set(name, v);
+  }
+  return v;
+}
+/** Words our own replacements introduce ("reports said", "the news outlet") — always treated as present. */
+const REPLACEMENT_TOKENS = ['the', 'a', 'an', 'reports', 'report', 'reporters', 'reporter', 'news', 'outlet', 'media', 'team', 'source', 'sources', 'according', 'to', 'as', 'per', 'citing', 'quoting', 'based', 'on', 'by', 'said', 'say'];
+function tokenSet(text: string): Set<string> {
+  const set = new Set<string>(REPLACEMENT_TOKENS);
+  for (const m of text.toLowerCase().matchAll(TOKEN_RE)) set.add(m[0]);
+  return set;
+}
+
+const cache = new Map<string, Compiled>();
+const CACHE_MAX = 2000;
+
+/** Compile the patterns for `extra` + registry; with `text`, only for the names that can occur in that text. */
+function compile(extra: readonly string[], text?: string): Compiled {
+  const tiers = tiersFor(extra);
+  let strongNames = tiers.strongNames;
+  let weakNames = tiers.weakNames;
+  let unique: readonly string[] = UNIQUE_BARE_NAMES;
+  if (text !== undefined) {
+    const T = tokenSet(text);
+    const has = (n: string) => { const f = keyToken(n); return !f || T.has(f); };
+    strongNames = strongNames.filter(has);
+    weakNames = weakNames.filter(has);
+    unique = UNIQUE_BARE_NAMES.filter(has);
+  }
+  const key = `${strongNames.join('\u0001')}\u0002${weakNames.join('\u0001')}\u0002${unique.join('\u0001')}`;
+  const hit = cache.get(key);
+  if (hit) {
+    // LRU touch
+    cache.delete(key);
+    cache.set(key, hit);
+    return hit;
+  }
+  const memo = new Map<string, RegExp>();
   const c: Compiled = {
     // one cheap test: any known name (any tier, any case) or an 'edited by / inputs' credit line
-    quick: new RegExp(`${LB}(?:${nameAlt([...strongNames, ...weak])})${RB}|\\bedited\\s+by\\b|\\binputs\\b|\\bagenc(?:y|ies)\\b`, 'iu'),
+    quick: new RegExp(`${LB}(?:${nameAlt([...strongNames, ...weakNames])})${RB}|\\bedited\\s+by\\b|\\binputs\\b|\\bagenc(?:y|ies)\\b`, 'iu'),
     strong: null,
     ctxStrong: nameAlt(strongNames),
-    bare: bareRegex(strongNames),
-    ctxWeak: weak.length ? nameAlt(weak) : '(?!)',
+    bare: bareRegex(strongNames, unique),
+    ctxWeak: nameAlt(weakNames),
     any: true,
     strongNames,
-    weakNames: weak,
+    weakNames,
+    re: (src, flags) => {
+      const k = `${flags}\u0000${src}`;
+      let r = memo.get(k);
+      if (!r) { r = new RegExp(src, flags); memo.set(k, r); }
+      r.lastIndex = 0;
+      return r;
+    },
   };
+  if (cache.size >= CACHE_MAX) cache.delete(cache.keys().next().value as string);
   cache.set(key, c);
   return c;
 }
 
 /** Bare-word matcher: unique names (acronyms case-sensitive, long names case-insensitive) + domain-like names. */
-function bareRegex(strongNames: string[]): RegExp {
-  const all = [...new Set([...UNIQUE_BARE_NAMES, ...strongNames.filter(isDomainLike)])];
+function bareRegex(strongNames: string[], unique: readonly string[] = UNIQUE_BARE_NAMES): RegExp {
+  const all = [...new Set([...unique, ...strongNames.filter(isDomainLike)])];
   const acr = all.filter((n) => /^[A-Z]{2,5}$/.test(n));
   const rest = all.filter((n) => !acr.includes(n));
   return new RegExp(`${LB}(?:${nameAlt(rest)})${RB}|${LB}(?:${nameAlt(acr)})${RB}`, 'giu');
@@ -254,28 +329,41 @@ function fit(full: string, offset: number, replacement: string): string {
 function dropChromeLines(text: string, C: Compiled): string {
   const N = `(?:${C.ctxStrong})`;
   const NW = `(?:${C.ctxStrong}|${C.ctxWeak})`;
+  const R = (src: string) => C.re(src, 'iu');
   const rules: RegExp[] = [
-    new RegExp(`^\\s*[-–—|/•·]*\\s*[(\\[]?\\s*${NW}(?:\\s*[/,&+]\\s*${NW})*\\s*[)\\]]?\\s*[.|]?\\s*$`, 'iu'),
-    new RegExp(`^\\s*(?:edited|written|compiled|reported|filed|curated|updated|published|first\\s+published|last\\s+updated|with\\s+inputs\\s+from|inputs\\s+from)\\s*(?:by|on|:)?\\b.*(?:${NW}).*$`, 'iu'),
-    new RegExp(`^\\s*edited\\s+by\\b.{0,80}$`, 'iu'),
-    new RegExp(`^\\s*(?:with\\s+)?(?:inputs|agency\\s+inputs|agencies)\\b.{0,60}$`, 'iu'),
-    new RegExp(`.*\\bdownload\\s+(?:the\\s+)?${N}\\s+(?:news\\s+)?app\\b.*`, 'iu'),
-    new RegExp(`.*\\b${N}\\s+(?:community\\s+guidelines|app\\b|e-?paper|newsletter|premium|plus|prime|brand\\s+studio|apps?\\b)\\b.*`, 'iu'),
-    new RegExp(`.*\\b(?:follow|like|join|subscribe\\s+to|watch|read|get)\\b[^.\\n]{0,40}\\b${N}\\b.*`, 'iu'),
-    new RegExp(`^\\s*(?:photo|image|pic|picture|video|file\\s+photo|representative\\s+image|courtesy|credit|source)\\s*(?:credit|courtesy)?\\s*[:/|-]\\s*.*(?:${NW}).*$`, 'iu'),
-    new RegExp(`^\\s*(?:source|via|courtesy|credit)\\s*[:|-]\\s*${NW}.*$`, 'iu'),
-    new RegExp(`^.{0,60}\\b(?:reporter|correspondent|editor|journalist|writer|photographer|anchor)\\s+(?:at|with|for|of|from)\\s+(?:the\\s+)?${NW}.{0,20}$`, 'iu'),
-    new RegExp(`.*\\b${N}\\s+(?:for\\s+the\\s+latest|latest\\s+news|breaking\\s+news).*`, 'iu'),
+    R(`^\\s*[-–—|/•·]*\\s*[(\\[]?\\s*${NW}(?:\\s*[/,&+]\\s*${NW})*\\s*[)\\]]?\\s*[.|]?\\s*$`),
+    R(`^\\s*(?:edited|written|compiled|reported|filed|curated|updated|published|first\\s+published|last\\s+updated|with\\s+inputs\\s+from|inputs\\s+from)\\s*(?:by|on|:)?\\b.*(?:${NW}).*$`),
+    R(`^\\s*edited\\s+by\\b.{0,80}$`),
+    R(`^\\s*(?:with\\s+)?(?:inputs|agency\\s+inputs|agencies)\\b.{0,60}$`),
+    R(`.*\\bdownload\\s+(?:the\\s+)?${N}\\s+(?:news\\s+)?app\\b.*`),
+    R(`.*\\b${N}\\s+(?:community\\s+guidelines|app\\b|e-?paper|newsletter|premium|plus|prime|brand\\s+studio|apps?\\b)\\b.*`),
+    R(`.*\\b(?:follow|like|join|subscribe\\s+to|watch|read|get)\\b[^.\\n]{0,40}\\b${N}\\b.*`),
+    R(`^\\s*(?:photo|image|pic|picture|video|file\\s+photo|representative\\s+image|courtesy|credit|source)\\s*(?:credit|courtesy)?\\s*[:/|-]\\s*.*(?:${NW}).*$`),
+    R(`^\\s*(?:source|via|courtesy|credit)\\s*[:|-]\\s*${NW}.*$`),
+    R(`^.{0,60}\\b(?:reporter|correspondent|editor|journalist|writer|photographer|anchor)\\s+(?:at|with|for|of|from)\\s+(?:the\\s+)?${NW}.{0,20}$`),
+    R(`.*\\b${N}\\s+(?:for\\s+the\\s+latest|latest\\s+news|breaking\\s+news).*`),
   ];
   const promo = [rules[4], rules[5], rules[6], rules[9]];
   const acrSet = acronymsOf(C.strongNames);
+  // Rules shaped `.*X.*` match the whole line when X occurs anywhere in it; scanning for X alone gives the same answer
+  // without the quadratic `.*` backtracking on long lines (m[0] is then the whole line, exactly as before).
+  const fast = new Map<RegExp, RegExp>();
+  for (const r of rules) {
+    if (r.source.startsWith('.*') && r.source.endsWith('.*')) fast.set(r, C.re(r.source.slice(2, -2), r.flags));
+  }
+  const hit = (r: RegExp, line: string): boolean => {
+    const f = fast.get(r);
+    if (f) return f.test(line) && acronymCaseOk(line, acrSet);
+    const m = r.exec(line);
+    return !!m && acronymCaseOk(m[0], acrSet);
+  };
   return text
     .split('\n')
     .map((line) => {
-      if (line.length <= 160) return rules.some((r) => { const m = r.exec(line); return !!m && acronymCaseOk(m[0], acrSet); }) ? null : line;
+      if (line.length <= 160) return rules.some((r) => hit(r, line)) ? null : line;
       // long paragraph: only drop promo SENTENCES, never the whole paragraph
       const parts = line.split(/(?<=[.!?।。！？؟])\s+/);
-      const kept = parts.filter((p) => !promo.some((r) => { const m = r.exec(p); return !!m && acronymCaseOk(m[0], acrSet); }));
+      const kept = parts.filter((p) => !promo.some((r) => hit(r, p)));
       return kept.join(' ');
     })
     .filter((l): l is string => l !== null)
@@ -290,7 +378,7 @@ export type ScrubOptions = {
 };
 
 function neutralise(input: string, extra: readonly string[], opts: ScrubOptions = {}): string {
-  const C = compile(extra);
+  const C = compile(extra, input);
   if (!C.quick.test(input)) return input;
   const NS = `(?:${C.ctxStrong})`; // strong name
   const NA = `(?:${C.ctxStrong})|(?:${C.ctxWeak})`; // any name (weak only valid in the contexts below)
@@ -298,7 +386,7 @@ function neutralise(input: string, extra: readonly string[], opts: ScrubOptions 
   const POSS = "(?:['’]s)?";
   let t = opts.title ? input : dropChromeLines(input, C);
 
-  const rx = (src: string, flags = 'giu') => new RegExp(src, flags);
+  const rx = (src: string, flags = 'giu') => C.re(src, flags);
   // weak names must match case-sensitively: build a case-sensitive variant of A for them
   const acr = acronymsOf(C.strongNames);
   const both = (inner: string, fn: (...a: any[]) => string, flags = '', weakToo = true) => {
@@ -365,8 +453,8 @@ function neutralise(input: string, extra: readonly string[], opts: ScrubOptions 
   if (opts.bare !== false) {
     const B = C.bare.source;
     const okBare = (name: string) => !isBareAcronymMatch(name) || isExactUniqueAcronym(name);
-    t = t.replace(new RegExp(`${LB}(the\\s+)?(${B})(['’]s)${RB}`, 'giu'), (m, _the, name, _p, off, full) => (okBare(name) ? fit(full, off, "the outlet's") : m));
-    t = t.replace(new RegExp(`${LB}(the\\s+)?(${B})${RB}`, 'giu'), (m, the, name, off, full) => (okBare(name) ? fit(full, off, the ? 'the news outlet' : 'a news outlet') : m));
+    t = t.replace(rx(`${LB}(the\\s+)?(${B})(['’]s)${RB}`), (m, _the, name, _p, off, full) => (okBare(name) ? fit(full, off, "the outlet's") : m));
+    t = t.replace(rx(`${LB}(the\\s+)?(${B})${RB}`), (m, the, name, off, full) => (okBare(name) ? fit(full, off, the ? 'the news outlet' : 'a news outlet') : m));
   }
 
   // 3. tidy
@@ -388,8 +476,10 @@ function neutralise(input: string, extra: readonly string[], opts: ScrubOptions 
 export function containsSourceMention(text: string | null | undefined, extraNames: readonly string[] = []): boolean {
   const s = text ?? '';
   if (!s) return false;
-  const C = compile(extraNames);
+  const C = compile(extraNames, s);
+  if (!C.quick.test(s)) return false;
   // unique tokens anywhere
+  C.bare.lastIndex = 0;
   for (const m of s.matchAll(C.bare)) if (!isBareAcronymMatch(m[0]) || isExactUniqueAcronym(m[0])) return true;
   // every other name only in attribution context (strong: case-insensitive; weak: case-sensitive)
   const ctx = (W: string) => [
@@ -402,11 +492,11 @@ export function containsSourceMention(text: string | null | undefined, extraName
   ];
   const acr = acronymsOf(C.strongNames);
   for (const c of ctx(C.ctxStrong)) {
-    for (const m of s.matchAll(new RegExp(c, 'gimu'))) if (acronymCaseOk(m[0], acr)) return true;
+    for (const m of s.matchAll(C.re(c, 'gimu'))) if (acronymCaseOk(m[0], acr)) return true;
   }
   if (C.weakNames.length) {
     for (const c of ctx(C.ctxWeak)) {
-      for (const m of s.matchAll(new RegExp(c, 'gimu'))) if (C.weakNames.some((n) => m[0].includes(n))) return true;
+      for (const m of s.matchAll(C.re(c, 'gimu'))) if (C.weakNames.some((n) => m[0].includes(n))) return true;
     }
   }
   return false;

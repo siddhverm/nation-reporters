@@ -114,6 +114,26 @@ docker compose -f docker-compose.server.yml exec redis sh -c 'redis-cli --scan -
 Cache key version lives in `apps/api/src/modules/articles/articles.service.ts` (`country-feed:v6:`); bump it to `v7` in any release that changes the serialized story shape and old cached feeds must not be served.
 Storage upload retries: `S3_PUT_RETRIES` (default 3) and `S3_RETRY_BASE_MS` (default 500). A story is never marked `generated` just because storage failed — the picture stays pending/fallback and the backfill retries it.
 
+## 5b. Feed performance indexes (20261019* migrations)
+
+Three indexes on `articles` for the public feeds (`status, language, publishedAt DESC, createdAt DESC`;
+`status, categoryId, …`; `status, …`). They are applied **automatically on deploy**: the api container runs
+`npx prisma migrate deploy && node dist/main` (docker-compose.server.yml), so `scripts/deploy-production.sh` needs no extra step.
+Each migration is a single `CREATE INDEX CONCURRENTLY IF NOT EXISTS` — no write lock on the live table; on ~500k rows expect
+seconds (the api starts after they finish; the deploy script waits up to 10 min for `/health/live`).
+
+If one fails (e.g. the container was killed mid-build) Postgres can leave an INVALID index and Prisma marks the migration failed
+(the api then won't start: `P3009`). Recover on the VPS:
+```bash
+docker compose -f docker-compose.server.yml exec postgres sh -c \
+  'psql -U "$POSTGRES_USER" nationreporters -c "DROP INDEX CONCURRENTLY IF EXISTS articles_status_language_published_idx;"'   # the one named in the error
+docker compose -f docker-compose.server.yml run --rm api npx prisma migrate resolve --rolled-back <migration_name>
+docker compose -f docker-compose.server.yml up -d api                               # re-applies it
+```
+Check: `\d articles` lists the three `*_published_idx` indexes; `SELECT indexrelid::regclass, indisvalid FROM pg_index WHERE indrelid='articles'::regclass;` all `t`.
+
+Public lists are also cached for `PUBLIC_LIST_CACHE_TTL_MS` (default 60000 ms; Redis + 30 s in-memory, cleared on CMS article writes).
+
 ## 6. Image takedown runbook (copyright request)
 ```bash
 cd /opt/nation-reporters

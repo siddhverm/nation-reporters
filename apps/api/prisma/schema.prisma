@@ -173,6 +173,11 @@ model Article {
   riskAssessment RiskAssessment?
   provenance     ContentProvenance?
 
+  // Public feeds: WHERE status [AND language | AND categoryId] ORDER BY publishedAt DESC, createdAt DESC LIMIT n.
+  // Created CONCURRENTLY by the 20261019* migrations (no write lock on the live table).
+  @@index([status, language, publishedAt(sort: Desc), createdAt(sort: Desc)], map: "articles_status_language_published_idx")
+  @@index([status, categoryId, publishedAt(sort: Desc), createdAt(sort: Desc)], map: "articles_status_category_published_idx")
+  @@index([status, publishedAt(sort: Desc), createdAt(sort: Desc)], map: "articles_status_published_idx")
   @@map("articles")
 }
 

@@ -29,6 +29,20 @@ type CountryFeedResult = {
   total: number;
 };
 
+type ListFilters = {
+  status?: ArticleStatus;
+  categoryId?: string;
+  authorId?: string;
+  language?: string;
+  hasVideo?: boolean;
+  page?: number | string;
+  limit?: number | string;
+  omitBody?: boolean;
+};
+type PublicListResult = { data: unknown[]; total: number; page: number; limit: number };
+/** v1: list payloads scrubbed at read time; bump when the public list shape / cleaning changes. */
+const PUBLIC_LIST_PREFIX = 'articles-list:v1:';
+
 @Injectable()
 export class ArticlesService {
   private readonly logger = new Logger(ArticlesService.name);
@@ -36,6 +50,9 @@ export class ArticlesService {
   private cacheHits = 0;
   private cacheMisses = 0;
   private readonly countryFeedCacheTtlMs: number;
+  private readonly publicListCacheTtlMs: number;
+  private readonly publicListCache = new Map<string, { expiresAt: number; value: PublicListResult }>();
+  private readonly publicListInFlight = new Map<string, Promise<PublicListResult>>();
 
   constructor(
     private readonly prisma: PrismaService,
@@ -43,6 +60,7 @@ export class ArticlesService {
     private readonly redisCache: RedisCacheService,
   ) {
     this.countryFeedCacheTtlMs = Number(this.config.get('COUNTRY_FEED_CACHE_TTL_MS') ?? 120000);
+    this.publicListCacheTtlMs = safeInt(this.config.get('PUBLIC_LIST_CACHE_TTL_MS'), 60000, 0, 3_600_000);
   }
 
   async findCountryFeed(options: {
@@ -188,7 +206,8 @@ export class ArticlesService {
       categoryId: true,
       language: true,
       status: true,
-      podcastScript: true,
+      // podcastScript is NOT selected: cards never show it (the podcasts page uses the full list), and scrubbing a
+      // multi-KB narration per row was the bulk of the list serializer's CPU time.
       imageOrigin: true,
       // Only used server-side to strip this feed's outlet name from the text; removed before the response.
       provenance: { select: { sourceName: true, sourceUrl: true } },
@@ -200,20 +219,50 @@ export class ArticlesService {
     };
   }
 
-  async findAll(filters: {
-    status?: ArticleStatus;
-    categoryId?: string;
-    authorId?: string;
-    language?: string;
-    hasVideo?: boolean;
-    page?: number | string;
-    limit?: number | string;
-    omitBody?: boolean;
-  }, audience: Audience = 'staff') {
-    if (audience === 'public') {
-      // Anonymous readers only ever see published stories, and cannot filter by author.
-      filters = { ...filters, status: ArticleStatus.PUBLISHED, authorId: undefined };
+  async findAll(filters: ListFilters, audience: Audience = 'staff') {
+    if (audience !== 'public') return this.findAllUncached(filters, audience);
+    // Anonymous readers only ever see published stories, and cannot filter by author.
+    const f: ListFilters = { ...filters, status: ArticleStatus.PUBLISHED, authorId: undefined };
+    // Public lists are identical for every reader: serve them from a short cache (memory → Redis), and let concurrent
+    // identical requests share one computation, so a burst of page loads never runs the serializer N times.
+    const maxTake = f.omitBody ? 150 : 100;
+    const key = [
+      f.categoryId ?? '', f.language ? normalizeLanguageCode(f.language) : '', f.hasVideo ? 'v' : '', f.omitBody ? 'o' : '',
+      safeInt(f.page, 1, 1, 100000), safeInt(f.limit, 20, 1, maxTake),
+    ].join('|');
+    const redisKey = `${PUBLIC_LIST_PREFIX}${key}`;
+    const mem = this.publicListCache.get(key);
+    if (mem && mem.expiresAt > Date.now()) return mem.value;
+    const pending = this.publicListInFlight.get(key);
+    if (pending) return pending;
+    const work = (async () => {
+      const fromRedis = await this.redisCache.getJson<PublicListResult>(redisKey);
+      if (fromRedis) {
+        this.rememberPublicList(key, fromRedis);
+        return fromRedis;
+      }
+      const startedAt = Date.now();
+      const value = await this.findAllUncached(f, 'public');
+      this.rememberPublicList(key, value);
+      await this.redisCache.setJson(redisKey, value, this.publicListCacheTtlMs);
+      this.logger.log(`articles-list cache=miss key=${key} rows=${value.data.length} latency_ms=${Date.now() - startedAt}`);
+      return value;
+    })();
+    this.publicListInFlight.set(key, work);
+    try {
+      return await work;
+    } finally {
+      this.publicListInFlight.delete(key);
     }
+  }
+
+  private rememberPublicList(key: string, value: PublicListResult) {
+    if (this.publicListCacheTtlMs <= 0) return;
+    if (this.publicListCache.size >= 200) this.publicListCache.delete(this.publicListCache.keys().next().value as string);
+    this.publicListCache.set(key, { expiresAt: Date.now() + Math.min(this.publicListCacheTtlMs, 30_000), value });
+  }
+
+  private async findAllUncached(filters: ListFilters, audience: Audience) {
     const p = safeInt(filters.page, 1, 1, 100000);
     const maxTake = filters.omitBody ? 150 : 100;
     const take = safeInt(filters.limit, 20, 1, maxTake);
@@ -408,6 +457,8 @@ export class ArticlesService {
       this.logger.log('country-feed cache=cleared reason=article-write');
     }
     this.redisCache.delByPrefix('country-feed:').catch(() => null);
+    this.publicListCache.clear();
+    this.redisCache.delByPrefix(PUBLIC_LIST_PREFIX).catch(() => null);
   }
 
   private getCountryFeedRedisKey(cacheKey: string): string {
