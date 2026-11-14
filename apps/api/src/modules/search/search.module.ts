@@ -14,11 +14,13 @@ const filterValue = (v: string) => v.replace(/["\\\r\n]/g, '').slice(0, 64);
 
 /** Only public, source-free fields leave the search endpoint (Meili documents may hold more). */
 function publicHit(h: Record<string, any>) {
+  if (h.status && h.status !== 'PUBLISHED') return null;
   const item = sanitizeArticleListItem({
     title: h.title, excerpt: h.excerpt, slug: h.slug, language: h.language, imageOrigin: h.imageOrigin,
+    provenance: h.provenance,
   });
   return {
-    id: h.id, title: item.title, excerpt: item.excerpt, slug: h.slug, language: h.language,
+    id: h.id, title: item.title, excerpt: item.excerpt, slug: item.slug ?? h.slug, language: h.language,
     category: h.category ?? undefined, publishedAt: h.publishedAt, image: item.image,
   };
 }
@@ -40,18 +42,22 @@ class SearchService {
 
   async search(q: string, options: { category?: string; lang?: string; page?: number | string }) {
     const page = safeInt(options.page, 1, 1, 1000);
-    // Try Meilisearch first, fall back to Prisma full-text search
+    const query = q.trim().slice(0, 200);
+    // Try Meilisearch first, fall back to Prisma full-text search.
+    // status filter drops drafts when the index has the attribute; a filter error falls through to the DB.
     try {
-      const result = await this.meili.index('articles').search(q, {
+      const result = await this.meili.index('articles').search(query, {
         filter: [
+          'status = "PUBLISHED"',
           options.category ? `category = "${filterValue(options.category)}"` : null,
           options.lang ? `language = "${filterValue(options.lang)}"` : null,
         ].filter(Boolean) as string[],
         page,
         hitsPerPage: 20,
       });
-      if (result.hits.length > 0 || result.totalHits > 0) {
-        return { ...result, hits: result.hits.map((h) => publicHit(h as Record<string, any>)) };
+      if (result.hits.length > 0 || (result.totalHits ?? 0) > 0) {
+        const hits = result.hits.map((h) => publicHit(h as Record<string, any>)).filter((h) => h !== null);
+        return { hits, totalHits: result.totalHits ?? hits.length, page, hitsPerPage: 20, query };
       }
     } catch (e) {
       this.logger.warn(`Meilisearch unavailable: ${(e as Error).message} — using DB fallback`);
@@ -59,7 +65,7 @@ class SearchService {
 
     // DB fallback
     const take = 20;
-    const term = q.trim();
+    const term = query;
 
     const [hits, totalHits] = await Promise.all([
       this.prisma.article.findMany({
@@ -94,7 +100,7 @@ class SearchService {
       }),
     ]);
 
-    return { hits: hits.map((h) => publicHit(h)), totalHits, page, hitsPerPage: take };
+    return { hits: hits.map((h) => publicHit(h)).filter((h) => h !== null), totalHits, page, hitsPerPage: take, query };
   }
 
   async indexArticle(article: {

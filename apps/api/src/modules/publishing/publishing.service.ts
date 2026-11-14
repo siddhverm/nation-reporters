@@ -5,6 +5,7 @@ import { PrismaService } from '../../prisma/prisma.service';
 import { SocialConnector, PublishPayload } from './connectors/base.connector';
 import { sanitizeTextForPublic } from '../../common/article-public-sanitize.util';
 import { sanitizeHashtags } from '../../common/reader-summary.util';
+import { containsSourceMention, isOutletOnlyText, sourceNameVariants } from '../../common/source-scrub.util';
 import { TwitterConnector } from './connectors/twitter/twitter.connector';
 import { TelegramConnector } from './connectors/telegram/telegram.connector';
 import { MetaConnector } from './connectors/meta/meta.connector';
@@ -129,17 +130,27 @@ export class PublishingService {
       .findUnique({ where: { articleId: article.id } })
       .catch(() => null);
     const sopts = { sourceName: prov?.sourceName ?? null, sourceUrl: prov?.sourceUrl ?? null };
-    const cleanTitle = sanitizeTextForPublic(article.title, sopts) || article.title;
+    const names = sourceNameVariants(sopts.sourceName, sopts.sourceUrl);
+    const cleanedTitle = sanitizeTextForPublic(article.title, sopts).trim();
+    // Do not fall back to the stored headline when scrubbing removes an outlet-only title.
+    const cleanTitle = cleanedTitle && !isOutletOnlyText(cleanedTitle, names) && !containsSourceMention(cleanedTitle, names)
+      ? cleanedTitle
+      : 'Nation Reporters';
+    const cleanedExcerpt = sanitizeTextForPublic(excerptForPublish, { ...sopts, headline: cleanTitle }).trim();
+    const excerpt = cleanedExcerpt && !containsSourceMention(cleanedExcerpt, names) ? cleanedExcerpt : cleanTitle;
     const payload: PublishPayload = {
       articleId: article.id,
       title: cleanTitle,
-      excerpt: sanitizeTextForPublic(excerptForPublish, { ...sopts, headline: cleanTitle }) || cleanTitle,
+      excerpt,
       // Use canonical slug used by web route. seoSlug can be non-unique / unsuffixed.
       url: `${this.publicWebBaseUrl}/article/${article.slug}`,
       // Our own /story-image/<slug> URL: serves the mirrored source image (IMAGE_MODE=source_first) or the generated one — never a publisher URL.
       imageUrl: `${this.publicWebBaseUrl}/story-image/${encodeURIComponent(article.slug)}`,
-      videoUrl: videoAsset?.url,
-      caption: caption?.caption ? sanitizeTextForPublic(caption.caption, sopts) || undefined : undefined,
+      videoUrl: videoAsset?.url && !/youtube\.com|youtu\.be|vimeo\.com/i.test(String(videoAsset.url)) ? videoAsset.url : undefined,
+      caption: (() => {
+        const text = caption?.caption ? sanitizeTextForPublic(caption.caption, sopts).trim() : '';
+        return text && !containsSourceMention(text, names) ? text : undefined;
+      })(),
       hashtags: sanitizeHashtags(article.hashtags, sopts),
       platform: job.platform,
       language: article.language ?? 'en',

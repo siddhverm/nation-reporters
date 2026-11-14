@@ -73,6 +73,15 @@ describe('raw fallback when the AI rewrite is unavailable/rejected', () => {
     expect(created).toHaveLength(2);
   });
 
+  it('an outlet-only headline is replaced and the source body is still not stored', async () => {
+    const { svc, created } = make({ RAW_FALLBACK_MODE: 'placeholder' });
+    const ok = await svc.publishRaw({ ...ingested(), sourceTitle: 'Daily Planet Gazette' }, source());
+    expect(ok).toBe(true);
+    expect(created[0].title).toBe('News update');
+    expect(JSON.stringify(created[0])).not.toMatch(/Daily Planet|dailyplanet|ZEBRAQUILL/i);
+    expect(created[0].body.content[0].content[0].text).toBe(HELD_PLACEHOLDER.en);
+  });
+
   it('placeholder mode: publishes only the translated notice under a clean headline, with generated image, no social', async () => {
     const { svc, created, publishing, images } = make({ RAW_FALLBACK_MODE: 'placeholder' });
     const ok = await svc.publishRaw(ingested(), source('hi'));

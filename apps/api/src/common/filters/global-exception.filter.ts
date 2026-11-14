@@ -3,6 +3,7 @@ import {
   HttpException, HttpStatus, Logger,
 } from '@nestjs/common';
 import { Request, Response } from 'express';
+import { redactUrl } from '../redact-url.util';
 
 @Catch()
 export class GlobalExceptionFilter implements ExceptionFilter {
@@ -30,7 +31,7 @@ export class GlobalExceptionFilter implements ExceptionFilter {
     res.status(status).json({
       statusCode: status,
       timestamp: new Date().toISOString(),
-      path: req.url,
+      path: redactUrl(req.url),
       message,
     });
   }

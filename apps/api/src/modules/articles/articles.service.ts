@@ -20,6 +20,21 @@ import {
 /** 'public' = anonymous reader (published stories only, no editorial internals); 'staff' = authenticated CMS user. */
 export type Audience = 'public' | 'staff';
 
+/** Staff may see the stored source (audit). Anonymous responses never include it. */
+function exposeForAudience<T extends Record<string, unknown>>(clean: T, row: object, audience: Audience): T {
+  if (audience === 'public') return stripInternalFields(clean) as T;
+  const prov = (row as { provenance?: { sourceName?: string | null; sourceUrl?: string | null; attributionNote?: string | null } | null }).provenance;
+  if (!prov?.sourceUrl && !prov?.sourceName) return clean;
+  return {
+    ...clean,
+    provenance: {
+      sourceName: prov.sourceName ?? '',
+      sourceUrl: prov.sourceUrl ?? '',
+      ...(prov.attributionNote ? { attributionNote: prov.attributionNote } : {}),
+    },
+  } as T;
+}
+
 type CountryFeedResult = {
   localLang: string;
   globalLang: string;
@@ -342,12 +357,10 @@ export class ArticlesService {
     const page = p;
     const limit = take;
 
-    const sanitized = omitBody
-      ? data.map((row) => sanitizeArticleListItem(row))
-      : data.map((row) => {
-          const clean = sanitizeArticleForPublicResponse(row as never) as Record<string, unknown>;
-          return audience === 'public' ? stripInternalFields(clean) : clean;
-        });
+    const sanitized = data.map((row) => {
+      const clean = (omitBody ? sanitizeArticleListItem(row) : sanitizeArticleForPublicResponse(row as never)) as Record<string, unknown>;
+      return exposeForAudience(clean, row, audience);
+    });
 
     return { data: sanitized, total, page, limit };
   }
@@ -362,15 +375,18 @@ export class ArticlesService {
       // Loaded for outlet-aware sanitization only — stripped before response.
       provenance: true,
     };
+    // Anonymous readers only resolve published rows, so a newer draft cannot shadow a live story.
+    const visible = (where: Prisma.ArticleWhereInput): Prisma.ArticleWhereInput =>
+      audience === 'public' ? { AND: [where, { status: ArticleStatus.PUBLISHED }] } : where;
     // Try UUID first, fall back to slug lookup
     const isUuid = /^[0-9a-f-]{36}$/.test(idOrSlug);
     let article = isUuid
-      ? await this.prisma.article.findUnique({ where: { id: idOrSlug }, include })
-      : await this.prisma.article.findUnique({ where: { slug: idOrSlug }, include });
+      ? await this.prisma.article.findFirst({ where: visible({ id: idOrSlug }), include })
+      : await this.prisma.article.findFirst({ where: visible({ slug: idOrSlug }), include });
     // Backward compatibility: some older shared links used seoSlug instead of canonical slug.
     if (!article && !isUuid) {
       article = await this.prisma.article.findFirst({
-        where: { seoSlug: idOrSlug },
+        where: visible({ seoSlug: idOrSlug }),
         include,
         orderBy: { createdAt: 'desc' },
       });
@@ -378,7 +394,7 @@ export class ArticlesService {
     // Extra fallback: support links that carry base slug while DB has suffix (e.g. "-<timestamp>").
     if (!article && !isUuid) {
       article = await this.prisma.article.findFirst({
-        where: { slug: { startsWith: `${idOrSlug}-` } },
+        where: visible({ slug: { startsWith: `${idOrSlug}-` } }),
         include,
         orderBy: { createdAt: 'desc' },
       });
@@ -388,8 +404,8 @@ export class ArticlesService {
     if (audience === 'public' && article.status !== ArticleStatus.PUBLISHED) {
       throw new NotFoundException('Article not found');
     }
-    const clean = sanitizeArticleForPublicResponse(article);
-    return (audience === 'public' ? stripInternalFields(clean as Record<string, unknown>) : clean) as typeof clean;
+    const clean = sanitizeArticleForPublicResponse(article) as Record<string, unknown>;
+    return exposeForAudience(clean, article, audience) as typeof article;
   }
 
   async update(id: string, userId: string, userRole: Role, data: Partial<CreateArticleDto>) {

@@ -4,7 +4,8 @@ const path = require('path');
 const nextConfig = {
   output: 'standalone',
   images: {
-    remotePatterns: [{ protocol: 'https', hostname: '**' }, { protocol: 'http', hostname: 'localhost' }],
+    // Story pictures are same-origin (/story-image, /logo.png). Do not let the image optimizer fetch arbitrary hosts.
+    remotePatterns: [{ protocol: 'http', hostname: 'localhost' }],
   },
   experimental: {
     outputFileTracingRoot: path.join(__dirname, '../../'),

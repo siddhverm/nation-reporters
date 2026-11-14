@@ -472,10 +472,32 @@ function neutralise(input: string, extra: readonly string[], opts: ScrubOptions 
   return t.trim();
 }
 
+/**
+ * True when the whole string is just an outlet name (the headline "Daily Planet Gazette", "PTI", a feed domain).
+ * Longer text that merely mentions a company ("Reuters shares fall") is not outlet-only.
+ * Short-circuits on long text so public-list scrubbing does not normalise multi-kilobyte bodies.
+ */
+export function isOutletOnlyText(text: string | null | undefined, extraNames: readonly string[] = []): boolean {
+  const raw = (text ?? '').trim();
+  if (!raw || raw.length > 120) return false;
+  const norm = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}]+/gu, ' ').replace(/\s+/g, ' ').trim();
+  const t = norm(raw);
+  if (!t) return false;
+  const pool = [...extraNames, ...STRONG_OUTLET_NAMES, ...UNIQUE_BARE_NAMES, ...registeredSourceNames()];
+  for (const n of pool) {
+    const nn = norm(n);
+    if (nn.length < 2) continue;
+    if (t === nn || t === `the ${nn}`) return true;
+  }
+  return false;
+}
+
 /** Does text still mention any known publisher (strong names anywhere, weak names in attribution context)? */
 export function containsSourceMention(text: string | null | undefined, extraNames: readonly string[] = []): boolean {
   const s = text ?? '';
   if (!s) return false;
+  // A headline that is nothing but the outlet name must count even when the name is not a "bare unique" token.
+  if (isOutletOnlyText(s, extraNames)) return true;
   const C = compile(extraNames, s);
   if (!C.quick.test(s)) return false;
   // unique tokens anywhere
@@ -539,9 +561,12 @@ export function scrubSourceMentionsInTitle(text: string | null | undefined, extr
   const cjk = /[\p{Script=Han}\p{Script=Hiragana}\p{Script=Katakana}\p{Script=Thai}\p{Script=Lao}\p{Script=Khmer}\p{Script=Myanmar}]/u;
   const enough = (t: string) => !!t.trim() && (wordCount(t) >= Math.min(2, wordCount(raw)) || (cjk.test(t) && [...t.trim()].length >= 4));
   const full = scrubSourceMentions(raw, extraNames, { title: true });
-  if (enough(full)) return full;
+  if (enough(full) && !isOutletOnlyText(full, extraNames)) return full;
   const attributionOnly = scrubSourceMentions(raw, extraNames, { title: true, bare: false });
-  return enough(attributionOnly) ? attributionOnly : raw;
+  if (enough(attributionOnly) && !isOutletOnlyText(attributionOnly, extraNames)) return attributionOnly;
+  // Outlet-only headlines ("Daily Planet Gazette", a bare domain) must not be restored.
+  if (isOutletOnlyText(raw, extraNames) || isOutletOnlyText(attributionOnly, extraNames)) return '';
+  return raw;
 }
 
 /** Scrub every string of a TipTap/JSON-ish value in place-safe fashion (returns a new structure). */

@@ -16,7 +16,6 @@ import { PrismaClient } from '@prisma/client';
 import { StoryImageService } from '../modules/ai/story-image.service';
 import { PrismaService } from '../prisma/prisma.service';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const dotenv = require('dotenv');
 for (const p of ['../../.env', '.env']) dotenv.config({ path: path.resolve(process.cwd(), p) });
 

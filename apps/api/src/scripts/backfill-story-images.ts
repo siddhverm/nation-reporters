@@ -21,7 +21,6 @@ import { RedisCacheService } from '../common/cache/redis-cache.service';
 import { dateArg, intArg, parseCliArgs } from './cli-util';
 import { backfillStoryImages, legacyImageUrlsOf, type ImgStory } from './backfill-story-images-lib';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const dotenv = require('dotenv');
 for (const p of ['../../.env', '.env']) dotenv.config({ path: path.resolve(process.cwd(), p) });
 

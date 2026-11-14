@@ -279,6 +279,10 @@ export class AiService {
         ),
         [rewrite.summary, rewrite.short, rewrite.medium, rewrite.long],
       );
+      // Never store a story whose public teaser is missing. The fallbacks above are other AI fields, never the source.
+      if (readerSummary.trim().length < 40) {
+        throw new RewriteRejectedError('rewrite produced an empty summary', null);
+      }
       const longForPrompts = this.clipForPrompt(rewrite.long, 24_000);
 
       // 2. Tag

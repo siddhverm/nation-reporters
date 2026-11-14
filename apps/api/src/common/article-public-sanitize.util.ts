@@ -1,7 +1,7 @@
 import { sanitizeHashtags, sanitizePublisherStoryText, scrubSourceLabels, stripSourceFromSlug } from './reader-summary.util';
 import { buildImageAlt, storyImagePath } from './story-image.util';
 import { type ImageOrigin, originFromValue } from './image-mode';
-import { filterSourceHashtags, scrubSourceMentions, scrubSourceMentionsInTitle, sourceNameVariants } from './source-scrub.util';
+import { filterSourceHashtags, isOutletOnlyText, scrubSourceMentions, scrubSourceMentionsInTitle, sourceNameVariants } from './source-scrub.util';
 import { stripPageBoilerplate } from './page-boilerplate.util';
 
 type ProvenanceLike = {
@@ -74,10 +74,12 @@ function cleanField(
   // Final scrub removes what is left once the outlet is gone ("… 2028. Source:", "… via", outlet hashtags),
   // then publisher references inside sentences are neutralised ("the TOI report" → "the report").
   const cleaned = scrubSourceMentions(scrubSourceLabels(sanitizePublisherStoryText(pre, opts), opts), names).trim();
-  if (cleaned) return cleaned;
-  // Sanitizer emptied the field. Never put chrome back; only keep short real headlines.
-  if (looksLikePublisherChrome(raw)) return '';
-  return raw.length <= 120 ? scrubSourceMentions(scrubSourceLabels(raw, opts), names) : '';
+  if (cleaned && !isOutletOnlyText(cleaned, names)) return cleaned;
+  // Sanitizer emptied the field. Never put the outlet name or chrome back.
+  if (looksLikePublisherChrome(raw) || isOutletOnlyText(raw, names)) return '';
+  if (raw.length > 120) return '';
+  const restored = scrubSourceMentions(scrubSourceLabels(raw, opts), names);
+  return restored && !isOutletOnlyText(restored, names) ? restored : '';
 }
 
 /**
@@ -151,6 +153,16 @@ function sanitizeTipTapBody(
       if (typeof av.title === 'string' && av.title.trim()) {
         const cleanedTitle = cleanHeadlineField(av.title, opts);
         if (cleanedTitle) av.title = cleanedTitle;
+        else delete av.title;
+      }
+      if (typeof av.script === 'string' && av.script.trim()) {
+        av.script = scrubSourceMentions(sanitizePublisherStoryText(av.script, opts), namesFor(opts)).trim();
+      }
+      if (typeof av.status === 'string' && /source/i.test(av.status)) av.status = 'ready';
+      for (const hidden of ['sourceUrl', 'sourceName', 'credit', 'videoUrl']) {
+        if (hidden === 'videoUrl' && typeof av.videoUrl === 'string' && /youtube\.com|youtu\.be|vimeo\.com|external\//i.test(av.videoUrl)) {
+          delete av.videoUrl;
+        } else if (hidden !== 'videoUrl') delete av[hidden];
       }
       next.aiVideo = av;
     }
@@ -230,7 +242,12 @@ export function publicMediaAssets(
       continue;
     }
     if (raw?.type === 'VIDEO') {
-      if (String(raw.s3Key ?? '').startsWith('external/') || raw.scanStatus === 'external') continue;
+      const url = String(raw.url ?? '');
+      const key = String(raw.s3Key ?? '');
+      // Publisher/source videos are never public. A bare external URL with no object we stored is not either.
+      if (key.startsWith('external/') || raw.scanStatus === 'external') continue;
+      if (/youtube\.com|youtu\.be|vimeo\.com/i.test(url)) continue;
+      if (!key && /^https?:\/\//i.test(url)) continue;
       out.push({ id: raw.id, type: 'VIDEO', url: raw.url });
       continue;
     }
@@ -239,11 +256,22 @@ export function publicMediaAssets(
   return out;
 }
 
-/** Replace any publisher image URL/credit stored in the TipTap doc with our own image reference + origin. */
+const SOURCE_BODY_KEYS = new Set([
+  'imageCredit', 'imageSource', 'sourceImageRemoved', 'sourceUrl', 'sourceName', 'sourceTitle',
+  'source', 'credit', 'byline', 'attribution', 'attributionNote', 'feedLink', 'feedUrl',
+  'originalUrl', 'canonicalUrl', 'publisher', 'outlet', 'via', 'photographer',
+]);
+
+/** Drop stored credit / source fields. The public image is always our own URL and a scrubbed alt string. */
 function withStoryImageBody(body: unknown, image: { url: string; alt: string; origin: ImageOrigin }): unknown {
   if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
-  const { imageCredit: _credit, imageSource: _source, sourceImageRemoved: _removed, ...rest } = body as Record<string, unknown>;
-  return { ...rest, imageUrl: image.url, imageAlt: image.alt, imageGenerated: image.origin === 'generated', imageOrigin: image.origin };
+  const rest: Record<string, unknown> = {};
+  for (const [k, v] of Object.entries(body as Record<string, unknown>)) {
+    if (SOURCE_BODY_KEYS.has(k)) continue;
+    rest[k] = v;
+  }
+  const alt = isOutletOnlyText(image.alt) ? '' : image.alt;
+  return { ...rest, imageUrl: image.url, imageAlt: alt, imageGenerated: image.origin === 'generated', imageOrigin: image.origin };
 }
 
 /** Internal editorial/workflow fields that anonymous readers must never receive. */
@@ -274,7 +302,8 @@ export function sanitizeArticleForPublicResponse<T extends PublicArticleLike>(ar
     cleanHeadlineField(rawTitle, baseOpts) ||
     cleanHeadlineField(article.seoTitle, baseOpts) ||
     cleanHeadlineField(typeof bodyRec.aiVideo?.title === 'string' ? bodyRec.aiVideo.title : '', baseOpts) ||
-    headlineFromText(cleanField(article.excerpt, baseOpts, true) || cleanField(article.bodyShort, baseOpts, true));
+    headlineFromText(cleanField(article.excerpt, baseOpts, true) || cleanField(article.bodyShort, baseOpts, true)) ||
+    'News update';
   const opts = { headline: title, sourceName, sourceUrl };
 
   const { provenance: _drop, socialCaptions, ...rest } = article as T & {
@@ -347,7 +376,8 @@ export function sanitizeArticleListItem<
   const safeTitle =
     cleanHeadlineField(item.title, opts) ||
     cleanHeadlineField(itemRec.seoTitle, opts) ||
-    headlineFromText(cleanField(item.excerpt, opts, true) || cleanField(itemRec.bodyShort, opts, true));
+    headlineFromText(cleanField(item.excerpt, opts, true) || cleanField(itemRec.bodyShort, opts, true)) ||
+    'News update';
   const excerpt =
     item.excerpt != null
       ? cleanField(capListText(item.excerpt), { ...opts, headline: safeTitle }, true) || null

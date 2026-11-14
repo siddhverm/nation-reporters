@@ -34,6 +34,25 @@ export function getPreferredArticleImage(article: { slug?: string | null } | nul
   return article?.slug ? getStoryImageUrl(article.slug) : null;
 }
 
+/**
+ * URLs safe to put in a public <video src>.
+ * Only files we stored ourselves (/generated/ or /uploads/). Publisher hotlinks are not played.
+ */
+export function isPublicPlaybackUrl(url: string | null | undefined): boolean {
+  const raw = (url ?? '').trim();
+  if (!raw || raw.startsWith('//') || /^(javascript|data|vbscript):/i.test(raw)) return false;
+  if (/youtube\.com|youtu\.be|vimeo\.com/i.test(raw)) return false;
+  const own = /\/generated\/|\/uploads\//;
+  if (raw.startsWith('/')) return own.test(raw);
+  try {
+    const u = new URL(raw);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return false;
+    return own.test(u.pathname);
+  } catch {
+    return false;
+  }
+}
+
 /** Alt text: the (sanitized) headline. Generated English illustrations get a short "Illustration for:" prefix. */
 export function getImageAlt(title: string | null | undefined, language?: string | null, origin: ImageOrigin = 'generated'): string {
   const t = (title ?? '').replace(/\s+/g, ' ').trim().slice(0, 140);

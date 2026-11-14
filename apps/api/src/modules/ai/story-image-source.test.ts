@@ -210,7 +210,6 @@ describe('serving + public API', () => {
     expect(d.body.imageGenerated).toBe(true);
   });
   it('social posts use our own /story-image URL, never a publisher URL', () => {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const src = require('fs').readFileSync(require('path').resolve(__dirname, '../publishing/publishing.service.ts'), 'utf8');
     expect(src).toMatch(/imageUrl: `\$\{this\.publicWebBaseUrl\}\/story-image\/\$\{encodeURIComponent\(article\.slug\)\}`/);
     expect(src).not.toMatch(/mediaAssets?[^\n]*IMAGE[^\n]*imageUrl|imageUrl:[^\n]*(?:asset|media)/i);

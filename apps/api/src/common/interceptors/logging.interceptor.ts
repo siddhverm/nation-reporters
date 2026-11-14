@@ -3,6 +3,7 @@ import {
   CallHandler, Logger,
 } from '@nestjs/common';
 import { Observable, tap } from 'rxjs';
+import { redactUrl } from '../redact-url.util';
 
 @Injectable()
 export class LoggingInterceptor implements NestInterceptor {
@@ -16,7 +17,7 @@ export class LoggingInterceptor implements NestInterceptor {
     return next.handle().pipe(
       tap(() => {
         const ms = Date.now() - start;
-        this.logger.log(`${method} ${url} ${ms}ms`);
+        this.logger.log(`${method} ${redactUrl(url)} ${ms}ms`);
       }),
     );
   }

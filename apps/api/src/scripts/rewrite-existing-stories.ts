@@ -25,7 +25,6 @@ import { loadRegisteredSourceNames } from '../common/source-names.service';
 import { dateArg, intArg, parseCliArgs } from './cli-util';
 import { rewriteExistingStories, type Deps, type StoryRow } from './rewrite-existing-lib';
 
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const dotenv = require('dotenv');
 for (const p of ['../../.env', '.env']) dotenv.config({ path: path.resolve(process.cwd(), p) });
 

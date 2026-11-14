@@ -12,7 +12,6 @@ async function main() {
   const prisma = new PrismaClient();
   registerSourceNames(namesFromSources(benchSources()));
   let queryMs = 0;
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
   const timed = prisma.$extends({ query: { $allModels: { async $allOperations({ args, query }: any) { const t = Date.now(); const r = await query(args); queryMs += Date.now() - t; return r; } } } });
   const config = { get: (k: string) => (k === 'PUBLIC_LIST_CACHE_TTL_MS' ? '0' : undefined) };
   const redis = { getJson: async () => null, setJson: async () => undefined, delByPrefix: async () => undefined };

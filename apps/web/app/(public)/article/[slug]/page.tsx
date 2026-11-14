@@ -4,7 +4,7 @@ import { useParams, useRouter } from 'next/navigation';
 import Link from 'next/link';
 import Image from 'next/image';
 import { Clock, Share2, Facebook, Twitter, ChevronRight, ArrowLeft } from 'lucide-react';
-import { getArticleImage, getImageAlt, imageOriginOf } from '@/lib/news-image';
+import { getArticleImage, getImageAlt, imageOriginOf, isPublicPlaybackUrl } from '@/lib/news-image';
 import { isRtlLanguage } from '@/lib/ui-language';
 import {
   htmlToPlainText,
@@ -746,7 +746,7 @@ export default function ArticlePage() {
   const keyPointList: string[] = Array.isArray(article.body?.keyPoints)
     ? (article.body.keyPoints as unknown[]).filter((k): k is string => typeof k === 'string' && k.trim().length >= 8).slice(0, 8)
     : [];
-  const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO');
+  const videoAsset = article.mediaAssets?.find((m) => m.type === 'VIDEO' && isPublicPlaybackUrl(m.url));
   const proseText = (text: string) =>
     safeArticleText(stripFeedBoilerplateWithTitle(text, titleText, sanitizeCtx));
   const renderProseBlocks = (text: string, keyPrefix: string) => {
@@ -839,7 +839,7 @@ export default function ArticlePage() {
               <div data-testid="key-points" className="mb-5 rounded-xl bg-gray-50 p-4">
                 <p className="text-xs font-semibold uppercase tracking-wide text-brand mb-2">{getNotices(articleLang).keyPoints}</p>
                 <ul className="list-disc space-y-1.5 pl-5 text-gray-700 text-[15px] leading-relaxed">
-                  {keyPointList.map((k, i) => <li key={i}>{k}</li>)}
+                  {keyPointList.map((k, i) => <li key={i}>{proseText(k)}</li>)}
                 </ul>
               </div>
             )}

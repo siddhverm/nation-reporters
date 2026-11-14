@@ -1,5 +1,5 @@
 import { stripPublisherFeedBoilerplate } from './reader-summary.util';
-import { classifyDynamicName, containsSourceMention, registerSourceNames, scrubSourceMentions, scrubSourceMentionsInTitle, shrankTooMuch, sourceNameVariants } from './source-scrub.util';
+import { classifyDynamicName, containsSourceMention, isOutletOnlyText, registerSourceNames, scrubSourceMentions, scrubSourceMentionsInTitle, shrankTooMuch, sourceNameVariants } from './source-scrub.util';
 import { sanitizeArticleForPublicResponse, sanitizeArticleListItem } from './article-public-sanitize.util';
 import { AiService } from '../modules/ai/ai.service';
 import { titleTooShort } from '../modules/ai/rewrite-quality.util';
@@ -94,7 +94,12 @@ describe('titles never collapse', () => {
     expect(shrankTooMuch('', 'abc def')).toBe(true);
     expect(shrankTooMuch('Fairfax gets 15 years', FAIRFAX)).toBe(true);
     expect(scrubSourceMentionsInTitle('Mumbai rains – PTI')).toBe('Mumbai rains');
-    expect(scrubSourceMentionsInTitle('PTI')).not.toBe(''); // never empty
+    expect(scrubSourceMentionsInTitle('PTI')).not.toBe(''); // acronym becomes a neutral phrase, not blank
+    const names = sourceNameVariants('Daily Planet Gazette', 'https://dailyplanet-gazette.example/a');
+    expect(isOutletOnlyText('Daily Planet Gazette', names)).toBe(true);
+    expect(scrubSourceMentionsInTitle('Daily Planet Gazette', names)).toBe('');
+    expect(containsSourceMention('Daily Planet Gazette', names)).toBe(true);
+    expect(containsSourceMention('Reuters shares fall')).toBe(false);
     expect(scrubSourceMentionsInTitle('Tiger Shroff hospitalised after stunt, TOI reports')).toBe('Tiger Shroff hospitalised after stunt');
     expect(scrubSourceMentionsInTitle('Flood hits Assam (PTI)')).toBe('Flood hits Assam');
   });
