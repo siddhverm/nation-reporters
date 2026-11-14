@@ -3,7 +3,8 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
-    "build": "nest build",
+    "postinstall": "prisma generate --schema=prisma/schema.prisma",
+    "build": "prisma generate --schema=prisma/schema.prisma && nest build",
     "dev": "nest start --watch",
     "start": "node dist/main",
     "backfill:article-language": "ts-node --transpile-only -r tsconfig-paths/register src/scripts/backfill-article-language.ts",

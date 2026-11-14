@@ -1,7 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Cron } from '@nestjs/schedule';
 import { ConfigService } from '@nestjs/config';
-// eslint-disable-next-line @typescript-eslint/no-require-imports
 const Parser = require('rss-parser');
 import * as crypto from 'crypto';
 import { PrismaService } from '../../../prisma/prisma.service';
@@ -25,17 +24,12 @@ import {
 import { detectFeedSourceLanguage } from '../source-language.util';
 import { resolveSourceFeedLanguage } from '../ingestion-language.util';
 import { stripSyndicationLinkbacks, stripWireHeadlinePrefix } from '../../../common/editorial-sanitize';
-import {
-  buildReaderSummaryFromPlainText,
-  type PublisherSanitizeOptions,
-  splitStoryBodies,
-  stripPublisherFeedBoilerplate,
-} from '../../../common/reader-summary.util';
+import { stripPublisherFeedBoilerplate } from '../../../common/reader-summary.util';
 import { StoryImageService } from '../../ai/story-image.service';
 import { pickStrongestImageUrl } from '../../../common/mirror-external-image.util';
 import { heldPlaceholderText, parseRawFallbackMode } from '../../../common/held-story';
 import { scrubSourceLabels } from '../../../common/reader-summary.util';
-import { scrubSourceMentions, sourceNameVariants } from '../../../common/source-scrub.util';
+import { containsSourceMention, isOutletOnlyText, scrubSourceMentions, sourceNameVariants } from '../../../common/source-scrub.util';
 import { resolveUniqueArticleSlug } from '../../../common/slug.util';
 
 type CategorySlug =
@@ -198,6 +192,7 @@ export class IngestionCronService {
       articleId = published.id;
     }
 
+    if (!articleId) throw new Error('Failed to create article (AI rewrite unavailable)');
     return { articleId, held };
   }
 
@@ -464,11 +459,11 @@ export class IngestionCronService {
             if (this.isGeminiQuotaError(aiErr)) {
               this.aiQuotaExhausted = true;
               this.logger.warn(
-                'Gemini quota exhausted — raw RSS/source publish for remaining items this run',
+                'Gemini quota exhausted — remaining items are held (source text is never published)',
               );
             }
             this.logger.warn(
-              `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — publishing raw RSS/source text`,
+              `AI failed for ${titlePlain.slice(0, 50)}: ${(aiErr as Error).message?.slice(0, 160)} — holding story (source text is not published)`,
             );
             publishedOk = await this.publishRaw(ingestedArticle, source, rssImageUrl);
             if (!publishedOk) {
@@ -604,42 +599,7 @@ export class IngestionCronService {
     return '';
   }
 
-  /** Strip HTML and map long RSS text into TipTap paragraph nodes (no 2k hard cap). */
-  private rawHtmlToDocContent(
-    htmlOrText: string,
-    sanitizeOpts: PublisherSanitizeOptions = {},
-    maxTotalChars = 80000,
-  ) {
-    const text = stripSyndicationLinkbacks(
-      stripPublisherFeedBoilerplate(
-        this.stripHtmlToPlain(htmlOrText, true).slice(0, maxTotalChars),
-        sanitizeOpts.headline ?? '',
-        sanitizeOpts,
-      ),
-    );
-    if (!text) {
-      return [{ type: 'paragraph', content: [{ type: 'text', text: '(No body text in feed item.)' }] }];
-    }
-    let parts = text.split(/\n\s*\n/).map((p) => p.trim()).filter(Boolean);
-    if (parts.length <= 1 && text.length > 6000) {
-      parts = [];
-      let cur = '';
-      const chunks = text.split(/(?<=[.!?।।])\s+/);
-      for (const sentence of chunks) {
-        if (cur.length + sentence.length > 4500) {
-          if (cur) parts.push(cur.trim());
-          cur = sentence;
-        } else {
-          cur = cur ? `${cur} ${sentence}` : sentence;
-        }
-      }
-      if (cur.trim()) parts.push(cur.trim());
-    }
-    const dedupedParts = this.dedupeParagraphs(parts);
-    return dedupedParts.map((p) => ({ type: 'paragraph', content: [{ type: 'text', text: p }] }));
-  }
-
-  // Publish raw RSS content directly when AI is unavailable
+  // Hold or publish a source-free placeholder when AI is unavailable. The source body is never copied.
   /**
    * Fallback when the AI rewrite is unavailable or rejected (quota, outage, copy-safety gate).
    * The source body is NEVER copied into a story. RAW_FALLBACK_MODE:
@@ -676,6 +636,7 @@ export class IngestionCronService {
     });
     if (existing) return false;
 
+    const names = sourceNameVariants(source.name, ingestedArticle.sourceUrl);
     const sanitizeOpts = { sourceName: source.name, sourceUrl: ingestedArticle.sourceUrl || null };
     const displayTitle = stripWireHeadlinePrefix(
       stripSyndicationLinkbacks(
@@ -683,7 +644,11 @@ export class IngestionCronService {
           ingestedArticle.sourceTitle.replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim(),
       ),
     );
-    const title = scrubSourceMentions(scrubSourceLabels(displayTitle, sanitizeOpts), sourceNameVariants(source.name, ingestedArticle.sourceUrl)) || displayTitle;
+    const scrubbedTitle = scrubSourceMentions(scrubSourceLabels(displayTitle, sanitizeOpts), names).trim();
+    // Never fall back to the original headline: an outlet-only title scrubs to empty and must not be restored.
+    const title = scrubbedTitle && !isOutletOnlyText(scrubbedTitle, names) && !containsSourceMention(scrubbedTitle, names)
+      ? scrubbedTitle
+      : 'News update';
     const slug = await resolveUniqueArticleSlug(
       async (base) => Boolean(
         await this.prisma.article.findFirst({ where: { slug: { startsWith: base } } }),
@@ -762,26 +727,6 @@ export class IngestionCronService {
       });
     }
     return true;
-  }
-
-  private normalizeParagraphKey(paragraph: string): string {
-    return paragraph
-      .toLowerCase()
-      .replace(/\s+/g, ' ')
-      .replace(/[^\p{L}\p{N}\s]/gu, '')
-      .trim();
-  }
-
-  private dedupeParagraphs(paragraphs: string[]): string[] {
-    const keys = new Set<string>();
-    const out: string[] = [];
-    for (const paragraph of paragraphs) {
-      const key = this.normalizeParagraphKey(paragraph);
-      if (!key || keys.has(key)) continue;
-      keys.add(key);
-      out.push(paragraph);
-    }
-    return out;
   }
 
   private detectCategorySlug(title: string, sourceName = ''): CategorySlug | null {

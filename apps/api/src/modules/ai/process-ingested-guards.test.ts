@@ -30,6 +30,14 @@ describe('processIngestedArticle guards (held as RAW → safe DRAFT path, never 
     expect(gemini.generateJson).not.toHaveBeenCalled();
     expect(updates.pop()).toEqual({ status: 'RAW' });
   });
+  it('an empty model response is rejected and the source text is not published', async () => {
+    const { svc, updates } = make(realBody, {
+      title: '', summary: '', keyPoints: [], short: '', medium: '', long: '', podcastScript: '', language: 'en',
+    });
+    await expect(svc.processIngestedArticle('i1', { language: 'en' })).rejects.toBeInstanceOf(RewriteRejectedError);
+    expect(updates.pop()).toEqual({ status: 'RAW' });
+    expect(JSON.stringify(updates)).not.toContain('Tiger Shroff was taken');
+  });
   it('a rewrite that ends mid-sentence is rejected', async () => {
     const { svc, updates } = make(realBody, draft('The star visited a clinic on Friday because his leg hurt after an action scene.\n\nPhysicians described his condition as steady, and he should return home soon. Production on the movie has halted for seven days while he rests with relatives and the'));
     await expect(svc.processIngestedArticle('i1', { language: 'en' })).rejects.toThrow(/not publishable.*truncated/);

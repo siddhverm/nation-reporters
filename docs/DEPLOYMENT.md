@@ -146,6 +146,6 @@ Deletes the mirrored S3 object + asset row, flips the story to `generated`, gene
 * The deploy SSH step runs `git reset --hard origin/master` on the server — local edits to tracked files on the VPS are lost. Keep server-specific config in `.env`/`.deploy.env` (untracked).
 * nginx and `.env` are not deployed by CI; changes must be applied by hand.
 * There is no staging environment; CI only builds/tests (no deploy preview).
-* ESLint: no ESLint config files exist in `apps/api` or `apps/web`, so the `lint` scripts cannot pass as written.
+* ESLint configs live in `apps/api/.eslintrc.cjs` and `apps/web/.eslintrc.json`. `npm run lint` in each app is what CI runs.
 * `docker-compose.server.yml` uses unpinned `minio/*:latest` for the optional storage profile — pin before relying on it.
 * `source_first` publishes publisher images with a disclaimer; that is a legal/editorial decision — keep `COPYRIGHT_EMAIL` monitored and use `generated_only` if complaints arrive.

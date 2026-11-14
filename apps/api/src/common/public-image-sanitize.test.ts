@@ -54,6 +54,41 @@ describe('public image/media sanitization', () => {
 });
 
 describe('key points (bullet summary) are cleaned like any public text', () => {
+  it('drops source urls, credits and source-video status from the public body', () => {
+    const out = sanitizeArticleForPublicResponse({
+      title: 'Metro line', slug: 'metro-line', language: 'en',
+      body: {
+        type: 'doc',
+        sourceUrl: 'https://dailyplanet-gazette.example/a',
+        byline: 'By Jane, Daily Planet Gazette',
+        content: [],
+        aiVideo: { title: 'Metro line', status: 'ready_with_source_video', videoUrl: 'https://www.youtube.com/watch?v=abc', sourceUrl: 'https://dailyplanet-gazette.example/a' },
+      },
+      mediaAssets: [
+        { id: 'v1', type: 'VIDEO', url: 'https://cdn.example/clip.mp4' },
+        { id: 'v2', type: 'VIDEO', url: 'http://minio/own.mp4', s3Key: 'generated/videos/own.mp4' },
+      ],
+      provenance: { sourceName: 'Daily Planet Gazette', sourceUrl: 'https://dailyplanet-gazette.example/a' },
+    } as never) as any;
+    expect(out.provenance).toBeUndefined();
+    expect(out.body.sourceUrl).toBeUndefined();
+    expect(out.body.byline).toBeUndefined();
+    expect(out.body.aiVideo.status).toBe('ready');
+    expect(out.body.aiVideo.videoUrl).toBeUndefined();
+    expect(out.body.aiVideo.sourceUrl).toBeUndefined();
+    expect(out.mediaAssets.map((m: any) => m.id)).toEqual(['v2']);
+    expect(JSON.stringify(out)).not.toMatch(/dailyplanet|youtube/i);
+  });
+  it('an outlet-only headline is not published as the title', () => {
+    const out = sanitizeArticleForPublicResponse({
+      title: 'Daily Planet Gazette', slug: 'x', language: 'en',
+      excerpt: 'The new metro line opens in 2028 and will cut the trip to forty minutes.',
+      provenance: { sourceName: 'Daily Planet Gazette', sourceUrl: 'https://dailyplanet-gazette.example/a' },
+      body: { type: 'doc', content: [] },
+    } as never) as any;
+    expect(out.title).not.toMatch(/Daily Planet/i);
+    expect(out.title.length).toBeGreaterThan(10);
+  });
   it('removes outlet names/labels from bullets and drops empties', () => {
     const out = sanitizeArticleForPublicResponse({
       title: 'Metro line', slug: 'metro-line', language: 'en',

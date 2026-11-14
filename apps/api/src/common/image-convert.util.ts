@@ -11,7 +11,6 @@ let cached: ImageConverter | null | undefined;
 export function loadSharpConverter(): ImageConverter | null {
   if (cached !== undefined) return cached;
   try {
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
     const sharp = require('sharp') as (input: Buffer, opts?: Record<string, unknown>) => {
       rotate(): ReturnType<typeof sharp>;
       resize(o: Record<string, unknown>): ReturnType<typeof sharp>;

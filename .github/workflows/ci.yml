@@ -25,6 +25,9 @@ jobs:
       - name: Lint Web
         run: cd apps/web && npm run lint
 
+      - name: Test Web
+        run: cd apps/web && npm test -- --watchman=false
+
       - name: Build Web
         run: cd apps/web && npm run build
         env:

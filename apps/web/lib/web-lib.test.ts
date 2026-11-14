@@ -1,6 +1,6 @@
 import * as fs from 'fs';
 import * as path from 'path';
-import { getArticleImage, getImageAlt, getPreferredArticleImage, getStoryImageUrl, imageOriginOf, LOGO_FALLBACK } from './news-image';
+import { getArticleImage, getImageAlt, getPreferredArticleImage, getStoryImageUrl, imageOriginOf, isPublicPlaybackUrl, LOGO_FALLBACK } from './news-image';
 import { articleJsonLd, articleSeo, ogLocale } from './seo';
 import { fallbackArtSpec, hashSeed } from './story-art';
 import { isRtlLanguage, normalizeUiLanguage } from './ui-language';
@@ -20,6 +20,13 @@ describe('news-image never surfaces a publisher image', () => {
   });
   it('encodes non-latin slugs', () => {
     expect(getStoryImageUrl('बाढ़-1')).toBe(`/story-image/${encodeURIComponent('बाढ़-1')}`);
+  });
+  it('does not play publisher hotlinks or script URLs', () => {
+    expect(isPublicPlaybackUrl('/story-image/metro')).toBe(false);
+    expect(isPublicPlaybackUrl('https://cdn.example/generated/videos/a.mp4')).toBe(true);
+    expect(isPublicPlaybackUrl('https://www.youtube.com/watch?v=abc')).toBe(false);
+    expect(isPublicPlaybackUrl('javascript:alert(1)')).toBe(false);
+    expect(isPublicPlaybackUrl('https://dailyplanet-gazette.example/clip.mp4')).toBe(false);
   });
   it('alt text is the headline', () => {
     expect(getImageAlt('Metro line', 'en')).toBe('Illustration for: Metro line');
